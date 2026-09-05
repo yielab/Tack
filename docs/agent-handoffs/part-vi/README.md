@@ -45,6 +45,24 @@ accepted by the user before Wave 15 opens. The story every doc reuses is §VI.0'
 4. Reap finished worktree targets — parallel builds fill `/home`
    (`du -sh /var/tmp/tack-agent-targets/*`).
 
+### What the second 2026-09-05 wave added
+
+**The merge built on the first try, and the difference was the plan, not luck.** The
+morning's pair shared no file and still did not compile together, because one changed a
+type the other called. The afternoon's three — the wire type and its fixtures, the frontend,
+the desktop crate — were chosen so that no card could change a type another card called,
+which is a stricter test than "disjoint ownership" and the one worth applying when picking
+a wave.
+
+**Two cards reported a blocker that was not there, in the same wave.** One said a live
+credential was unavailable, when the integration machine has one; the other said an
+endpoint's address could not be found without opening files it was told to avoid, when the
+route sits in `handlers/runner_protocol.rs` and one grep for `\.route(` lists the whole
+table. Both were corrected by the integrator and both amended their own handoffs. The
+pattern to expect: **a card's sandbox is smaller than the repository, and it will report
+the edge of its sandbox as a property of the code.** When a handoff says "could not", check
+whether the integrator can, before that sentence becomes the next card's premise.
+
 ### What the 2026-09-05 parallel pair added
 
 **Two cards can share no file and still not compile together.** VI-B3 and VI-B4 had
