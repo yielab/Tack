@@ -173,3 +173,47 @@ re-read this session; nothing here should be read as a claim about its current r
 
 *(Appended by later readers, dated. The original text above is never rewritten — the
 history of what was believed and later falsified is the point.)*
+
+### 2026-09-05 — the live Vercel catalog was measured; the "not checked" gap is now closed
+
+The coordinator ran `live_fetch_catalog_reaches_the_real_gateway_when_opted_in` against a
+real Vercel AI Gateway key on the integration machine (this session never had that
+credential, so this could not be run here — see "Known limitations" above, which stays
+true as written for the reason it was true then). It passed on this branch: 373 models,
+352 priced, 355 with a context window.
+
+Reading the raw response body behind that run, over all 373 models:
+
+- **`modalities` is present on 373 of 373**, and its key set is `{input, output}` on
+  every single one — no variation anywhere in the catalog. Both values are arrays of
+  strings, e.g. `{"input": ["text"], "output": ["text"]}`.
+- **`pricing` is present as a key on all 373, but empty on 21** — exactly the 21 this
+  card's parser already excludes, which is why `priced_model_count` reports 352 rather
+  than 373. That number was honest, not a parser gap.
+- **Of the 352 non-empty `pricing` values, only 259 carry both `input` and `output`.**
+  The rest vary: 38 add `input_cache_read`, 31 are `video_duration_pricing` alone, 24
+  carry `input` only — four distinct key shapes in the largest four groups (the
+  coordinator's own count; those four numbers sum to the full 352, so this run found no
+  further tail beyond them, though a different sample of the catalog could still turn one
+  up).
+
+**What this settles.** `price: Option<serde_json::Value>` — kept opaque in this card
+because vendor pricing shapes were known in general to vary (ADR 0063) but never counted
+for this specific catalog — is now proven correct by measurement, not just caution: **93
+of the 352 priced models — everything except the 259 that carry exactly `{input,
+output}` — would have been silently dropped or failed to parse under a typed
+`{input: _, output: _}` struct.**
+Storing it opaquely was the right call, and it now has a measured count behind it rather
+than a general vendor-caution argument.
+
+**Modality is the opposite case.** One shape, 373 of 373, zero exceptions across the
+whole catalog this run saw. Unlike `price`, giving `modality` a typed shape (e.g.
+`{input: Vec<String>, output: Vec<String>}` instead of an opaque `serde_json::Value`)
+would be safe on this evidence — every model agreed. This card does not make that change:
+the branch was reported finished and verified before this measurement arrived, and the
+coordinator asked that any code change prompted by it be proposed here rather than made.
+Flagging it as a design option for a future card, specifically because "the next person
+to look at this field will be tempted to type it" applies to `modality` in a way it
+provably does not apply to `price` — and a reader comparing the two fields side by side
+without this note would have no way to tell they now rest on different amounts of
+evidence.
