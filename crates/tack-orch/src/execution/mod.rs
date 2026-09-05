@@ -14,7 +14,7 @@ mod types;
 // name the type to construct a capability report.
 pub use capabilities::{
     CapabilityLimits, CapabilitySupport, CapabilityValue, Concurrency, EmbeddedCapabilitySnapshot,
-    FeatureCapabilities, HarnessCapability, ModelCombination, RunnerCapabilities,
+    FeatureCapabilities, HarnessCapability, ModelCombination, ModelMetadata, RunnerCapabilities,
 };
 pub use lifecycle::{LifecycleError, TransitionActor, validate_transition};
 pub use types::{

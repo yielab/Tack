@@ -6,10 +6,11 @@
 //! the credential goes in an `x-api-key` header (plus a required, fixed
 //! `anthropic-version` header) rather than an `Authorization: Bearer`
 //! token, and the catalog publishes a model id, a display name and a
-//! context window (`max_input_tokens`) but **no price at all** — unlike
-//! Vercel, whose catalog prices almost every model. `price` is therefore
-//! always `None` here, not a gap in this parser: the vendor's own catalog
-//! has nothing to publish.
+//! context window (`max_input_tokens`) but **no price and no modality** —
+//! unlike Vercel, whose catalog prices almost every model and names each
+//! one's modality. `price` and `modality` are therefore always `None`
+//! here, not a gap in this parser: the vendor's own catalog has nothing to
+//! publish for either.
 
 use async_trait::async_trait;
 
@@ -110,6 +111,9 @@ struct CatalogResponse {
 /// Parses one Anthropic `/v1/models` body into the common [`CatalogEntry`]
 /// shape. `price` is always `None`: this endpoint has no pricing field of
 /// any kind, documented or otherwise — never a gap this parser invents.
+/// `modality` is always `None` for the same reason: the response carries
+/// an `id`, a `display_name`, `created_at` and `max_input_tokens`/`max_tokens`,
+/// and nothing that names what a model accepts or produces.
 fn parse_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, serde_json::Error> {
     let parsed: CatalogResponse = serde_json::from_slice(body)?;
     Ok(parsed
@@ -119,6 +123,7 @@ fn parse_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, serde_json::Error> {
             id: model.id,
             context_window: model.max_input_tokens,
             price: None,
+            modality: None,
         })
         .collect())
 }
@@ -166,6 +171,10 @@ mod tests {
         assert!(
             opus.price.is_none(),
             "Anthropic's own catalog publishes no price field at all"
+        );
+        assert!(
+            opus.modality.is_none(),
+            "Anthropic's own catalog publishes no modality field at all"
         );
 
         let legacy = entries

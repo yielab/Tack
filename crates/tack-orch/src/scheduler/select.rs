@@ -266,6 +266,7 @@ mod tests {
                     model_provider: ModelProvider::new(provider),
                     model_ids: models.iter().map(|m| ModelId::new(*m)).collect(),
                     discovery: "reported".to_string(),
+                    model_metadata: BTreeMap::new(),
                     additional: BTreeMap::new(),
                 })
                 .collect(),

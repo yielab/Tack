@@ -49,6 +49,26 @@ pub struct Concurrency {
     pub additional: BTreeMap<String, serde_json::Value>,
 }
 
+/// A provider's own catalog quote for one model — never a Tack judgment and
+/// never invented for a vendor that publishes nothing (ADR 0063 decision
+/// 7): a field the catalog does not publish stays `None`, not a default or
+/// a zero. `price` and `modality` are recorded exactly as the provider's
+/// own catalog shapes them (ADR 0063 decision 5) rather than normalized
+/// into a typed struct — vendor catalogs use dozens of mutually
+/// incompatible shapes for both, and normalizing would silently falsify
+/// most of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modality: Option<serde_json::Value>,
+    #[serde(flatten, default)]
+    pub additional: BTreeMap<String, serde_json::Value>,
+}
+
 /// Models observed for a harness/provider pair. Model IDs are deliberately
 /// opaque: their punctuation and prefixes are not a compatibility contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +76,15 @@ pub struct ModelCombination {
     pub model_provider: ModelProvider,
     pub model_ids: Vec<ModelId>,
     pub discovery: String,
+    /// Per-model price, context window and modality (ADR 0063 decision 5),
+    /// keyed by the model id it describes. A model absent from this map is
+    /// one the provider's catalog said nothing about — not a claim of
+    /// zero. Absent as a whole field (a runner built before this metadata
+    /// existed) defaults to an empty map on parse and is omitted again on
+    /// re-serialization, so an older runner's `capabilities.json` round-trips
+    /// unchanged against a newer board.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_metadata: BTreeMap<ModelId, ModelMetadata>,
     #[serde(flatten, default)]
     pub additional: BTreeMap<String, serde_json::Value>,
 }
@@ -205,6 +234,85 @@ mod tests {
         assert_eq!(
             round_trip["harnesses"][0]["model_combinations"][0]["future_combo"],
             true
+        );
+    }
+
+    /// A runner built before this metadata existed sends a `ModelCombination`
+    /// with no `model_metadata` key at all. It must still parse (default to
+    /// an empty map) and, critically, must not gain the key on
+    /// re-serialization — `skip_serializing_if` is what keeps this payload
+    /// byte-identical to what an older runner actually sent.
+    #[test]
+    fn model_metadata_absent_on_an_older_runner_defaults_and_round_trips() {
+        let raw = serde_json::json!({
+            "model_provider": "openai",
+            "model_ids": ["opaque/model-alpha"],
+            "discovery": "reported"
+        });
+        let parsed: ModelCombination = serde_json::from_value(raw.clone())
+            .expect("an older runner's model combination must still parse");
+        assert!(
+            parsed.model_metadata.is_empty(),
+            "no model_metadata key means no per-model metadata was reported, not a claim of zero"
+        );
+        let round_trip = serde_json::to_value(&parsed).expect("serialize");
+        assert_eq!(
+            round_trip, raw,
+            "an older runner's payload must round-trip byte-for-byte, with no model_metadata key materializing"
+        );
+    }
+
+    /// A provider's catalog quotes some models fully and others partially —
+    /// proves price, context window and modality all round-trip per model,
+    /// and that a model the catalog said nothing about stays absent from
+    /// the map rather than appearing with zeroed fields.
+    #[test]
+    fn model_metadata_round_trips_price_context_window_and_modality_per_model() {
+        let raw = serde_json::json!({
+            "model_provider": "vercel-ai-gateway",
+            "model_ids": ["openai/gpt-5.6-sol", "anthropic/claude-opus-5"],
+            "discovery": "catalog_reported",
+            "model_metadata": {
+                "openai/gpt-5.6-sol": {
+                    "context_window": 400000,
+                    "price": {"input": "0.000002", "output": "0.000008"},
+                    "modality": {"input": ["text"], "output": ["text"]}
+                },
+                "anthropic/claude-opus-5": {
+                    "context_window": 500000
+                }
+            }
+        });
+        let parsed: ModelCombination =
+            serde_json::from_value(raw.clone()).expect("populated per-model metadata must parse");
+        assert_eq!(
+            parsed.model_metadata.len(),
+            2,
+            "one entry named in the catalog was left out of the map"
+        );
+
+        let sol = parsed
+            .model_metadata
+            .get(&ModelId::new("openai/gpt-5.6-sol"))
+            .expect("first model's metadata");
+        assert_eq!(sol.context_window, Some(400_000));
+        assert!(sol.price.is_some());
+        assert!(sol.modality.is_some());
+
+        let opus = parsed
+            .model_metadata
+            .get(&ModelId::new("anthropic/claude-opus-5"))
+            .expect("second model's metadata");
+        assert_eq!(opus.context_window, Some(500_000));
+        assert!(
+            opus.price.is_none(),
+            "a model the catalog quoted no price for stays unmeasured, never zero"
+        );
+
+        let round_trip = serde_json::to_value(&parsed).expect("serialize");
+        assert_eq!(
+            round_trip, raw,
+            "populated per-model metadata must round-trip exactly"
         );
     }
 
