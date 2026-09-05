@@ -95,18 +95,37 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Resolved and shown (first run only) synchronously, before the
-            // window exists — the dialog has nothing to sit in front of yet.
+            // Only creates/locates the data directory — never touches
+            // settings.json or shows a dialog. That has to wait for the
+            // async task below: `setup()` runs on the main thread before
+            // `.run()` starts the event loop, and `ensure_settings`'s
+            // first-run dialog is a `blocking_show()`, which
+            // tauri-plugin-dialog documents as unsafe to call on that
+            // thread — it marshals the dialog itself onto the main
+            // thread's event loop via `run_on_main_thread` and waits for
+            // the answer there, so calling it from the thread whose loop
+            // hasn't started yet deadlocks forever: no window, no log
+            // line, no spawned sidecar, indistinguishable from the app
+            // doing nothing at all.
             let paths = DataPaths::resolve().map_err(|e| e.to_string())?;
-            let settings = first_run::ensure_settings(&handle, &paths);
-            let port = settings.port;
-            let base_url = format!("http://127.0.0.1:{port}");
-            let folders = paths.server_folders(settings.database_path.as_deref());
 
             tray::ensure_launch_at_login_default_on_first_run(&handle, &paths.root);
             tray::build(&handle).map_err(|e| e.to_string())?;
 
             tauri::async_runtime::spawn(async move {
+                // Runs on a runtime worker thread, not the one `setup()`
+                // ran on — safe for `blocking_show()` to call into.
+                let settings = tauri::async_runtime::spawn_blocking({
+                    let handle = handle.clone();
+                    let paths = paths.clone();
+                    move || first_run::ensure_settings(&handle, &paths)
+                })
+                .await
+                .expect("ensure_settings must not panic");
+                let port = settings.port;
+                let base_url = format!("http://127.0.0.1:{port}");
+                let folders = paths.server_folders(settings.database_path.as_deref());
+
                 let client = reqwest::Client::new();
                 let launcher = TauriLauncher {
                     app: handle.clone(),
@@ -184,7 +203,19 @@ fn main() {
                         handle.exit(1);
                     }
                     Err(err) => {
+                        // Covers `HealthTimeout` and `SpawnFailed` — the two
+                        // variants above already have their own tailored
+                        // dialogs. `{err}` carries the specific reason
+                        // (`thiserror`'s `Display`), including the bounded
+                        // wait's own length for a timeout — never a generic
+                        // apology, and never a longer sleep in its place.
                         tracing::error!(error = %err, "could not attach to or start a Tack server");
+                        handle
+                            .dialog()
+                            .message(format!("Tack could not start: {err}"))
+                            .title("Tack")
+                            .kind(MessageDialogKind::Error)
+                            .blocking_show();
                         handle.exit(1);
                     }
                 }
