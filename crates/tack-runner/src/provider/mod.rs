@@ -32,7 +32,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use tack_orch::execution::{ModelCombination, ModelId, ModelProvider, RunnerCapabilities};
+use tack_orch::execution::{
+    ModelCombination, ModelId, ModelMetadata, ModelProvider, RunnerCapabilities,
+};
 
 use crate::Clock;
 use crate::config::ProviderConfig;
@@ -107,12 +109,15 @@ pub struct KnownEndpoint {
 /// `{input, output}` pair — vendor catalogs use dozens of mutually
 /// incompatible pricing shapes (tiered rates, regional variants, a literal
 /// `"varies_by_provider"`), so the raw published value is the only
-/// representation that does not silently falsify most of them.
+/// representation that does not silently falsify most of them. `modality`
+/// is kept just as raw for the same reason: not every provider publishes
+/// it, and the ones that do do not agree on a shape either.
 #[derive(Debug, Clone)]
 pub struct CatalogEntry {
     pub id: String,
     pub context_window: Option<u64>,
     pub price: Option<serde_json::Value>,
+    pub modality: Option<serde_json::Value>,
 }
 
 /// Why `requested_provider` named a known endpoint but it could not be
@@ -365,6 +370,26 @@ async fn attach_one_catalog<C: Clock>(
         .iter()
         .map(|entry| ModelId::new(entry.id.clone()))
         .collect();
+    // Only models the catalog actually said something about get an entry —
+    // a model absent from this map is one the provider published nothing
+    // for, never a claim of zero (ADR 0063 decision 7).
+    let model_metadata: BTreeMap<ModelId, ModelMetadata> = entries
+        .iter()
+        .filter(|entry| {
+            entry.context_window.is_some() || entry.price.is_some() || entry.modality.is_some()
+        })
+        .map(|entry| {
+            (
+                ModelId::new(entry.id.clone()),
+                ModelMetadata {
+                    context_window: entry.context_window,
+                    price: entry.price.clone(),
+                    modality: entry.modality.clone(),
+                    additional: Default::default(),
+                },
+            )
+        })
+        .collect();
     for harness in capabilities.harnesses.iter_mut() {
         if !CATALOG_ELIGIBLE_HARNESSES.contains(&harness.harness_kind.as_str()) {
             continue;
@@ -379,6 +404,7 @@ async fn attach_one_catalog<C: Clock>(
             model_provider: ModelProvider::new(provider.wire_name()),
             model_ids: model_ids.clone(),
             discovery: CATALOG_DISCOVERY.to_owned(),
+            model_metadata: model_metadata.clone(),
             additional: Default::default(),
         });
     }
@@ -690,6 +716,7 @@ mod tests {
                     id: "working-vendor/model-1".to_owned(),
                     context_window: Some(128_000),
                     price: Some(serde_json::json!({"input": "0.000001"})),
+                    modality: Some(serde_json::json!({"input": ["text"], "output": ["text"]})),
                 }]),
             }),
         ];
@@ -732,5 +759,14 @@ mod tests {
             claude_code.model_combinations[0].model_provider.as_str(),
             "working-vendor"
         );
+        let metadata = claude_code.model_combinations[0]
+            .model_metadata
+            .get(&tack_orch::execution::ModelId::new(
+                "working-vendor/model-1",
+            ))
+            .expect("the one fetched model's metadata must be attached to the combination");
+        assert_eq!(metadata.context_window, Some(128_000));
+        assert!(metadata.price.is_some());
+        assert!(metadata.modality.is_some());
     }
 }

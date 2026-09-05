@@ -14,7 +14,14 @@
         {
           "model_provider": "openai",
           "model_ids": ["opaque/model-alpha", "opaque:model-beta"],
-          "discovery": "reported"
+          "discovery": "reported",
+          "model_metadata": {
+            "opaque/model-alpha": {
+              "context_window": 400000,
+              "price": {"input": "0.000002", "output": "0.000008"},
+              "modality": {"input": ["text"], "output": ["text"]}
+            }
+          }
         }
       ],
       "model_passthrough": {

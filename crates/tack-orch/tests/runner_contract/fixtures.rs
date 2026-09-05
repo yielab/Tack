@@ -12,8 +12,10 @@ const FROZEN_FIXTURE_FNV1A64: &[(&str, u64)] = &[
     // The codex harness entry exemplifies the
     // optional `model_passthrough` attestation (operator-specified opaque
     // models forwarded verbatim; scheduler eligibility without a declared
-    // combination).
-    ("capabilities.json", 0x5896_310e_67a1_42b6),
+    // combination) and per-model `model_metadata` (one of the two model ids
+    // priced and windowed, the other absent from the map entirely — a model
+    // the catalog said nothing about, not a claim of zero).
+    ("capabilities.json", 0xecb0_79e8_21b5_c12f),
     ("claim.no-work.response.json", 0x67a3_99f9_f7ee_5fc4),
     ("claim.request.json", 0x2b2d_c1f6_2357_bd0b),
     ("claim.response.json", 0x4d27_1810_d5f7_cf48),

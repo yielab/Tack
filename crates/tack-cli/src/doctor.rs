@@ -453,6 +453,7 @@ mod tests {
             model_provider: ModelProvider::new("openai"),
             model_ids: vec![ModelId::new("grok-code")],
             discovery: "codex models".to_owned(),
+            model_metadata: Default::default(),
             additional: Default::default(),
         }];
         with_models.model_passthrough = Some(CapabilityValue {

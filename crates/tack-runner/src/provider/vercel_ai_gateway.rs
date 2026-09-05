@@ -1,7 +1,7 @@
 //! The Vercel AI Gateway [`super::Provider`]: one catalog serving both
 //! wires this crate speaks, a bearer credential, and a catalog body that
-//! publishes pricing and a context window per model (ADR 0061 decision 4;
-//! ADR 0063 decisions 1, 2 and 4).
+//! publishes pricing, a context window and a modality per model (ADR 0061
+//! decision 4; ADR 0063 decisions 1, 2 and 4).
 
 use async_trait::async_trait;
 
@@ -86,6 +86,8 @@ struct CatalogModel {
     context_window: Option<u64>,
     #[serde(default)]
     pricing: Option<serde_json::Value>,
+    #[serde(default)]
+    modalities: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]
@@ -107,7 +109,11 @@ struct CatalogResponse {
 /// `0` for it — the vendor's own catalog is not internally consistent about
 /// omission vs. zero for "not applicable," and this parser passes that
 /// value through as published (`Some(0)`) rather than guessing which
-/// non-text model types should be reinterpreted as `None`.
+/// non-text model types should be reinterpreted as `None`. Every model in
+/// the same live fetch also carries a `modalities` key; this parser stores
+/// it exactly as published, the same treatment as `pricing`, since the
+/// live fetch was not re-run to confirm every value that key takes across
+/// all 373 models.
 fn parse_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, serde_json::Error> {
     let parsed: CatalogResponse = serde_json::from_slice(body)?;
     Ok(parsed
@@ -119,6 +125,7 @@ fn parse_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, serde_json::Error> {
             price: model
                 .pricing
                 .filter(|value| value != &serde_json::json!({})),
+            modality: model.modalities,
         })
         .collect())
 }
@@ -168,6 +175,10 @@ mod tests {
             .unwrap();
         assert_eq!(qwen.context_window, Some(40960));
         assert!(qwen.price.is_some());
+        assert!(
+            qwen.modality.is_none(),
+            "this real captured entry has no modalities key, so it must stay unset, never inferred"
+        );
 
         let flux = entries.iter().find(|e| e.id == "bfl/flux-2-flex").unwrap();
         assert_eq!(
@@ -191,6 +202,35 @@ mod tests {
     #[test]
     fn a_malformed_body_is_a_parse_error_not_a_panic() {
         assert!(parse_catalog(b"not json").is_err());
+    }
+
+    /// The three real entries above happen not to carry a `modalities` key.
+    /// This entry is not a live capture: it proves the parser passes the
+    /// key through opaquely, exactly as it does for `pricing`, whatever
+    /// shape it holds — not that this is the vendor's actual shape for it.
+    #[test]
+    fn modality_passes_through_opaquely_when_the_catalog_publishes_it() {
+        const BODY_WITH_MODALITY: &str = r#"{
+            "object": "list",
+            "data": [
+                {
+                    "id": "openai/gpt-5.6-sol",
+                    "context_window": 400000,
+                    "pricing": {"input": "0.000002", "output": "0.000008"},
+                    "modalities": {"input": ["text", "image"], "output": ["text"]}
+                }
+            ]
+        }"#;
+        let entries = parse_catalog(BODY_WITH_MODALITY.as_bytes()).expect("valid catalog body");
+        let sol = entries
+            .iter()
+            .find(|e| e.id == "openai/gpt-5.6-sol")
+            .unwrap();
+        assert_eq!(
+            sol.modality,
+            Some(serde_json::json!({"input": ["text", "image"], "output": ["text"]})),
+            "whatever shape the vendor publishes under modalities is stored as-is"
+        );
     }
 
     /// Opt-in, matching the harness adapters' own `#[ignore]`-gated live

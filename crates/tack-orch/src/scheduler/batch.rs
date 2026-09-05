@@ -118,6 +118,7 @@ mod tests {
                     model_provider: ModelProvider::new("anthropic"),
                     model_ids: vec![ModelId::new("opaque/sonnet")],
                     discovery: "reported".to_string(),
+                    model_metadata: BTreeMap::new(),
                     additional: BTreeMap::new(),
                 }],
                 model_passthrough: None,
