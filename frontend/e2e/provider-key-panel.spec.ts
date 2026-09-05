@@ -47,7 +47,9 @@ test('saving a key re-probes the catalog and the value never reaches the DOM', a
   const secretValue = 'e2e-placeholder-key-never-should-render';
   await apiKeyField.waitFor({ state: 'visible' });
   await apiKeyField.fill(secretValue);
-  await page.getByRole('button', { name: 'Save' }).click();
+  // Scoped to this panel's own `<form>` — the Agents page also has a
+  // "Save" button for its unrelated default-model step below this one.
+  await page.locator('form').getByRole('button', { name: 'Save' }).click();
 
   // The write-only contract: gone from the form, and never in the page's
   // own HTML at any point after save.

@@ -1,9 +1,8 @@
 import { type Component, createResource, For, Show } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
-import { Badge, Button, EmptyState, Skeleton } from '../../shared/ui';
+import { Button, EmptyState, Skeleton } from '../../shared/ui';
 import { fleetApi, isOrchDisabled, type FleetRow as FleetRowData } from './api';
 import FleetRow from './FleetRow';
-import RunnerFleetSection from './runnerFleet/RunnerFleetSection';
 
 const COLUMNS = [
   'Project',
@@ -93,26 +92,21 @@ const ErrorState: Component<{ onRetry: () => void }> = (props) => (
 );
 
 /**
- * Fleet page. Two structurally and visually distinct systems live here —
- * never conflated, per III.0's vocabulary rule that `Runner`/`Fleet` (this
- * cycle) and Docket's control-plane roster are different domain concepts
- * that happen to share the word "fleet":
+ * Fleet page — the legacy Docket control-plane roster only. One row per
+ * Tack project linked to an agent-fleet control plane (docket or
+ * compatible); read-only, dispatch/approval actions live on the
+ * Approvals/Economics pages. Every dollar figure here is an estimate, never
+ * billed spend — see `format.ts#formatEstimatedCost`. Stale planes
+ * (`unreachable`/`unknown`) never render a confident-looking `0`/`$0.00` —
+ * see `FleetRow.tsx`'s `stale()` branch.
  *
- * 1. **Runner Fleet** (`runnerFleet/RunnerFleetSection.tsx`, Part III,
- *    TODO.md III-E3) — the primary content: enroll/revoke runners, and
- *    manage fleets/agent profiles/model profiles for the harness-agnostic
- *    execution runner. New in this card.
- * 2. **Legacy: Docket control planes** (below, unchanged from card A5) —
- *    one row per Tack project linked to a Part II agent-fleet control
- *    plane (docket or compatible). Read-only; dispatch/approval actions
- *    live on the Approvals/Economics pages. Every dollar figure here is an
- *    estimate, never billed spend (TODO.md §0 rule 6) — see
- *    `format.ts#formatEstimatedCost`. Stale planes (`unreachable`/
- *    `unknown`) never render a confident-looking `0`/`$0.00` — see
- *    `FleetRow.tsx`'s `stale()` branch.
- *
- * Nothing about section 2's own components, tests, or behavior changed in
- * this card — only its position on the page and the heading above it.
+ * The runner/fleet/agent-profile/model-profile management this page used
+ * to open with (`RunnerFleetSection`) now lives under the Agents page's
+ * Advanced section — a distinct, harness-agnostic execution runner from
+ * this page's Docket control planes, which happen to share the word
+ * "fleet". Whether this page's own nav entry should stay visible when
+ * orchestration is off is an open question for whoever next touches
+ * navigation, not decided here.
  */
 const FleetPage: Component = () => {
   const [fleet, { refetch }] = createResource(() => fleetApi.list());
@@ -128,24 +122,8 @@ const FleetPage: Component = () => {
           Fleet
         </h1>
         <p class="mt-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          Enroll runners and manage fleets and agent/model profiles for Tack's harness-agnostic execution
-          runner.
-        </p>
-      </div>
-
-      <RunnerFleetSection />
-
-      <div class="mt-10 mb-6 border-t pt-8" style={{ 'border-color': 'var(--color-border-light)' }}>
-        <div class="flex items-center gap-2">
-          <h2 class="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-            Legacy: Docket control planes
-          </h2>
-          <Badge tone="neutral">Part II</Badge>
-        </div>
-        <p class="mt-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
           Agent pods working your projects via an earlier agent-fleet orchestration system — health,
-          roster, and estimated burn per control plane. Unrelated to the runner fleet above; kept working
-          unchanged.
+          roster, and estimated burn per control plane.
         </p>
       </div>
 

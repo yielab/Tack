@@ -10,7 +10,7 @@ import Badge from './Badge';
 import {
   BrandMark,
   IconSearch, IconBoard, IconList, IconTable, IconCalendar, IconTimeline, IconSprint,
-  IconOverview, IconProjects, IconTemplates, IconFleet, IconApprovals, IconEconomics, IconProvision, IconSettings, IconSun, IconMoon,
+  IconOverview, IconProjects, IconTemplates, IconAgent, IconFleet, IconApprovals, IconEconomics, IconProvision, IconSettings, IconSun, IconMoon,
   IconChevronDown, type IconProps,
 } from './icons';
 import KbdHint from './KbdHint';
@@ -206,6 +206,7 @@ const Sidebar: Component = () => {
         <SectionLabel label="Workspace" />
         <NavButton href="/projects" end icon={IconProjects} label="All projects" onClick={close} />
         <NavButton href="/templates" icon={IconTemplates} label="Templates" onClick={close} />
+        <NavButton href="/agents" icon={IconAgent} label="Agents" onClick={close} />
         <NavButton
           href="/fleet"
           icon={IconFleet}

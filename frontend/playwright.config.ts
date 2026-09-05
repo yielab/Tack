@@ -1,4 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // End-to-end tests drive the real app: the tack-api server + the Vite-served
 // SPA, in a real browser. Playwright owns the lifecycle of both servers via the
@@ -6,6 +10,14 @@ import { defineConfig, devices } from '@playwright/test';
 //
 // The API runs against a throwaway SQLite file (e2e.db) and storage dir so a
 // run never touches your working database.
+
+// Fake `claude`/`codex` binaries (`e2e/fixtures/harness-shims/`), prepended
+// ahead of the real PATH so the embedded runner's own probe (a real
+// subprocess exec — see `agents-page.spec.ts`) always finds these instead
+// of whatever is or isn't really installed on the machine running the
+// suite. Prepending rather than replacing keeps `cargo`/`node` resolvable
+// via whatever the rest of PATH already is, on any machine or CI runner.
+const HARNESS_SHIMS_DIR = resolve(__dirname, 'e2e/fixtures/harness-shims');
 
 // Dedicated e2e ports so a dev server already running on the standard ports
 // (3210 API / 5173 SPA) is never reused in place of an isolated test instance.
@@ -71,6 +83,7 @@ export default defineConfig({
         // nothing but a resolve call ever reads this header (see
         // `crates/tack-api/src/handlers/decisions.rs`'s `require_decision_token`).
         TACK_EXECUTION_DECISION_TOKEN: 'e2e-decision-token',
+        PATH: `${HARNESS_SHIMS_DIR}:${process.env.PATH}`,
       },
     },
     {
