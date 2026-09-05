@@ -19,6 +19,7 @@ import { estimateUnitSuffix } from '../../shared/estimateUnit';
 import { useAgentActivityMap, type AgentBadgeInfo } from '../../shared/agentActivity/useAgentActivityMap';
 import DispatchCardMenu from '../../shared/dispatch/DispatchCardMenu';
 import RunWithAgentButton from '../../shared/runWithAgent/RunWithAgentButton';
+import FirstRunBanner from '../../shared/agents/FirstRunBanner';
 
 /** Short, human id for the card header (real ids are UUIDs). */
 function shortId(id: string): string {
@@ -397,6 +398,8 @@ const Board: Component = () => {
           <AvatarStack names={assignees()} max={5} />
         </Show>
       </div>
+
+      <FirstRunBanner hasItems={itemCount() > 0} />
 
       <Show when={!loading()} fallback={<div style={{ padding: '16px 18px' }}><BoardSkeleton /></div>}>
         <Show

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Fake `claude` binary for the e2e webServer's PATH (playwright.config.ts) —
+# proves the real embedded runner's probe (a real subprocess exec, not a
+# mock) reports back whatever `--version` prints, without depending on
+# whether a real Claude Code CLI happens to be installed on the machine
+# running the suite. `9.9.1` is deliberately outside any real Claude Code
+# release train.
+echo "9.9.1 (Claude Code)"
+exit 0

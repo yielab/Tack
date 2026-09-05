@@ -199,6 +199,17 @@ export const IconProvision = stroke(
   { width: 1.4 },
 );
 
+/** Agent glyph for the Agents nav entry — a small terminal/console shape,
+ *  distinct from `IconFleet`'s three-node cluster. */
+export const IconAgent = stroke(
+  <>
+    <rect x="2.2" y="3" width="11.6" height="10" rx="2" />
+    <path d="M5 6.6L7 8.3L5 10" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M8.4 10h2.6" stroke-linecap="round" />
+  </>,
+  { width: 1.4 },
+);
+
 /** Tack brand mark — teal pin with a check (uses accent + surface tokens). */
 export const BrandMark: Component<{ size?: number; class?: string }> = (props) => (
   <svg

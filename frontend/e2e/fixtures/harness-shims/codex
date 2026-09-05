@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fake `codex` binary — see ./claude's own header comment for why this
+# exists and why the version is deliberately outside any real release train.
+echo "codex-cli 9.9.2"
+exit 0

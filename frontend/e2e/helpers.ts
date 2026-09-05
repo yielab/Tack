@@ -45,6 +45,25 @@ export async function getOrCreateProject(request: APIRequestContext): Promise<st
   return list[0].id;
 }
 
+/**
+ * Create a brand-new project and return its id — for a test whose own
+ * setup writes something to the project itself that has no way back
+ * (e.g. `default_model`, which the API has no route to clear once set).
+ * Reusing `getOrCreateProject`'s shared project for that kind of write
+ * would permanently change what every other spec in this suite sees on a
+ * reused `e2e.db`.
+ */
+export async function createFreshProject(request: APIRequestContext, name: string): Promise<string> {
+  const res = await request.post(`${API}/projects`, {
+    data: { name, project_type: 'software', description: 'created by e2e' },
+  });
+  expect(res.ok(), `create project failed: ${res.status()}`).toBeTruthy();
+  const body = await res.json();
+  if (body?.id) return body.id;
+  const list = await request.get(`${API}/projects`).then((r) => r.json());
+  return list.at(-1).id;
+}
+
 /** Ensure the given project has at least one item and return its id. */
 export async function getOrCreateItem(
   request: APIRequestContext,

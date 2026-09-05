@@ -120,39 +120,17 @@ describe('FleetPage — rows present', () => {
   });
 });
 
-// Card III-E3 (Wave 4): the Part III runner-fleet UI is now the page's
-// primary content, with the pre-existing Docket control-plane view (every
-// test above this point, unchanged) moved into a clearly labeled
-// compatibility section beneath it. These tests prove the composition and
-// the label, not the legacy section's own behavior — that's still fully
-// covered above and by `FleetRow.test.tsx`.
-describe('FleetPage — Part III runner fleet is primary; legacy Docket view is clearly labeled', () => {
-  it('renders the Runner Fleet section above a distinctly labeled "Legacy: Docket control planes" section', async () => {
-    mockFetch(404, { error: { status: 404, message: 'not found' } });
-    const { container } = mount();
-    await flush();
-
-    // New, Part III content — present regardless of the legacy section's own state.
-    expect(container.textContent).toContain('Enroll a runner');
-    const legacyHeading = Array.from(container.querySelectorAll('h2')).find((h) =>
-      h.textContent?.includes('Legacy: Docket control planes'),
-    );
-    expect(legacyHeading).toBeTruthy();
-
-    // Order: the runner-fleet tablist appears before the legacy heading in
-    // DOM order, matching "primary content first."
-    const tablist = container.querySelector('[role="tablist"]')!;
-    expect(
-      tablist.compareDocumentPosition(legacyHeading!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it('does not fire any runner-fleet network request just from loading the page (Runners tab makes none on mount)', async () => {
+// The harness-agnostic runner/fleet/agent-profile/model-profile UI that
+// used to open this page (`RunnerFleetSection`) now lives under the Agents
+// page's Advanced section instead — see `features/agents/AgentsPage.tsx`
+// and `AdvancedSection.tsx`. This page is the legacy Docket control-plane
+// roster only, fully covered by the describe blocks above and by
+// `FleetRow.test.tsx`.
+describe('FleetPage — fires only the legacy control-plane request on mount', () => {
+  it('does not fire any request beyond the one legacy /api/fleet GET', async () => {
     const fetchMock = mockFetch(404, { error: { status: 404, message: 'not found' } });
     mount();
     await flush();
-    // Only the legacy `/fleet` GET should have fired — the default Runners
-    // tab (EnrollmentPanel) issues no request until the operator acts.
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.every((u) => u.endsWith('/api/fleet'))).toBe(true);
   });

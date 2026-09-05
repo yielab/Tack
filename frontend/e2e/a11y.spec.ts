@@ -332,9 +332,10 @@ test('fleet page (populated) has no accessibility violations', async ({ page }) 
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Runner Fleet section (frontend/src/features/fleet/runnerFleet/**, TODO.md
-// §6 "III-E3", Wave 4 / Phase 54). Unlike the legacy Docket scans above, the
-// operator execution/fleet/runner/profile routes this section calls
+// Agents page — Advanced section (frontend/src/features/agents/runnerFleet/**
+// — a distinct, harness-agnostic execution runner from the legacy Docket
+// scans above, which happen to share the word "fleet"). The operator
+// execution/fleet/runner/profile routes this section calls
 // (`/api/executions`, `/api/runner-fleets`, `/api/runners/*`,
 // `/api/agent-profiles`, `/api/model-profiles`) are NOT gated behind
 // `TACK_ORCH_ENABLE` (`crates/tack-api/src/router.rs`'s
@@ -342,23 +343,31 @@ test('fleet page (populated) has no accessibility violations', async ({ page }) 
 // `orch_routes`) — so these scans hit the real, unmodified webServer with no
 // `page.route` interception at all, including a genuine enroll round-trip
 // against `POST /api/runners/enrollment`.
+// Collapsed by default (its vocabulary lives only here), so every
+// scan below opens it first.
 
-test('fleet page — runner fleet section (default Runners tab, empty) has no accessibility violations', async ({
+async function openAdvanced(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: /Advanced/ }).click();
+}
+
+test('agents page — advanced section (default Runners tab, empty) has no accessibility violations', async ({
   page,
 }) => {
-  await page.goto('/fleet');
+  await page.goto('/agents');
   await waitForApp(page);
+  await openAdvanced(page);
   await expect(page.getByRole('heading', { name: 'Enroll a runner' })).toBeVisible();
   await expect(page.getByRole('tablist')).toBeVisible();
   const violations = await scan(page);
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-test('fleet page — enrolling a runner and viewing the one-time token modal has no accessibility violations', async ({
+test('agents page — enrolling a runner and viewing the one-time token modal has no accessibility violations', async ({
   page,
 }) => {
-  await page.goto('/fleet');
+  await page.goto('/agents');
   await waitForApp(page);
+  await openAdvanced(page);
 
   const runnerName = `e2e-runner-${Date.now()}`;
   await page.getByLabel('Name').fill(runnerName);
@@ -385,9 +394,10 @@ test('fleet page — enrolling a runner and viewing the one-time token modal has
   expect(violationsAfterClose, JSON.stringify(violationsAfterClose.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-test('fleet page — Fleets/Agent profiles/Model profiles tabs have no accessibility violations', async ({ page }) => {
-  await page.goto('/fleet');
+test('agents page — Fleets/Agent profiles/Model profiles tabs have no accessibility violations', async ({ page }) => {
+  await page.goto('/agents');
   await waitForApp(page);
+  await openAdvanced(page);
 
   await page.getByRole('tab', { name: 'Fleets' }).click();
   await expect(page.getByRole('tabpanel')).toBeVisible();
@@ -403,9 +413,10 @@ test('fleet page — Fleets/Agent profiles/Model profiles tabs have no accessibi
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-test('fleet page — creating a fleet via the form has no accessibility violations', async ({ page }) => {
-  await page.goto('/fleet');
+test('agents page — creating a fleet via the form has no accessibility violations', async ({ page }) => {
+  await page.goto('/agents');
   await waitForApp(page);
+  await openAdvanced(page);
 
   await page.getByRole('tab', { name: 'Fleets' }).click();
   await page.getByRole('button', { name: '+ Create fleet' }).click();
