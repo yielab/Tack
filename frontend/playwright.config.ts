@@ -42,6 +42,11 @@ process.env.E2E_API_ORIGIN = process.env.E2E_API_ORIGIN || `http://127.0.0.1:${A
 
 export default defineConfig({
   testDir: './e2e',
+  // Ensures the suite's one shared project (`helpers.ts#getOrCreateProject`)
+  // exists exactly once, before any worker starts — see `global-setup.ts`'s
+  // own doc comment for why that removes a create-time race under
+  // `fullyParallel: true` below.
+  globalSetup: './e2e/global-setup.ts',
   // Capture specs (screenshots / hero GIF) are local-only tools — they require
   // ffmpeg and a running dev environment. Exclude them from the default CI suite;
   // run them explicitly with `make screenshots` or `make gif`. recovery-demo.spec.ts
