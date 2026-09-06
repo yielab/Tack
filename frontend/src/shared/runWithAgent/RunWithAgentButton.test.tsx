@@ -200,7 +200,7 @@ describe('RunWithAgentButton', () => {
     expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'Unknown')).toBe(false);
   });
 
-  it('a screen of many cards, each with showStateChip, still issues exactly one /executions fetch — the shared preload this card measures, not one per card', async () => {
+  it('a screen of many cards, each with showStateChip, still issues exactly one /executions fetch — one shared preload, not one request per card', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch({ executions: [] }));
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -232,7 +232,7 @@ describe('RunWithAgentButton', () => {
     const executionCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/executions'));
     expect(executionCalls).toHaveLength(1);
     // The one call asks for the wider preload bound, not the server's
-    // smaller default — the "after" half of this card's measurement.
+    // smaller default.
     expect(String(executionCalls[0][0])).toBe(`/api/executions?limit=${EXECUTION_LIST_PRELOAD_LIMIT}`);
   });
 });

@@ -208,9 +208,9 @@ describe('createExecutionStore — loadOne / loadList', () => {
       }),
     );
     // A fake that actually applies `limit` the way the real handler's
-    // `ORDER BY created_at DESC LIMIT ?` does (VI-C12's
-    // `list_executions_limit_bounds_the_unscoped_response` proved the real
-    // server behaves this way) — every other test's plain
+    // `ORDER BY created_at DESC LIMIT ?` does, which
+    // `list_executions_limit_bounds_the_unscoped_response` pins on the
+    // server side — every other test's plain
     // `mockResolvedValue` echoes back whatever rows it's handed regardless
     // of what limit was asked for, which cannot distinguish "asked for
     // 200" from "asked for 2000"; this one can.
