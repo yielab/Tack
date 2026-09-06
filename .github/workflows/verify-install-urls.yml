@@ -1,8 +1,14 @@
 name: Verify install URLs
 
 # Confirms the install URLs advertised in README.md/docs/install.sh actually
-# resolve. Independent of every other job here: a branch rename or a repo
-# move can 404 these without touching a single line of Rust, SolidJS, or the
+# resolve, and then actually runs install.sh against whatever release is
+# really published — a resolvable URL is not a working install. A release
+# can publish two archives whose names share the same platform suffix; if
+# the one install.sh doesn't want is listed first by the releases API, its
+# asset picker can grab it and the install still fails even though every
+# advertised URL keeps returning 2xx. Independent of every other job here: a
+# branch rename, a repo move, or a release that ships the wrong asset order
+# can break this without touching a single line of Rust, SolidJS, or the
 # spec — the OpenAPI/frontend/coverage gates would all stay green while the
 # public install path was broken. Runs on a schedule as well as on push/PR so
 # rot with no accompanying doc change (e.g. the branch these URLs point at
