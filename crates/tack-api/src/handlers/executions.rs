@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     http::StatusCode,
     routing::{get, post},
@@ -340,6 +340,28 @@ pub struct ExecutionSummary {
 pub struct ExecutionListResponse {
     pub protocol_version: u32,
     pub data: Vec<ExecutionSummary>,
+}
+
+/// Query parameters for `GET /api/executions`. `item_id`, when present,
+/// scopes the result to one item's requests instead of every request the
+/// install has ever recorded; `limit` bounds either case so no request can
+/// scan the whole table.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListExecutionsQuery {
+    pub item_id: Option<Uuid>,
+    pub limit: Option<u32>,
+}
+
+impl ListExecutionsQuery {
+    /// Applied when `limit` is omitted.
+    pub const DEFAULT_LIMIT: u32 = 200;
+    /// Hard cap even when a caller asks for more.
+    pub const MAX_LIMIT: u32 = 2000;
+
+    fn effective_limit(&self) -> i64 {
+        i64::from(self.limit.unwrap_or(Self::DEFAULT_LIMIT).min(Self::MAX_LIMIT))
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -796,22 +818,37 @@ pub async fn create_execution(
     get,
     path = "/api/executions",
     tag = "execution-operator",
+    params(ListExecutionsQuery),
     responses(
-        (status = 200, description = "Every execution request, newest first", body = ExecutionListResponse),
+        (status = 200, description = "Execution requests, newest first — scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit`", body = ExecutionListResponse),
     ),
 )]
 pub async fn list_executions(
     State(state): State<OperatorExecutionState>,
+    Query(query): Query<ListExecutionsQuery>,
 ) -> Result<Json<ExecutionListResponse>, (StatusCode, Json<Value>)> {
-    let rows = sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests ORDER BY created_at DESC")
-        .fetch_all(state.repo.pool()).await.map_err(|_| {
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                StableErrorCode::InternalError,
-                "Could not list executions",
-                json!({}),
-            )
-        })?;
+    let limit = query.effective_limit();
+    let rows = match query.item_id {
+        Some(item_id) => {
+            sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests WHERE item_id = ? ORDER BY created_at DESC LIMIT ?")
+                .bind(item_id.to_string())
+                .bind(limit)
+                .fetch_all(state.repo.pool()).await
+        }
+        None => {
+            sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests ORDER BY created_at DESC LIMIT ?")
+                .bind(limit)
+                .fetch_all(state.repo.pool()).await
+        }
+    }
+    .map_err(|_| {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StableErrorCode::InternalError,
+            "Could not list executions",
+            json!({}),
+        )
+    })?;
     let data: Vec<ExecutionSummary> = rows
         .into_iter()
         .map(|row| ExecutionSummary {

@@ -153,6 +153,16 @@ describe('createExecutionStore — loadOne / loadList', () => {
     expect(store.getRequest('exec_1')).toBeDefined(); // earlier row survives
   });
 
+  it('loadList(itemId) forwards the item id to executionsApi.list and still merges into the shared cache', async () => {
+    mockedApi.list.mockResolvedValue(
+      withHeaders({ protocol_version: 1, data: [summary({ request_id: 'exec_1', item_id: 'item_1' })] }),
+    );
+    const store = createExecutionStore();
+    await store.loadList('item_1');
+    expect(mockedApi.list).toHaveBeenCalledWith('item_1');
+    expect(store.getRequest('exec_1')?.summary?.item_id).toBe('item_1');
+  });
+
   it('requestsForItem filters by item and sorts newest created_at first', async () => {
     mockedApi.list.mockResolvedValue(
       withHeaders({

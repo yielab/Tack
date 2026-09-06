@@ -1194,9 +1194,30 @@
           "execution-operator"
         ],
         "operationId": "list_executions",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Every execution request, newest first",
+            "description": "Execution requests, newest first — scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit`",
             "content": {
               "application/json": {
                 "schema": {

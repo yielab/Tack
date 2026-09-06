@@ -503,3 +503,106 @@ async fn provision_local_runner_fails_on_an_unparseable_database_url() {
         runner_admin::ProvisionLocalRunnerError::Pool(_)
     ));
 }
+
+/// Seeds two items, each with executions of its own, and proves
+/// `?item_id=` scopes `GET /executions` to exactly one of them by row
+/// count — never by what a component would go on to render. The unscoped
+/// call is checked in the same test to prove it still sees every row
+/// across both items.
+#[tokio::test]
+async fn list_executions_scoped_to_item_id_excludes_other_items_rows() {
+    let (app, repo, item_id) = setup().await;
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(repo.pool())
+        .await
+        .expect("project id for the seeded item");
+    let other_item = repo
+        .create_item(
+            Uuid::parse_str(&project_id).expect("project id parses"),
+            "To Do",
+            CreateItem {
+                title: "Other".into(),
+                description: None,
+                item_type: None,
+                parent_id: None,
+                priority: None,
+                estimate: None,
+                estimate_unit: None,
+                tags: None,
+                due_date: None,
+                sprint_id: None,
+                assignee: None,
+            },
+        )
+        .await
+        .expect("second item");
+    let other_item_id = other_item.id.to_string();
+
+    let (status, _) = send(&app, "POST", "/executions", create_body(&item_id)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/executions",
+        create_body(&item_id).replace("same-key", "same-key-2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/executions",
+        create_body(&other_item_id).replace("same-key", "other-item-key"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, scoped) = send(
+        &app,
+        "GET",
+        &format!("/executions?item_id={item_id}"),
+        String::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = scoped["data"].as_array().expect("data array");
+    assert_eq!(
+        rows.len(),
+        2,
+        "expected only the seeded item's two rows, got {scoped}"
+    );
+    assert!(
+        rows.iter().all(|row| row["item_id"] == item_id),
+        "a row for another item leaked into the scoped response: {scoped}"
+    );
+
+    let (status, unscoped) = send(&app, "GET", "/executions", String::new()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        unscoped["data"].as_array().expect("data array").len(),
+        3,
+        "an omitted item_id must still return every item's rows"
+    );
+}
+
+/// `limit` clamps the row count even for the unscoped call — the bound this
+/// card's endpoint change added alongside the `item_id` filter.
+#[tokio::test]
+async fn list_executions_limit_bounds_the_unscoped_response() {
+    let (app, _repo, item_id) = setup().await;
+    for key in ["k1", "k2", "k3"] {
+        let (status, _) = send(
+            &app,
+            "POST",
+            "/executions",
+            create_body(&item_id).replace("same-key", key),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let (status, body) = send(&app, "GET", "/executions?limit=2", String::new()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"].as_array().expect("data array").len(), 2);
+}

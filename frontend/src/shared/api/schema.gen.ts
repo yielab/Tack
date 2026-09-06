@@ -6175,14 +6175,17 @@ export interface operations {
     };
     list_executions: {
         parameters: {
-            query?: never;
+            query?: {
+                item_id?: string;
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Every execution request, newest first */
+            /** @description Execution requests, newest first — scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit` */
             200: {
                 headers: {
                     [name: string]: unknown;
