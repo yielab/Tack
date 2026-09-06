@@ -63,9 +63,7 @@ fn is_loopback_base(base: &str) -> bool {
             Some((inside, _)) => return inside == "::1",
             None => return false,
         },
-        None => rest
-            .split_once(|c| c == ':' || c == '/')
-            .map_or(rest, |(host, _)| host),
+        None => rest.split_once([':', '/']).map_or(rest, |(host, _)| host),
     };
     host == "localhost"
         || host
