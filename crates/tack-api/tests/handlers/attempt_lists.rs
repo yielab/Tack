@@ -194,12 +194,15 @@ fn headers_ref(owned: &[(String, String); 1]) -> Vec<(&str, &str)> {
         .collect()
 }
 
-async fn create_agent_profile(app: &axum::Router) -> String {
+/// `label` keeps the profile name unique per call — a test that stands up
+/// two separate executions (the cross-execution not-found tests) calls this
+/// twice, and profile names are unique.
+async fn create_agent_profile(app: &axum::Router, label: &str) -> String {
     let (status, profile, _) = send(
         app,
         "POST",
         "/api/agent-profiles",
-        json!({"name": "C5 attempt lists profile", "instructions": "work safely"}),
+        json!({"name": format!("C6 {label} profile"), "instructions": "work safely"}),
         &operator_headers(),
     )
     .await;
@@ -237,7 +240,7 @@ fn execution_request_body(
 async fn request_and_claim(app: &axum::Router, item_id: &str, label: &str) -> (String, String) {
     let (runner_id, auth_owned) = enroll_runner(app, &format!("{label} runner")).await;
     let auth = headers_ref(&auth_owned);
-    let agent_profile_id = create_agent_profile(app).await;
+    let agent_profile_id = create_agent_profile(app, label).await;
 
     let (status, created, _) = send(
         app,
@@ -385,6 +388,80 @@ async fn attempt_artifacts_are_returned_oldest_first() {
     assert_eq!(data[1]["artifact_id"], "art-newer");
 }
 
+/// Creates an execution request but never claims it, so its
+/// `execution_attempts` table stays empty — the "another execution exists,
+/// but this one never claimed an attempt" half of the cross-execution
+/// not-found tests below.
+async fn request_without_claiming(app: &axum::Router, item_id: &str, label: &str) -> String {
+    let (runner_id, _auth_owned) = enroll_runner(app, &format!("{label} runner")).await;
+    let agent_profile_id = create_agent_profile(app, label).await;
+    let (status, created, _) = send(
+        app,
+        "POST",
+        "/api/executions",
+        execution_request_body(item_id, label, &runner_id, &agent_profile_id),
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    created["request_id"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn attempt_artifacts_unknown_attempt_number_is_404() {
+    let (app, _repo, item_id) = setup().await;
+    let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "artifacts-unknown-n").await;
+
+    // Only attempt 1 was ever claimed for this request; attempt 99 never
+    // existed for anyone.
+    let (status, body, _) = send(
+        &app,
+        "GET",
+        &format!("/api/executions/{request_id}/attempts/99/artifacts"),
+        Value::Null,
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
+}
+
+#[tokio::test]
+async fn attempt_artifacts_from_a_different_execution_is_404() {
+    let (app, repo, item_id) = setup().await;
+    // Execution X claims attempt 1 and manifests a real artifact against it.
+    let (_other_request_id, other_attempt_id) =
+        request_and_claim(&app, &item_id, "artifacts-cross-owner").await;
+    insert_artifact(
+        &repo,
+        &other_attempt_id,
+        "cross-execution-artifact",
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+    // Execution Y is real but never claimed anything — it has no attempt 1
+    // of its own.
+    let request_id = request_without_claiming(&app, &item_id, "artifacts-cross-caller").await;
+
+    let (status, body, raw) = send(
+        &app,
+        "GET",
+        &format!("/api/executions/{request_id}/attempts/1/artifacts"),
+        Value::Null,
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
+    // A status code alone would not catch a query that scopes only by
+    // attempt_number and forgets request_id: assert X's real artifact never
+    // reached this response.
+    assert!(
+        !raw.contains("cross-execution-artifact"),
+        "must not leak another execution's artifact: {raw}"
+    );
+}
+
 // =======================================================================
 // GET /api/executions/{request_id}/attempts/{attempt_number}/decisions
 // =======================================================================
@@ -461,4 +538,59 @@ async fn attempt_decisions_are_returned_oldest_first() {
     assert_eq!(data.len(), 2);
     assert_eq!(data[0]["decision_id"], "dec-older");
     assert_eq!(data[1]["decision_id"], "dec-newer");
+}
+
+#[tokio::test]
+async fn attempt_decisions_unknown_attempt_number_is_404() {
+    let (app, _repo, item_id) = setup().await;
+    let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "decisions-unknown-n").await;
+
+    // Only attempt 1 was ever claimed for this request; attempt 99 never
+    // existed for anyone.
+    let (status, body, _) = send(
+        &app,
+        "GET",
+        &format!("/api/executions/{request_id}/attempts/99/decisions"),
+        Value::Null,
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
+}
+
+#[tokio::test]
+async fn attempt_decisions_from_a_different_execution_is_404() {
+    let (app, repo, item_id) = setup().await;
+    // Execution X claims attempt 1 and raises a real decision against it.
+    let (_other_request_id, other_attempt_id) =
+        request_and_claim(&app, &item_id, "decisions-cross-owner").await;
+    insert_decision(
+        &repo,
+        &other_attempt_id,
+        "cross-execution-decision",
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+    // Execution Y is real but never claimed anything — it has no attempt 1
+    // of its own.
+    let request_id = request_without_claiming(&app, &item_id, "decisions-cross-caller").await;
+
+    let (status, body, raw) = send(
+        &app,
+        "GET",
+        &format!("/api/executions/{request_id}/attempts/1/decisions"),
+        Value::Null,
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
+    // A status code alone would not catch a query that scopes only by
+    // attempt_number and forgets request_id: assert X's real decision never
+    // reached this response.
+    assert!(
+        !raw.contains("cross-execution-decision"),
+        "must not leak another execution's decision: {raw}"
+    );
 }
