@@ -2436,6 +2436,46 @@ gone. Say which, and delete only those.
 ---
 
 
+### VI-C30 — A developer running the UI the documented way never receives a live board event
+
+**Needs nothing.** Wave 17.
+
+**Owns:** the decision and its implementation — one of `default_allowed_origins()` in
+`crates/tack-api/src/config.rs`, the `npm run dev` recipe (`Makefile`, `CLAUDE.md`,
+`docs/book/src/developer/frontend.md`, `docs/book/src/user-guide/quick-start.md` step at
+"Vite starts at `http://localhost:5173`"), or `board_websocket_is_authorized` in
+`crates/tack-api/src/middleware.rs` — plus a test and the handoff. Do not widen more than one
+of them.
+
+`board_websocket_is_authorized` refuses the upgrade whenever the request carries an `Origin`
+outside `TACK_ALLOWED_ORIGINS`, and the Vite dev proxy forwards the page's own origin
+unchanged (proven at VI-C28's merge: the E2E suite's `localhost:5199` was refused with the
+default list, and passing the origin in fixed it — 1 failed / 1 passed, same spec, no other
+change). The default list holds `8080`, `3210` and `tack.test`; it has never held `5173`. So
+the quick-start's own developer path — `tack serve`, then `npm run dev`, open `:5173` —
+completes REST calls through the proxy and silently never receives a live event. Nothing
+told anyone: the socket closes without an error the page shows, exactly as in VI-C28, and the
+E2E suite only started exercising this path when VI-C28 landed (its config now sets the
+variable for port `5199`, which is the suite's fix, not the developer's).
+
+**Tasks:** decide where the fix belongs. Adding `5173` to the product's default allow-list
+puts a dev port into every install's CORS posture; teaching the dev recipe to set
+`TACK_ALLOWED_ORIGINS` keeps the product's defaults clean but adds a step the quick-start
+must carry; treating a loopback-bound server's loopback origins as same-machine changes
+what the check means. Weigh them in the handoff and pick one. Whatever you pick, a test must
+fail without it: the E2E config's `TACK_ALLOWED_ORIGINS` line is the model of a from-scratch
+proof, and `docs/CONFIG.md` (already corrected to name the WebSocket gate) must match.
+
+**Acceptance:** following `docs/book/src/user-guide/quick-start.md`'s developer steps verbatim
+on a tree with your change, an item created in one tab appears live in another without a
+reload; the same steps on `develop` before your change do not. Show both. Prove
+load-bearing by reverting once.
+
+**Stop if:** the only shape that works also widens what a non-loopback bind accepts by
+default. Say what it would accept and stop.
+
+---
+
 ## §VI.5 Definition of done, and deliberate exclusions
 
 | Claim | Proof |

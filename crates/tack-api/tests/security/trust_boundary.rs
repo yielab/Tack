@@ -135,8 +135,8 @@ async fn split_origin_websocket_handshake_accepts_subprotocol_credential_without
 }
 
 /// A raw handshake reader (this test, or `curl`) only ever checks the status
-/// line — see the assertion above, which is the shape every WebSocket check
-/// in this repo used to have. That shape cannot tell a spec-compliant
+/// line — see the assertion above, which is the shape of every other
+/// WebSocket check in this file. That shape cannot tell a spec-compliant
 /// handshake apart from one a real browser refuses to use: RFC 6455 §4.1
 /// requires a client that offered a subprotocol to fail the connection when
 /// the response omits `Sec-WebSocket-Protocol`, and nothing about the status

@@ -139,6 +139,11 @@ export default defineConfig({
         // nothing but a resolve call ever reads this header (see
         // `crates/tack-api/src/handlers/decisions.rs`'s `require_decision_token`).
         TACK_EXECUTION_DECISION_TOKEN: 'e2e-decision-token',
+        // The board's live WebSocket rejects any browser `Origin` outside this
+        // list before the upgrade, and the Vite proxy forwards the page's own
+        // origin unchanged — so without the SPA port here every board-live
+        // connection in the suite is refused and no spec can see a live event.
+        TACK_ALLOWED_ORIGINS: `http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}`,
         PATH: `${HARNESS_SHIMS_DIR}:${process.env.PATH}`,
       },
     },

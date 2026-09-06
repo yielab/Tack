@@ -68,9 +68,9 @@ pub enum BoardEvent {
 /// nothing more. The frontend (`shared/realtime/boardSocket.ts`) always
 /// offers it. A client that offers a subprotocol and gets a handshake
 /// response with no `Sec-WebSocket-Protocol` header at all must fail the
-/// connection per the WebSocket spec (RFC 6455 §4.1); a server that never
-/// selects a protocol here was silently unreachable from any browser that
-/// offered one, even though the TCP-level handshake itself still completes.
+/// connection per the WebSocket spec (RFC 6455 §4.1), so a server that does
+/// not select it here is silently unreachable from every browser, even though
+/// the handshake itself still completes with a 101.
 const BOARD_SUBPROTOCOL: &str = "tack.v1";
 
 /// WebSocket handler for live board updates

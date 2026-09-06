@@ -153,3 +153,23 @@ a console command moving to the UI.
 
 *(Appended by later readers, dated. The original text above is never rewritten — the
 history of what was believed and later falsified is the point.)*
+
+**2026-09-06, integrator, at merge.** The spec passed for the card's agent only against a
+hand-started server whose `TACK_ALLOWED_ORIGINS` included the suite's SPA port; the
+Playwright config's own `webServer` env did not set it, so a from-scratch run (which is what
+CI does) would have failed the new spec at the `open` poll. The config now sets
+`TACK_ALLOWED_ORIGINS` to the suite's own origin for the API server. Proven both ways from
+scratch, no server running beforehand: with the line, `npx playwright test
+board-websocket-subprotocol --project=chromium` → 1 passed (12.3 s including the cargo
+build); with the line removed → 1 failed, the poll received `closed` (the upgrade was refused
+on `Origin` before the subprotocol logic ran). That settles a question the section above
+left open: the Vite proxy forwards the page's `Origin` unchanged, so the developer flow at
+`localhost:5173` has the same refusal by default — carded as VI-C30. `docs/CONFIG.md`'s
+documented default for the variable was two entries where the code has five; corrected in
+the same merge. Two comments were rewritten from history narrative to present tense.
+
+With the socket delivering events in the suite for the first time,
+`execution-attempt-detail.spec.ts` failed in 2 of 2 full chromium runs and 1 of 2 three-spec
+runs, and passed 2 of 2 with the socket refused. Not this card's defect: the execution
+store's `loadAttempts` replaces ready data with `loading` on every 4 s realtime tick and the
+timeline unmounts the attempt panel meanwhile — carded as VI-C31, which this merge waited for.
