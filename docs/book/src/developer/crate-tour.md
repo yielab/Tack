@@ -1,6 +1,6 @@
 # Crate Tour
 
-This chapter walks through each of the six Rust crates in depth: what it owns, what it deliberately does not own, the key files, and the patterns worth understanding. `tack-core`, `tack-db`, `tack-api`, and `tack-cli` predate the Part III runner-fleet cycle; `tack-orch` and `tack-runner` were added by it.
+This chapter walks through each of the six Rust crates in the main workspace in depth: what it owns, what it deliberately does not own, the key files, and the patterns worth understanding. `tack-core`, `tack-db`, `tack-api`, and `tack-cli` predate the Part III runner-fleet cycle; `tack-orch` and `tack-runner` were added by it. A seventh crate, `tack-desktop`, sits outside that workspace by design — its own section at the end of this chapter says why.
 
 > The SolidJS web UI in `frontend/` is covered separately in
 > [Frontend & Design System](frontend.md) — structure, the design-token system,
@@ -469,3 +469,31 @@ Error handling: the `extract()` helper parses the response body regardless of st
 4. Default: `http://127.0.0.1:3210`
 
 `config::save(base_url, token)` writes `~/.tackrc`. This is what `tack config --url <url>` does.
+
+---
+
+## `tack-desktop`
+
+**Lives in:** `crates/tack-desktop/src/`
+
+**Owns:** the Tauri shell — a window, a system tray icon, and the supervisor that either attaches to a `tack serve` already answering on the configured port or starts one itself as a bundled sidecar. Built with `make desktop`; excluded from the root workspace (see the crate map in the top-level `CLAUDE.md`) so a contributor without Tauri's system dependencies (GTK, WebKit) still builds every other crate with a plain `cargo build --workspace`. Its own `Cargo.lock`, CI job, and Dependabot entry follow from that same exclusion.
+
+**Does not own:** the server. It never opens the database or reimplements anything `tack-api` already does — only starts, attaches to, and supervises the `tack` binary as a child process, and only ever stops a server it started itself.
+
+---
+
+### `main.rs`
+
+Builds the Tauri app and calls `attach_or_start` before creating the window — the window exists only on `Ok`. Of the ways that call can fail, two render a dialog naming the reason before exiting (a port already held by something that isn't Tack; an attached server older than the bundle), and a catch-all arm covers everything else. The window opens at `1200x800` (`WebviewWindowBuilder::inner_size`).
+
+### `supervisor.rs`
+
+`attach_or_start` probes the configured port for a Tack server already answering at a compatible version and attaches to it instead of spawning a second one; otherwise it spawns the bundled sidecar binary and waits up to a fixed health timeout for `/api/health` to answer. A server this process did not start is never signalled to stop, on any exit path.
+
+### `first_run.rs`
+
+`ensure_settings` runs before the supervisor does: on an empty data root it shows a first-run dialog (database path, port) and writes the answer to `settings.json` before anything tries to reach a server. The dialog call itself runs off the main thread — Tauri's dialog plugin deadlocks the event loop if it doesn't.
+
+### `tray.rs`
+
+Builds the tray icon and its menu: **Open Tack** (show or refocus the window), a permanently disabled entry reading **Agent execution: unknown — the switch arrives with the Agents page** (`AGENT_EXECUTION_LABEL`, a hard-coded constant passed `enabled: false` — nothing in this file makes an HTTP request; it does not read `GET /api/local-runner` or any other live state), a checked **Launch at login** toggle (on by default the first time), and **Quit**. Closing the window only hides it — the server keeps running; **Quit** is the action that actually stops it.
