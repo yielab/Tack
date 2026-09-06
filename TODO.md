@@ -11,7 +11,7 @@
 | Part | Cycle | Phases | Status | Where |
 |---|---|---|---|---|
 | **VII** | **Desktop app & background service** | 61 | **ACTIVE** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. **VII-C2 integrated 2026-09-06** — the README now leads with the download and shows the app. Its correction to `crate-tour.md` exposed that the tray's agent-execution entry still says the route it reads does not exist, which is now **VII-B4** (Wave 22); **VII-B4 integrated 2026-09-06** — the tray now reads `GET /api/local-runner` and reports six typed states, so the app and the README screenshot beside it finally agree. **VII-D1 is the only card left in this Part**, held only until VI-D2 stops using the display | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
-| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation. **VI-C20 integrated 2026-09-06** — the shared project is resolved once by name in a global setup step before any worker forks, so it no longer means "whichever project sorted first"; six of eight spec files depended on that stability without saying so, and one test wrote `default_model` straight onto it, which a stable identity would have turned from racy into permanently corrupting. Verifying it showed VI-C24 is **two** failing tests sharing one cause, not one. **VI-C24 integrated 2026-09-06 — the full chromium suite is green for the first time, 71/71.** The token was never at fault: the drawer's own mount animations ramped CSS `opacity` 0→1, and `opacity` composites the whole subtree, so every descendant rendered briefly below AA while axe was reading it. That is why three handoffs called it a flake — it was genuinely intermittent, because it depended on scan timing rather than any declared colour. Reverting the keyframes fails 8 of 15 repeats; restored, 15 of 15 pass. The alternative fix — making the test wait for animations to settle — was foreclosed by that card's own "do not touch the spec" rule and is worth knowing was never weighed. Its out-of-scope probe of another palette became **VI-C26**. The limitation VI-C21 documented is now **VI-C25**, and reading `engine.rs` to card it showed the handoff's "harmless" understates it: a `RecoveryPending` outcome keeps the workspace checkout on purpose, so a record naming an attempt the recreated database never had costs a retry every boot *and* holds its checkout indefinitely. **VI-C25 integrated 2026-09-06** — `stale_lease` is the one answer that settles the report, because the fencing token is fixed for the life of an attempt, so a miss on it will never match again; an absent reply or a transport failure keep their existing behaviour untouched. Retired means quarantined, not deleted: the record leaves the restart scan and the checkout stays as operator evidence, so the disk is not reclaimed automatically and that is the deliberate trade | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
+| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation. **VI-C20 integrated 2026-09-06** — the shared project is resolved once by name in a global setup step before any worker forks, so it no longer means "whichever project sorted first"; six of eight spec files depended on that stability without saying so, and one test wrote `default_model` straight onto it, which a stable identity would have turned from racy into permanently corrupting. Verifying it showed VI-C24 is **two** failing tests sharing one cause, not one. **VI-C24 integrated 2026-09-06 — the full chromium suite is green for the first time, 71/71.** The token was never at fault: the drawer's own mount animations ramped CSS `opacity` 0→1, and `opacity` composites the whole subtree, so every descendant rendered briefly below AA while axe was reading it. That is why three handoffs called it a flake — it was genuinely intermittent, because it depended on scan timing rather than any declared colour. Reverting the keyframes fails 8 of 15 repeats; restored, 15 of 15 pass. The alternative fix — making the test wait for animations to settle — was foreclosed by that card's own "do not touch the spec" rule and is worth knowing was never weighed. Its out-of-scope probe of another palette became **VI-C26**, **integrated 2026-09-06** — five of six token cells are scanned now, four were clean, and `graphite`/light is genuinely broken in a way no value change fixes: its `primary-600` is both text on light surfaces and the background under a deliberately dark `on-accent`, and the required ranges do not overlap (proven by trying the darkening and watching the other pairing drop to 2.92:1). The only shape that clears both flips `on-accent` to white, which changes what the palette *is* — escalated as a design decision, tracked with a disable scoped to that one scan so the other five stay real gates. **VI-D1 integrated 2026-09-06.** Both smoke steps proved able to fail by injected breakage, and a stranger reached a completed attempt in a clean `ubuntu:24.04` container typing only the command the container prints. **But it is not the end of this Part.** The run found two real defects, now **VI-C27** and **VI-C28**, and the first of them breaks this Part's own goal: a gateway key pasted while execution is already on never reaches the running runner, the Agents page reports success anyway, and the attempt sits at `preparing` silently — the exact failure this Part exists to rule out. The integrator's own review of VI-D1 also found its loopback guard compared the host by prefix, accepting `localhost.attacker.example` and handing it the stored credential; fixed at merge. Reviewing VI-C26 surfaced **VI-C29**: the comment gate has never scanned `frontend/e2e`, which exits 1 with 77 findings across its own categories. The limitation VI-C21 documented is now **VI-C25**, and reading `engine.rs` to card it showed the handoff's "harmless" understates it: a `RecoveryPending` outcome keeps the workspace checkout on purpose, so a record naming an attempt the recreated database never had costs a retry every boot *and* holds its checkout indefinitely. **VI-C25 integrated 2026-09-06** — `stale_lease` is the one answer that settles the report, because the fencing token is fixed for the life of an attempt, so a miss on it will never match again; an absent reply or a transport failure keep their existing behaviour untouched. Retired means quarantined, not deleted: the record leaves the restart scan and the checkout stays as operator evidence, so the disk is not reclaimed automatically and that is the deliberate trade | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
 | **V** | **Adoption & First Public Release** | 59 | **ACTIVE** — Waves 11–12 done. **V-C2 and V-C3 both integrated 2026-09-06**; V-C3 published nothing, by design, and its walk of the stranger's path found that `install.sh` had installed nothing since `v0.1.0-beta.7` (fixed in the same change). **V-C4** carries the two CI checks that stayed green through it. The publish list — posts, issues, Discussions, GitHub description — is the user's to run, and is in `docs/LAUNCH-CHECKLIST.md` | [§V](#part-v--adoption--first-public-release-phase-59) |
 | **IV** | **Standalone Single-Binary Operation** | 58 | Done — Wave 10 integrated at `83fefab` | [§IV](#part-iv--standalone-single-binary-operation-phase-58) |
 | III | Harness-Agnostic Runner Fleet | 50–57 | Feature-complete, **tag refused** | [§III](#part-iii--harness-agnostic-runner-fleet-phases-5057), archive |
@@ -2319,6 +2319,119 @@ in today. State plainly which palette × mode combinations remain unscanned afte
 **Stop if:** fixing `graphite`'s primary requires changing what the palette *is* rather than
 correcting a value — a primary that no longer reads as that palette's identity is a design
 decision, not a contrast calculation. Say what the constraints are and stop.
+
+---
+
+
+### VI-C27 — The key reaches the page, not the runner, and the page says it worked
+
+**Needs nothing.** Wave 17. **This one blocks Part VI's own definition of done.**
+
+**Owns:** `EmbeddedRunnerControl`'s handling of configuration changes against an already-spawned
+runner task in `crates/tack-cli/src/local_runner.rs`, its tests, and the handoff.
+
+`EmbeddedRunnerControl::start()` clones `runner_config` once, at the moment the runner task is
+spawned. `set_secret()` mutates only the control's own stored copy — never the spawned task's
+independent snapshot. So a gateway key pasted while agent execution is already on never reaches
+the runner that is actually running.
+
+**What makes this worse than a missing feature is the feedback.** The Agents page's "Catalog: N
+models" line updates immediately and looks correct, because `catalog()` re-reads the control's
+copy fresh on every call. The one piece of UI an operator gets says *done*, while the dispatch
+path still resolves the provider through the stale, disabled config and the attempt sits at
+`preparing` forever. Nothing errors. Reproduced twice, deterministically, with full-debug logs
+confirming the harness binary was never invoked for the real dispatch — only `--version`-probed.
+
+The workaround is clicking "Re-check", which restarts the embedded runner. **Nothing in the UI
+says so.** A stranger who reads the Agents page top to bottom and follows it in the order it is
+laid out gets a dispatch that silently never completes — which is the exact failure this Part
+exists to rule out, so this Part is not done while it stands.
+
+**Tasks:** decide whether the spawned task should read configuration through a shared handle, or
+whether a configuration change should restart the runner the way "Re-check" already does. The
+second is smaller and honest; the first is better and larger. **Say which you chose and what it
+costs**, rather than picking the small one silently. Whichever you choose, the invariant is that
+no UI state may report a key as usable while the dispatch path cannot use it.
+
+**Acceptance:** a key set while the runner is already running is used by the very next dispatch,
+with no "Re-check" and no restart by the operator. Prove it end to end — an attempt that actually
+reaches the harness, not a config assertion. Assert the absence directly for the failure case:
+before the fix, the harness binary is never invoked for the dispatch, and your test must show
+that, not merely that a status differed. Prove load-bearing by reverting once. Say what happens
+to a key set while the runner is *stopped* — that path works today and must keep working.
+
+**Stop if:** sharing the configuration handle would let a half-applied change be observed
+mid-dispatch. Say what the interleaving is and stop; a silently wrong key is bad, a torn config
+during an attempt is worse.
+
+---
+
+### VI-C28 — The board's own WebSocket is rejected by the browser, and only by the browser
+
+**Needs nothing.** Wave 17.
+
+**Owns:** `board_live`'s handshake in `crates/tack-api/src/handlers/websocket.rs`, whatever test
+proves it, and the handoff. Touch `frontend/src/shared/realtime/boardSocket.ts` only if the fix
+genuinely belongs on that side — decide which end is wrong before changing either.
+
+`board_live` never selects or echoes a `Sec-WebSocket-Protocol` response header. The frontend
+always offers one (`tack.v1`). RFC 6455 §4.1 requires a client that offered a subprotocol to fail
+the connection when the server's response omits it — so a real browser closes it, and a stranger
+who creates their first item watches it not appear on the board they just created it on, with no
+visible error.
+
+**Why nothing caught it, which is the part worth fixing properly:** a raw `curl` handshake does
+not enforce §4.1 and succeeds. Every check this repo had was of that shape. The defect was found
+only by driving a real browser end to end.
+
+**Tasks:** decide which end is wrong — a server that ignores an offered subprotocol, or a client
+that offers one nothing needs. Then close the test gap, because the fix without it just resets
+the clock: whatever proves this must fail against the current server, and a `curl`-shaped check
+provably cannot.
+
+**Acceptance:** a real browser client that offers `tack.v1` stays connected and receives a live
+update, and the same test fails against the unfixed server — run it both ways and show both.
+State explicitly why the test you wrote catches what a `curl` handshake cannot. Prove load-bearing
+by reverting once.
+
+**Stop if:** echoing the subprotocol would commit the server to a versioning contract it has no
+implementation for — a header that claims `tack.v1` while nothing enforces v1 semantics is a
+capability claim, and those are load-bearing here. Say what the claim would be and stop.
+
+---
+
+### VI-C29 — The comment gate has never looked at the E2E suite
+
+**Needs nothing.** Wave 17.
+
+**Owns:** `scripts/check-comments.sh`'s roots and its path-resolution for the "pointers to files
+that do not exist" category, the comments it then flags in `frontend/e2e/`, and the handoff.
+
+`check-comments.sh` scans `crates/` and `frontend/src`. It has never scanned `frontend/e2e`, and
+that is where board archaeology accumulates fastest, because tests get written directly against
+acceptance criteria. Running the gate against that directory today exits 1 with, by its own
+categories: **28 card ids, 28 board-vocabulary, 17 board citations, 4 handoff paths** —
+`./scripts/check-comments.sh frontend/e2e`.
+
+An earlier card extended this gate from `crates/` to `frontend/src` precisely because the rule had
+decayed unenforced. It stopped one directory short.
+
+**One complication you must handle, not work around:** that same run reports **22 "pointers to
+files that do not exist"**, and most are false — they name sibling spec files that do exist, which
+the check fails to resolve from an `e2e/` root. Adding the directory without fixing resolution
+turns a real gate into one people learn to ignore.
+
+**Tasks:** fix the pointer resolution first, then add the root, then rewrite what it legitimately
+flags. **Rewriting is almost always right and deleting is almost always wrong** — these comments
+usually wrap something real in board scaffolding. Keep the knowledge, drop the pointer.
+
+**Acceptance:** `./scripts/check-comments.sh` with `frontend/e2e` among its default roots exits 0,
+and every previously-false pointer is either resolved correctly or shown to be genuinely stale.
+Report the count per category before and after, with the command. Prove the extended gate is
+load-bearing by reintroducing one card id and showing it fires.
+
+**Stop if:** a comment's only content is a card reference and the knowledge it wrapped is already
+gone. Say which, and delete only those.
 
 ---
 
