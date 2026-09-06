@@ -794,6 +794,24 @@ pub async fn provision_local_runner(
     Ok(response)
 }
 
+/// Whether `runner_id` still exists at `database_url` — opens and drops its
+/// own short-lived pool exactly like [`provision_local_runner`] itself does,
+/// against the same URL the caller's own server already opened successfully.
+/// That is what makes this check authoritative rather than a guess: a `false`
+/// here means this specific database has no such row, not merely that it was
+/// unreachable just now.
+pub async fn local_runner_id_exists(
+    database_url: &str,
+    runner_id: &str,
+) -> Result<bool, ProvisionLocalRunnerError> {
+    let pool = tack_db::init_pool(database_url).await?;
+    let repo = Repository::new(pool);
+    Ok(repo
+        .fetch_runner_scheduling_snapshot(runner_id)
+        .await?
+        .is_some())
+}
+
 #[utoipa::path(
     post,
     path = "/api/runners/{runner_id}/enrollment-tokens/{token_id}/revoke",

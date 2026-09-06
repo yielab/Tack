@@ -504,6 +504,40 @@ async fn provision_local_runner_fails_on_an_unparseable_database_url() {
     ));
 }
 
+/// `local_runner_id_exists` is the authoritative check for distinguishing a
+/// credential this database issued from one a replaced database has no row
+/// for: a runner id it just provisioned must read back as present, and a
+/// runner id it never wrote at all — even one shaped like a real one — must
+/// read back as absent, against the same live database rather than an
+/// inference from a query failure.
+#[tokio::test]
+async fn local_runner_id_exists_reports_presence_and_absence_against_a_real_database() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let db_path = dir.path().join("local-runner-id-exists.db");
+    let database_url = format!("sqlite://{}?mode=rwc", db_path.display());
+    let pool = init_pool(&database_url).await.expect("file-backed pool");
+    migrations::run_all(&pool).await.expect("migrations");
+    drop(pool);
+
+    let response = runner_admin::provision_local_runner(&database_url)
+        .await
+        .expect("local provisioning should succeed against a migrated, file-backed database");
+
+    assert!(
+        runner_admin::local_runner_id_exists(&database_url, &response.runner_id)
+            .await
+            .expect("checking an id this same call just provisioned must not fail"),
+        "a runner id this database actually holds a row for must read back as present"
+    );
+    assert!(
+        !runner_admin::local_runner_id_exists(&database_url, "runr_never-provisioned")
+            .await
+            .expect("checking a well-formed but absent id must not fail"),
+        "a runner id no row exists for — the shape of a credential orphaned by a recreated \
+         database — must read back as absent, not merely fail to answer"
+    );
+}
+
 /// Seeds two items, each with executions of its own, and proves
 /// `?item_id=` scopes `GET /executions` to exactly one of them by row
 /// count — never by what a component would go on to render. The unscoped

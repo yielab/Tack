@@ -1023,6 +1023,17 @@ fn load_session(state_dir: &Path) -> Option<RunnerSession> {
     ))
 }
 
+/// The runner id a persisted session under `state_dir` claims, without
+/// validating whether the server this process talks to still recognises
+/// it — only [`establish_session`]'s own `refresh` call settles that.
+/// `None` when no session is persisted there, or its contents cannot be
+/// parsed; a caller with no persisted session to compare has nothing to
+/// distinguish, and a caller of this function decides what "no answer"
+/// means for its own case rather than this reporting a guess.
+pub fn persisted_session_runner_id(state_dir: &Path) -> Option<String> {
+    load_session(state_dir).map(|session| session.runner_id.as_str().to_owned())
+}
+
 fn store_session(state_dir: &Path, session: &RunnerSession) -> Result<(), RunnerError> {
     let persisted = PersistedSession {
         runner_id: session.runner_id.as_str().to_owned(),
@@ -2229,6 +2240,30 @@ mod tests {
         // directory must read as absent, not as an error.
         let directory = guard.path().join("absent");
         assert!(load_session(&directory).is_none());
+    }
+
+    #[test]
+    fn persisted_session_runner_id_reads_the_id_without_a_full_session() {
+        let guard = tempfile::tempdir().expect("temporary directory");
+        let directory = guard.path();
+        let session = session();
+        store_session(directory, &session).expect("session is stored");
+
+        assert_eq!(
+            persisted_session_runner_id(directory).as_deref(),
+            Some(session.runner_id.as_str())
+        );
+    }
+
+    #[test]
+    fn persisted_session_runner_id_is_none_for_a_missing_or_unparseable_session() {
+        let guard = tempfile::tempdir().expect("temporary directory");
+        let missing = guard.path().join("absent");
+        assert!(persisted_session_runner_id(&missing).is_none());
+
+        let malformed = tempfile::tempdir().expect("temporary directory");
+        fs::write(session_path(malformed.path()), b"not json").expect("write malformed session");
+        assert!(persisted_session_runner_id(malformed.path()).is_none());
     }
 
     #[test]

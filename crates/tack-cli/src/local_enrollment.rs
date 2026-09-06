@@ -31,6 +31,26 @@ pub fn has_stored_session(state_dir: &Path) -> bool {
     state_dir.join(SESSION_FILE_NAME).is_file()
 }
 
+/// Whether the session already on disk under `state_dir` names a runner id
+/// that `database_url` — the exact database this server just opened — has
+/// no row for at all. This is what separates "this credential belongs to a
+/// database that was replaced" from "the database is momentarily
+/// unreachable": by the time this runs, the caller's own server has already
+/// opened `database_url` successfully, so there is no unreachable case left
+/// to confuse this with. A session this function cannot even identify a
+/// runner id for (missing, or unparseable) is reported as not orphaned —
+/// there is nothing here to positively pin on a replaced database, so the
+/// caller falls back to whatever it already does for that file.
+pub async fn stored_session_orphaned(state_dir: &Path, database_url: &str) -> anyhow::Result<bool> {
+    let Some(runner_id) = tack_runner::client::persisted_session_runner_id(state_dir) else {
+        return Ok(false);
+    };
+    let exists = runner_admin::local_runner_id_exists(database_url, &runner_id)
+        .await
+        .map_err(|err| anyhow::anyhow!("checking the stored session's runner id failed: {err}"))?;
+    Ok(!exists)
+}
+
 /// Stands in for `enrollment_credential` when [`has_stored_session`] is
 /// true, so the caller does not have to touch the config's real credential
 /// (and does not have to self-provision, which would mint an unused token
@@ -105,5 +125,36 @@ mod tests {
         let dir = guard.path().join("absent");
 
         assert!(!has_stored_session(&dir));
+    }
+
+    /// The two branches `stored_session_orphaned` settles without ever
+    /// reaching the database at all: nothing on disk to name a runner id for
+    /// in the first place. Neither is "the wrong database" — there is
+    /// nothing here to positively pin on one — so both report `false`
+    /// rather than guessing, and a real (unreachable) `database_url` proves
+    /// neither branch tries to open it.
+    #[tokio::test]
+    async fn stored_session_orphaned_is_false_with_nothing_on_disk_to_check() {
+        let guard = tempfile::tempdir().expect("temporary directory");
+        let dir = guard.path();
+
+        assert!(
+            !stored_session_orphaned(dir, "not-a-real-database-url")
+                .await
+                .expect("no session on disk must never fail, let alone reach a database")
+        );
+    }
+
+    #[tokio::test]
+    async fn stored_session_orphaned_is_false_for_an_unparseable_session() {
+        let guard = tempfile::tempdir().expect("temporary directory");
+        let dir = guard.path();
+        std::fs::write(dir.join(SESSION_FILE_NAME), b"not json").expect("write malformed session");
+
+        assert!(
+            !stored_session_orphaned(dir, "not-a-real-database-url")
+                .await
+                .expect("a session this function cannot even identify a runner id for must never fail")
+        );
     }
 }
