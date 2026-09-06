@@ -1,0 +1,504 @@
+[
+  {
+    "id": "ap_absent__pj_absent__fl_absent",
+    "description": "agent profile absent, project absent, fleet absent",
+    "agent_profile_limits": null,
+    "project_default_model": null,
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "unresolved"
+    }
+  },
+  {
+    "id": "ap_absent__pj_absent__fl_auto",
+    "description": "agent profile absent, project absent, fleet auto",
+    "agent_profile_limits": null,
+    "project_default_model": null,
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "fleet"
+    }
+  },
+  {
+    "id": "ap_absent__pj_absent__fl_explicit",
+    "description": "agent profile absent, project absent, fleet explicit",
+    "agent_profile_limits": null,
+    "project_default_model": null,
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "fleet",
+      "provider": "fleet-provider",
+      "model_id": "fleet-model"
+    }
+  },
+  {
+    "id": "ap_absent__pj_auto__fl_absent",
+    "description": "agent profile absent, project auto, fleet absent",
+    "agent_profile_limits": null,
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "project"
+    }
+  },
+  {
+    "id": "ap_absent__pj_auto__fl_auto",
+    "description": "agent profile absent, project auto, fleet auto",
+    "agent_profile_limits": null,
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "project"
+    }
+  },
+  {
+    "id": "ap_absent__pj_auto__fl_explicit",
+    "description": "agent profile absent, project auto, fleet explicit",
+    "agent_profile_limits": null,
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "project"
+    }
+  },
+  {
+    "id": "ap_absent__pj_explicit__fl_absent",
+    "description": "agent profile absent, project explicit, fleet absent",
+    "agent_profile_limits": null,
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "explicit",
+      "source": "project",
+      "provider": "project-provider",
+      "model_id": "project-model"
+    }
+  },
+  {
+    "id": "ap_absent__pj_explicit__fl_auto",
+    "description": "agent profile absent, project explicit, fleet auto",
+    "agent_profile_limits": null,
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "project",
+      "provider": "project-provider",
+      "model_id": "project-model"
+    }
+  },
+  {
+    "id": "ap_absent__pj_explicit__fl_explicit",
+    "description": "agent profile absent, project explicit, fleet explicit",
+    "agent_profile_limits": null,
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "project",
+      "provider": "project-provider",
+      "model_id": "project-model"
+    }
+  },
+  {
+    "id": "ap_auto__pj_absent__fl_absent",
+    "description": "agent profile auto, project absent, fleet absent",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": null,
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_absent__fl_auto",
+    "description": "agent profile auto, project absent, fleet auto",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": null,
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_absent__fl_explicit",
+    "description": "agent profile auto, project absent, fleet explicit",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": null,
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_auto__fl_absent",
+    "description": "agent profile auto, project auto, fleet absent",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_auto__fl_auto",
+    "description": "agent profile auto, project auto, fleet auto",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_auto__fl_explicit",
+    "description": "agent profile auto, project auto, fleet explicit",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_explicit__fl_absent",
+    "description": "agent profile auto, project explicit, fleet absent",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_explicit__fl_auto",
+    "description": "agent profile auto, project explicit, fleet auto",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_auto__pj_explicit__fl_explicit",
+    "description": "agent profile auto, project explicit, fleet explicit",
+    "agent_profile_limits": {
+      "default_model": "auto"
+    },
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "pinned_auto",
+      "source": "agent_profile"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_absent__fl_absent",
+    "description": "agent profile explicit, project absent, fleet absent",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": null,
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_absent__fl_auto",
+    "description": "agent profile explicit, project absent, fleet auto",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": null,
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_absent__fl_explicit",
+    "description": "agent profile explicit, project absent, fleet explicit",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": null,
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_auto__fl_absent",
+    "description": "agent profile explicit, project auto, fleet absent",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_auto__fl_auto",
+    "description": "agent profile explicit, project auto, fleet auto",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_auto__fl_explicit",
+    "description": "agent profile explicit, project auto, fleet explicit",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": {
+      "kind": "auto"
+    },
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_explicit__fl_absent",
+    "description": "agent profile explicit, project explicit, fleet absent",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": null,
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_explicit__fl_auto",
+    "description": "agent profile explicit, project explicit, fleet auto",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": {
+      "default_model": "auto"
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  },
+  {
+    "id": "ap_explicit__pj_explicit__fl_explicit",
+    "description": "agent profile explicit, project explicit, fleet explicit",
+    "agent_profile_limits": {
+      "default_model": {
+        "model_id": "agent-profile-model",
+        "provider": "agent-profile-provider"
+      }
+    },
+    "project_default_model": {
+      "kind": "explicit",
+      "model_id": "project-model",
+      "provider": "project-provider"
+    },
+    "fleet_default_policy": {
+      "default_model": {
+        "model_id": "fleet-model",
+        "provider": "fleet-provider"
+      }
+    },
+    "expected": {
+      "outcome": "explicit",
+      "source": "agent_profile",
+      "provider": "agent-profile-provider",
+      "model_id": "agent-profile-model"
+    }
+  }
+]
