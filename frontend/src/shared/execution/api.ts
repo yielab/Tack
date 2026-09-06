@@ -166,12 +166,19 @@ export const executionsApi = {
    *  execution request the install has ever recorded — the one-item
    *  Execution tab (`ExecutionTimeline.tsx`) uses this so opening it never
    *  pulls the whole table over the wire. Omitted for the app-wide preload
-   *  (`ExecutionStoreProvider`), which still gets every request up to the
-   *  handler's own default bound. */
-  list: (itemId?: string) =>
-    requestWithHeaders<ExecutionListResult>(
-      itemId ? `/executions?item_id=${encodeURIComponent(itemId)}` : '/executions',
-    ),
+   *  (`ExecutionStoreProvider`), which still gets every request up to
+   *  whichever `limit` it asks for (or the handler's own default bound,
+   *  200, if it asks for none — see `store.ts`'s
+   *  `EXECUTION_LIST_PRELOAD_LIMIT` for why the preload always asks
+   *  explicitly). `limit` forwards to `list_executions`'s own `?limit=`,
+   *  server-capped at `MAX_LIMIT` regardless of what is asked. */
+  list: (itemId?: string, limit?: number) => {
+    const params = new URLSearchParams();
+    if (itemId) params.set('item_id', itemId);
+    if (limit !== undefined) params.set('limit', String(limit));
+    const qs = params.toString();
+    return requestWithHeaders<ExecutionListResult>(qs ? `/executions?${qs}` : '/executions');
+  },
   get: (requestId: string) =>
     requestWithHeaders<ExecutionSummary>(`/executions/${encodeURIComponent(requestId)}`),
   create: (input: CreateExecutionInput) =>

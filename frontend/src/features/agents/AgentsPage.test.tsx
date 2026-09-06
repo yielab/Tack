@@ -23,8 +23,9 @@ function mockFetch(overrides: Record<string, unknown> = {}) {
   };
   return vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
     const url = String(input);
+    const urlPath = url.split('?')[0]; // match on path alone — the execution preload now appends `?limit=`
     for (const [path, body] of Object.entries(responses)) {
-      if (url.endsWith(path)) {
+      if (urlPath.endsWith(path)) {
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
       }
     }

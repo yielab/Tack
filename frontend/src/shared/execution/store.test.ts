@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRoot } from 'solid-js';
 import { ApiError } from '../api/client';
-import { createExecutionStore } from './store';
+import { createExecutionStore, EXECUTION_LIST_PRELOAD_LIMIT } from './store';
 import { executionsApi } from './api';
 import type { ExecutionSummary } from './api';
 import { attemptsApi } from './attempts';
@@ -178,6 +178,73 @@ describe('createExecutionStore — loadOne / loadList', () => {
     await store.loadList();
     const forItem1 = store.requestsForItem('item_1');
     expect(forItem1.map((r) => r.summary?.request_id)).toEqual(['c', 'a']);
+  });
+
+  it('loadList() (unscoped) asks the server for EXECUTION_LIST_PRELOAD_LIMIT rows instead of leaving limit unset', async () => {
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    const store = createExecutionStore();
+    await store.loadList();
+    expect(mockedApi.list).toHaveBeenCalledWith(undefined, EXECUTION_LIST_PRELOAD_LIMIT);
+  });
+
+  it('loadList(itemId) (scoped) still asks for exactly one argument, unaffected by the preload limit', async () => {
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    const store = createExecutionStore();
+    await store.loadList('item_1');
+    expect(mockedApi.list).toHaveBeenCalledWith('item_1');
+  });
+
+  it('an item touched before the server\'s DEFAULT_LIMIT (200) of newer requests still shows its real state, because the preload asks past that bound', async () => {
+    const SERVER_DEFAULT_LIMIT = 200; // mirrors ListExecutionsQuery::DEFAULT_LIMIT, crates/tack-api/src/handlers/executions.rs
+    // 205 rows, newest first, where the OLDEST row belongs to the one item
+    // on screen this test cares about — a table seeded past the server's
+    // default bound, exactly the acceptance scenario.
+    const rows: ExecutionSummary[] = Array.from({ length: 205 }, (_, i) =>
+      summary({
+        request_id: `exec_${i}`,
+        item_id: i === 204 ? 'stale-item' : `other-item-${i}`,
+        state: i === 204 ? 'succeeded' : 'running',
+        created_at: `2026-01-01T00:00:${String(204 - i).padStart(2, '0')}Z`,
+      }),
+    );
+    // A fake that actually applies `limit` the way the real handler's
+    // `ORDER BY created_at DESC LIMIT ?` does (VI-C12's
+    // `list_executions_limit_bounds_the_unscoped_response` proved the real
+    // server behaves this way) — every other test's plain
+    // `mockResolvedValue` echoes back whatever rows it's handed regardless
+    // of what limit was asked for, which cannot distinguish "asked for
+    // 200" from "asked for 2000"; this one can.
+    mockedApi.list.mockImplementation(async (_itemId?: string, limit?: number) =>
+      withHeaders({ protocol_version: 1, data: rows.slice(0, limit ?? SERVER_DEFAULT_LIMIT) }),
+    );
+    const store = createExecutionStore();
+    await store.loadList();
+    expect(store.requestsForItem('stale-item')[0]?.summary?.state).toBe('succeeded');
+  });
+
+  it('listMayBeIncomplete() is true once the unscoped preload comes back at the row cap, false once it comes back short of it', async () => {
+    const full: ExecutionSummary[] = Array.from({ length: EXECUTION_LIST_PRELOAD_LIMIT }, (_, i) =>
+      summary({ request_id: `exec_${i}` }),
+    );
+    mockedApi.list.mockResolvedValueOnce(withHeaders({ protocol_version: 1, data: full }));
+    const store = createExecutionStore();
+    expect(store.listMayBeIncomplete()).toBe(false); // never fetched yet
+    await store.loadList();
+    expect(store.listMayBeIncomplete()).toBe(true);
+
+    mockedApi.list.mockResolvedValueOnce(withHeaders({ protocol_version: 1, data: [summary()] }));
+    await store.loadList();
+    expect(store.listMayBeIncomplete()).toBe(false);
+  });
+
+  it('listMayBeIncomplete() is never set by an item-scoped loadList(itemId), even one returning many rows', async () => {
+    const many: ExecutionSummary[] = Array.from({ length: EXECUTION_LIST_PRELOAD_LIMIT }, (_, i) =>
+      summary({ request_id: `exec_${i}`, item_id: 'item_1' }),
+    );
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: many }));
+    const store = createExecutionStore();
+    await store.loadList('item_1');
+    expect(store.listMayBeIncomplete()).toBe(false);
   });
 });
 
