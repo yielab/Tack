@@ -1,4 +1,13 @@
-import { type Page, type APIRequestContext, expect } from '@playwright/test';
+import { test as base, type Page, type APIRequestContext, expect } from '@playwright/test';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+// Re-exported unchanged so a spec file that switches its `import { test,
+// expect } from '@playwright/test'` to `from './helpers'` (to pick up
+// `executionToggleLock` below) doesn't also need a second import line just
+// for `expect`.
+export { expect };
 
 // Shared helpers for E2E specs. The single source of truth for the app's API
 // response shapes lives here so a backend contract change is fixed in one place.
@@ -539,3 +548,107 @@ export async function createExecution(
   const body = await res.json();
   return body.request_id as string;
 }
+
+// ─── Exclusive access to the one server-wide execution switch ─────────────
+//
+// `GET`/`PUT /api/local-runner` is not per-test state: every worker process
+// this suite spawns talks to the one `tack-api` server this run's `webServer`
+// started, and that server holds exactly one `EmbeddedRunnerControl`, whose
+// `enabled`/running-or-stopped state lives behind one `tokio::sync::Mutex`
+// (`crates/tack-cli/src/local_runner.rs`) — not one per test, one for the
+// whole process's lifetime. `execution-toggle.spec.ts`, `provider-key-panel
+// .spec.ts`, and `agents-page.spec.ts`'s first test each flip that switch or
+// force a real network probe that holds its lock for the round trip
+// (`put_local_runner_secret`'s `catalog()` call, `crates/tack-api/src/
+// handlers/local_runner.rs`) — `fullyParallel: true` gives Playwright no
+// reason to run any two of them apart, so without something coordinating
+// them, one test's "Turn on" can observe a sibling's "Turn off" landing
+// mid-wait, or simply time out because a sibling is holding the server-side
+// lock for a real HTTP round trip. Neither is a bug in the assertion; both
+// are the same shared resource, contended.
+//
+// **Any test — in these three files or a later one — whose assertions read
+// or set `enabled`/`state`/the "Turn on"/"Turn off" label, or whose own
+// request needs the embedded runner's control lock unshared for its
+// duration (a provider-key save, an on/off round trip), must hold
+// `executionToggleLock` for its entire body.** Request it like any other
+// fixture:
+//
+//   import { test, expect } from './helpers';
+//   test('...', async ({ page, executionToggleLock }) => { ... });
+//
+// A test that skips this reproduces exactly the failure this section exists
+// to prevent: intermittent under full parallel load, and — because it
+// depends on which other spec files happen to be running at the same
+// moment — not reproducible by running that one file alone. There is no
+// second enforcement mechanism: nothing rejects a spec that calls `PUT
+// /api/local-runner` without the lock, the same way nothing stops a test
+// from skipping any other helper in this file. This one is called out
+// because the failure it prevents took real effort to first diagnose: it
+// never reproduces from one spec file run alone, only from the combination.
+//
+// Implemented as a lock **directory** under the OS temp root, keyed by
+// `API_ORIGIN` — not a fixed name — so two independent `tack-api` servers
+// (different e2e ports, e.g. two worktrees on the same machine) never wait
+// on each other's lock; they hold genuinely independent `EmbeddedRunnerControl`s
+// and have nothing to coordinate. `fs.mkdirSync` with no `recursive` flag is
+// atomic at the OS level (`EEXIST` on a second concurrent caller) — no
+// third-party lock library, no server-side change, works identically across
+// however many worker processes Playwright spawns since they all share one
+// filesystem. A `holder` file inside it records when the lock was taken, so
+// a worker that crashed mid-test (which loses that whole test either way)
+// cannot wedge every later run forever — a lock older than
+// `LOCK_STALE_AFTER_MS` is reclaimed rather than waited on.
+const LOCK_POLL_MS = 100;
+const LOCK_STALE_AFTER_MS = 60_000; // well past this suite's own 30s test timeout
+
+function executionToggleLockDir(): string {
+  const key = API_ORIGIN.replace(/[^a-zA-Z0-9]/g, '_');
+  return path.join(os.tmpdir(), `tack-e2e-execution-toggle-${key}.lock`);
+}
+
+function lockHolderAgeMs(lockDir: string): number {
+  try {
+    const raw = fs.readFileSync(path.join(lockDir, 'holder'), 'utf-8');
+    const takenAt = Number(raw.split('@').at(-1));
+    return Number.isFinite(takenAt) ? Date.now() - takenAt : 0; // no parseable timestamp yet — treat as fresh
+  } catch {
+    return 0; // holder file not written yet by whoever holds the directory — treat as fresh
+  }
+}
+
+async function acquireExecutionToggleLock(): Promise<() => void> {
+  const lockDir = executionToggleLockDir();
+  for (;;) {
+    try {
+      fs.mkdirSync(lockDir);
+      fs.writeFileSync(path.join(lockDir, 'holder'), `${process.pid}@${Date.now()}`);
+      return () => fs.rmSync(lockDir, { recursive: true, force: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      if (lockHolderAgeMs(lockDir) > LOCK_STALE_AFTER_MS) {
+        fs.rmSync(lockDir, { recursive: true, force: true }); // abandoned by a crashed worker — reclaim
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+    }
+  }
+}
+
+/**
+ * The extended `test` every spec touching the execution switch should import
+ * instead of `@playwright/test`'s own — adds the `executionToggleLock`
+ * fixture (see the section comment above) without changing anything else
+ * about `test`/`expect`, so every existing caller of the plain Playwright
+ * `test` keeps working untouched if it never requests the new fixture.
+ */
+export const test = base.extend<{ executionToggleLock: void }>({
+  executionToggleLock: async ({}, use) => {
+    const release = await acquireExecutionToggleLock();
+    try {
+      await use();
+    } finally {
+      release();
+    }
+  },
+});
