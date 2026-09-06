@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`tack-desktop`**, a Tauri shell that owns a window and a desktop icon and supervises
   `tack` as a bundled sidecar — attaching to a server that already answers, starting one
   only when none does. Built with `make desktop`.
+- **Downloadable desktop app bundles for Linux and Windows**: `.AppImage` and `.deb` on
+  Linux, `.msi` on Windows, built by a new `release.yml` job alongside the existing
+  archives. Unsigned, like the archives, so the release notes carry the same two
+  first-run warnings. macOS bundles aren't produced yet — blocked on two pre-existing
+  cross-compile issues unrelated to the desktop app itself.
 
 ### Changed
 
@@ -57,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rust-toolchain` ecosystem. Three `chunks_exact` sites the newer clippy rejects are
   rewritten as `as_chunks`; the SHA-256 implementation still matches its published test
   vectors.
+- **The desktop app's first run no longer hangs with no window and no explanation.**
+  Its first-run dialog (database path, port) ran on Tauri's own main thread, which the
+  dialog plugin's own docs call out as fatal — the call never returned, so an empty data
+  root just sat there with no window, no dialog, and no log line. It now runs off-thread,
+  and every reason `attach_or_start` can fail — that dialog aside, a port already held by
+  something else, an attached server older than the bundle, or anything else — shows a
+  dialog naming it instead of exiting silently.
 - **`tack-desktop` is its own Cargo workspace, so the server still builds without a
   desktop.** As a workspace member it pulled GTK, WebKit and glib into every
   `cargo build --workspace` — CI's Rust, MSRV and embed-spa jobs all failed with

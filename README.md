@@ -148,7 +148,34 @@ Building from source instead needs [Rust 1.89+](https://rustup.rs/) and
 
 ## Run it
 
-**One line** (Linux / macOS):
+**Get the app** — download it, open it, the board is a window on your machine, the
+same server underneath:
+
+- **Linux:** the `.AppImage` or `.deb` from the
+  [releases page](https://github.com/yielab/tack/releases). The AppImage runs as
+  downloaded (`chmod +x`, then run it); the `.deb` installs normally
+  (`sudo apt install ./Tack_*_amd64.deb`).
+- **Windows:** the `.msi` from the same page — run it.
+- **macOS:** not built yet; use the binary below until it is.
+
+![Tack's desktop window open on the Agents page, showing agent execution on and Codex and Claude Code both detected on the machine](docs/screenshots/desktop-window.png)
+
+The app adds an icon to your system tray. **Closing the window doesn't stop
+it** — the board keeps running, and the tray icon reopens the window. **Quit
+from the tray** when you want it to actually stop.
+
+![Tack's tray menu open: Open Tack, agent execution status, Launch at login, and Quit](docs/screenshots/desktop-tray.png)
+
+> The app isn't code-signed yet. On macOS, right-click **Open** the first time. On
+> Windows, use **More info → Run anyway** if SmartScreen appears.
+
+**Or run the binary directly** — servers, CI, anywhere a window doesn't make sense.
+Either way, `tack service install` keeps it running past the session that started
+it — a per-user background service, no root required: a `systemd --user` unit on
+Linux, a `launchd` agent on macOS. `tack service uninstall` removes it again;
+`tack service status` says whether it's active. That's the same promise the app's tray
+makes with a window attached: install it once, and it's there whenever you open the
+board or point a client at it — not something you remember to start.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yielab/tack/main/install.sh | sh
