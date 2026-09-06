@@ -215,7 +215,9 @@ binary, no token to copy anywhere — so a board item assigned to `claude-code` 
 executes. It's off by default and loopback-only; see
 [Agent Runners](docs/book/src/user-guide/agent-runners.md#standalone-mode-tack-serve---with-runner)
 and [`docs/CONFIG.md`](docs/CONFIG.md#embedded-runner-tack-serve---with-runner). Plain
-`tack` (no flag) starts just the server and board UI, with no runner.
+`tack` (no flag) starts just the server and board UI, with no runner running yet — turn
+it on, see what harness it found, and set a provider key or a default model from the
+**Agents** page in the UI, no flag or restart required.
 
 > The binary is not code-signed yet. On macOS, right-click **Open** the first time
 > (or run `xattr -d com.apple.quarantine tack`). On Windows, use

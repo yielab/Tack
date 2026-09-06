@@ -60,12 +60,43 @@ Ready to put it on a network or add a token? See [Administration & Security](adm
 
 ## Run an item with an agent
 
-The fewest steps from the binary you already have to a coding agent completing an item
-on your board, no second process and no operator-issued token — every step below is a
-real command against a real server, copied from an actual run.
+**The UI-first path.** Open the **Agents** page from the sidebar (`/agents`). Four
+steps, top to bottom, each one a switch or a form field — no terminal, no id to copy:
+
+1. **"Agent execution on this machine"** — click **Turn on**. This is the one switch
+   ADR 0061 decision 6 exists for: it starts an embedded runner in this same process,
+   on this loopback bind, with no restart and no second binary. (A remote runner on a
+   different machine still needs `tack-runner` started there — see
+   [Enrolling a runner](agent-runners.md#enrolling-a-runner) — but nothing on *this*
+   page requires that.)
+2. **"Agents on this machine"** — once execution is on, this section reports what it
+   found: `codex` and/or `claude-code`, present or not, and whether either one's own
+   vendor login (Claude Max, `codex login`, ...) already works. Nothing to configure
+   here if a harness is already installed and logged in.
+3. **"Vercel AI Gateway key"** — paste a gateway key here if you don't want to rely on
+   a harness's own subscription login. It is stored in the runner's own local secret
+   store (the platform keychain where one exists, an owner-only file otherwise) —
+   never in `tack.db`, never in a log, never echoed back by the API. Saving it
+   immediately re-checks the gateway's model catalog; a real key shows real models
+   below.
+4. **"Default model"** — pick a model from that catalog (or from whatever the target
+   harness itself declares) and save it as this project's default. This is what lets
+   the next step submit with zero hand-typed identifiers.
+
+Now open any item and click **Run with agent**. With a runner active and a default
+model configured, the dialog's defaults are already correct — confirm and click **Run**.
+The item's own Execution tab shows the attempt's state, its requested-vs-actual model,
+and its usage economics as they land.
+
+**The CLI path** — scriptable, and what to reach for outside a browser. Every step
+below is a real command against a real server, copied from an actual run; the fewest
+steps from the binary you already have to a completed attempt, no second process and
+no operator-issued token.
 
 Start the server with the embedded runner instead of plain `tack` (it self-provisions
-on first start — see [Standalone mode](agent-runners.md#standalone-mode-tack-serve---with-runner)):
+on first start — see [Standalone mode](agent-runners.md#standalone-mode-tack-serve---with-runner);
+this is the console-command equivalent of step 1 above, not a second thing to do on top
+of it):
 
 ```sh
 tack serve --with-runner
@@ -121,11 +152,9 @@ Execution request exec_0fe7252989f5f3d40a056c1da45b035039e4a8247ad89e5222cf92801
   state:   succeeded (done)
 ```
 
-That is a completed attempt. The same request can be created from the item's "Run with
-agent" button in the web UI instead of the CLI — see [Running an item with an
-agent](agent-runners.md#running-an-item-with-an-agent) for all four ways to do this, the
-full field-by-field reference, and what today's known gaps are (no memory of prior runs
-in the modal, no runner picker — copy the id from the command above).
+That is a completed attempt, reached either way. See [Running an item with an
+agent](agent-runners.md#running-an-item-with-an-agent) for all four ways to create a
+request and the full field-by-field reference.
 
 ---
 

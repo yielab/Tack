@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An Agents page** (`/agents`) is the one screen that owns the whole path from an
+  installed binary to a completed attempt: turn agent execution on with a single
+  switch (no restart, no flag), see which harnesses this machine has and whether
+  their own vendor login already works, paste a provider key, choose a default model
+  from a real catalog, and run a real test dispatch — every status on the page is
+  earned by an observation, never asserted.
+- **Vercel AI Gateway as a runner-held provider.** A single key, pasted once on the
+  Agents page (or set with `tack runner secret set` for a remote runner), routes
+  either bundled harness through the gateway's own per-harness endpoint and exposes
+  its model catalog — price, context window and modality per model — to the model
+  picker. The key lives only in the runner's own secret store; the board and its
+  database never see it. `docs/adr/0061-provider-credentials-at-the-runner-boundary.md`
+  records the boundary this draws and why: the API server still never holds, forwards,
+  or proxies a credential (ADR 0050, ADR 0058 stand) — only the runner may, on its own
+  machine, opt in.
+- **Turn the embedded runner on from the UI.** `PUT /api/local-runner` starts or stops
+  the runner that `tack serve --with-runner` used to require a restart to reach —
+  loopback-only, refused outright on any other bind, same as the flag.
+- **"Run with agent" asks for zero hand-typed identifiers.** One combined
+  machine-or-group picker replaces the old separate runner-id/fleet fields, defaults
+  come from the project's own agent settings, and the model list is the target's own
+  declared models plus "Project default" — never a runner id or a model string typed
+  from memory.
 - **A project can name its own default agent model.** Model choice gains a project tier
   between the agent profile and the fleet default, edited from the Agents panel in project
   settings; a run that takes the value reports `project` as its provenance.
@@ -54,6 +77,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Run with agent" can dispatch again, for either bundled harness.** Its submit gate
+  checked only a target's *declared* model list, never `model_passthrough` — since
+  neither `codex` nor `claude-code` declares a model list at all (both rely on
+  passthrough), every explicit model choice was refused before this fix, on both
+  harnesses. Separately, leaving the model on "Auto" with no default configured
+  anywhere used to submit and then queue forever with no error visible anywhere; the
+  dialog now blocks that submission up front and names the fix.
 - **The Rust toolchain is pinned to an exact version, so a green local check predicts CI.**
   `rust-toolchain.toml` said `stable`, which resolves to whatever stable is on the day —
   and the local one had fallen three minor versions behind CI's. Clippy lints that shipped

@@ -3272,14 +3272,15 @@ and **VI-D1** (after the product changes).
 
 ### The provider answer is a negation
 
-ADR 0050 says the Tack API "never becomes a model proxy"; ADR 0058 says "vendor credentials
-remain outside Tack". Both are statements about the API server and both are correct. Both
-are cited — in `docs/CONFIG.md`, in `tack runner doctor`'s own output — as if they meant
-"Tack cannot help you configure a provider". The runner side of the boundary was never
-decided: the runner already owns its own credential, owns the harness subprocess and its
-environment, and accepts `secret_reference` environment entries that every adapter warns
+ADR 0050 keeps the API server out of the model-calling business; ADR 0058 says "vendor
+credentials remain outside Tack". Both are statements about the API server and both are
+correct. Both are cited — in `docs/CONFIG.md`, in `tack runner doctor`'s own output — as if
+they meant "Tack cannot help you configure a provider". The runner side of the boundary was
+never decided: the runner already owns its own credential, owns the harness subprocess and
+its environment, and accepts `secret_reference` environment entries that every adapter warns
 about and skips because "no secret-store client exists in tack-runner yet". Card **VI-A2**
-writes ADR 0061 and decides that side; cards **VI-B1** through **VI-B3** implement it.
+writes ADR 0061 (see `docs/adr/0061-provider-credentials-at-the-runner-boundary.md`,
+accepted 2026-09-03) and decides that side; cards **VI-B1** through **VI-B3** implement it.
 
 ### The docs contradict the code in four places
 
