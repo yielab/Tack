@@ -36,6 +36,22 @@ describe('executionsApi', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/executions?item_id=item%2F1');
   });
 
+  it('list(undefined, limit) calls GET /api/executions?limit={n} with no item_id', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ protocol_version: 1, data: [] }));
+    await executionsApi.list(undefined, 2000);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/executions?limit=2000');
+  });
+
+  it('list(itemId, limit) combines both query parameters', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ protocol_version: 1, data: [] }));
+    await executionsApi.list('item_1', 50);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/executions?item_id=item_1&limit=50');
+  });
+
   it('list() preserves response headers, not just the parsed body', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse(

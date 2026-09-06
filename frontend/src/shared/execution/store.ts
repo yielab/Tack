@@ -42,6 +42,23 @@ function normalizeError(err: unknown): NormalizedExecutionError {
 export type ListStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 /**
+ * Mirrors `crates/tack-api/src/handlers/executions.rs`'s
+ * `ListExecutionsQuery::MAX_LIMIT` — the server's hard cap on `?limit=`,
+ * duplicated here because no generated contract carries this number (it is
+ * a plain query parameter, not a schema field); the two can drift if the
+ * server-side constant ever changes without this one following. The
+ * app-wide preload (`loadList()` with no `itemId`) asks for this many rows
+ * explicitly instead of leaving `limit` unset, so an item whose most recent
+ * execution is older than the handler's *default* limit (200) still lands
+ * in the shared cache as long as the install has fewer than this many
+ * execution requests in total — raising the practical threshold at which
+ * `RunWithAgentButton`'s badge can go stale from 200 to this number, though
+ * not eliminating the class of bug: an install that ever exceeds this many
+ * execution requests hits the same gap again, one order of magnitude later.
+ */
+export const EXECUTION_LIST_PRELOAD_LIMIT = 2000;
+
+/**
  * Cancellation is modeled as its own small state machine layered on top of
  * `ExecutionSummary.cancellation_requested_at`, not merged into
  * `ExecutionState` — see `api.ts`'s header note on why the cancel
@@ -117,6 +134,16 @@ export interface ExecutionStore {
   getRequest: (requestId: string) => ExecutionRequestRecord | undefined;
   listStatus: () => ListStatus;
   listError: () => NormalizedExecutionError | undefined;
+  /** True once the app-wide preload (`loadList()` with no `itemId`) has
+   *  come back with exactly `EXECUTION_LIST_PRELOAD_LIMIT` rows — meaning
+   *  execution requests older than what this fetch covers may exist, so an
+   *  on-screen item absent from the cache is genuinely unknown, not
+   *  necessarily "never run." `false` whenever the last such fetch returned
+   *  fewer rows than the cap (the table is provably covered in full) or no
+   *  unscoped fetch has resolved yet. An item-scoped `loadList(itemId)`
+   *  never sets this — that call is already exhaustive for its one item
+   *  regardless of row count. */
+  listMayBeIncomplete: () => boolean;
   /** Fetches into the shared cache. Omit `itemId` for the app-wide preload
    *  (bounded server-side by `list_executions`'s own default limit); pass
    *  one to fetch exactly that item's rows regardless of how many other
@@ -192,6 +219,7 @@ export function createExecutionStore(): ExecutionStore {
 
   const [listStatus, setListStatus] = createSignal<ListStatus>('idle');
   const [listError, setListError] = createSignal<NormalizedExecutionError | undefined>(undefined);
+  const [listMayBeIncomplete, setListMayBeIncomplete] = createSignal(false);
 
   function deriveCancellation(summary: ExecutionSummary | undefined, requestId: string): CancellationState {
     const local = cancellations.get(requestId) ?? EMPTY_CANCELLATION_STATE;
@@ -254,10 +282,18 @@ export function createExecutionStore(): ExecutionStore {
     setListStatus('loading');
     const version = clock.next(GLOBAL_SEQUENCE_KEY); // one version for every row this call returns
     try {
-      const { data } = await executionsApi.list(itemId);
+      // The unscoped preload asks for `EXECUTION_LIST_PRELOAD_LIMIT`
+      // explicitly rather than leaving `limit` unset (which would fall back
+      // to the handler's much smaller default) — see that constant's own
+      // doc comment. An item-scoped call is already exhaustive for its one
+      // item regardless of row count, so it asks for nothing extra.
+      const { data } = itemId
+        ? await executionsApi.list(itemId)
+        : await executionsApi.list(undefined, EXECUTION_LIST_PRELOAD_LIMIT);
       for (const row of data.data) applyFetchedSummary(row, version);
       setListStatus('ready');
       setListError(undefined);
+      if (!itemId) setListMayBeIncomplete(data.data.length >= EXECUTION_LIST_PRELOAD_LIMIT);
     } catch (err) {
       setListStatus('error');
       setListError(normalizeError(err));
@@ -393,6 +429,7 @@ export function createExecutionStore(): ExecutionStore {
     getRequest,
     listStatus,
     listError,
+    listMayBeIncomplete,
     loadList,
     loadOne,
     create,

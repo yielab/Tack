@@ -47,10 +47,17 @@ const RunWithAgentButton: Component<RunWithAgentButtonProps> = (props) => {
   // whenever there is none yet, or the one record fetched for it errored
   // (an errored record is a real, distinct state, never mistaken for "no
   // activity" — `ExecutionRequestRecord`'s own doc comment).
+  //
+  // If the item is absent from the cache AND the shared preload has hit its
+  // row cap (`store.listMayBeIncomplete()`), "no record" does not mean
+  // "never run" — it means unknown, so an explicit chip says that rather
+  // than silently rendering nothing, which would read as false confidence
+  // that the item has no activity.
   const latestState = createMemo(() => {
     const record = store.requestsForItem(props.itemId)[0];
-    if (!record || record.status !== 'ready' || !record.summary) return null;
-    return describeExecutionState(record.summary.state);
+    if (record?.status === 'ready' && record.summary) return describeExecutionState(record.summary.state);
+    if (store.listMayBeIncomplete()) return { label: 'Unknown', tone: 'neutral' as const, known: false as const };
+    return null;
   });
 
   const openExecutionTab = (e: MouseEvent) => {
