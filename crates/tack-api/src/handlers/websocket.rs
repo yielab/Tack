@@ -63,6 +63,16 @@ pub enum BoardEvent {
     Ping,
 }
 
+/// The one subprotocol this handshake ever selects — it names the message
+/// format this module actually sends (the tagged `BoardEvent` JSON above),
+/// nothing more. The frontend (`shared/realtime/boardSocket.ts`) always
+/// offers it. A client that offers a subprotocol and gets a handshake
+/// response with no `Sec-WebSocket-Protocol` header at all must fail the
+/// connection per the WebSocket spec (RFC 6455 §4.1); a server that never
+/// selects a protocol here was silently unreachable from any browser that
+/// offered one, even though the TCP-level handshake itself still completes.
+const BOARD_SUBPROTOCOL: &str = "tack.v1";
+
 /// WebSocket handler for live board updates
 #[instrument(skip(ws, state))]
 pub async fn board_live(
@@ -77,6 +87,7 @@ pub async fn board_live(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Project {} not found", project_id)))?;
 
+    let ws = ws.protocols([BOARD_SUBPROTOCOL]);
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, project_id, state)))
 }
 
