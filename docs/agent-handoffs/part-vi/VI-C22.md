@@ -180,3 +180,37 @@ fix it either.
 above) — if a precise, load-controlled re-measurement of the full accumulation curve
 past 225 matters later, it needs a machine not shared with whatever spawned those
 loops.
+
+## Amendment — integrator, at merge
+
+Re-measured the acceptance independently, three consecutive full chromium runs
+on the merged tree (`npx playwright test --project=chromium --workers=2`, port
+3210 confirmed free first so `reuseExistingServer` could not skip the reset):
+
+| Run | Result | `agent_runners` / `projects` / `items` / `execution_requests` |
+|---|---|---|
+| 1 | 69 passed, 1 failed | 15 / 4 / 21 / 11 |
+| 2 | 58 passed, ~11 failed | 7 / 3 / 11 / 5 |
+| 3 | 69 passed, 1 failed | — |
+
+**The fix works.** The counts fall between runs rather than climbing, which is
+the claim that matters: nothing accumulates. Before this change the same
+sequence added rows every run, reaching 383 runners in one session.
+
+**Acceptance criterion 1, as written, does not hold.** Row counts are identical
+only when the same set of tests passes; run 2 failed eleven tests and therefore
+wrote fewer rows. The criterion conflated two things — that the database is
+reset, and that the suite is deterministic. This card delivers the first. The
+second is not in its power to deliver and should not have been asked of it.
+
+Run 2's extra failures were all in `scheduler-e2e.spec.ts` (realtime/WebSocket
+paths). One occurrence in three runs, and these ran back to back, so a server
+still shutting down from the previous run is a live alternative explanation to
+genuine flakiness. Not diagnosed here, and deliberately not carded on one
+observation.
+
+The `a11y.spec.ts` failure is not a flake and not accumulation: a genuine WCAG
+AA contrast failure, `#5f736e` on `#e9edec` at 4.27:1 against a 4.5:1
+threshold, six violating nodes, axe impact `serious`. It reproduces from an
+emptied database. It is now VI-C24 — see that card for why it went three
+handoffs without one.
