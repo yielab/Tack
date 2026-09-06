@@ -41,3 +41,11 @@ body:
     attributes:
       label: OS / Rust version
       placeholder: "e.g. Ubuntu 24.04, rustc 1.78"
+
+  - type: checkboxes
+    id: checked-existing
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and didn't find this already reported
+          required: true

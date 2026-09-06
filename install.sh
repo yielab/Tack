@@ -62,11 +62,17 @@ echo "Looking up the newest tack release for ${platform}…"
 urls="$(fetch "$API?per_page=20" | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"/\1/')" \
   || err "could not query the releases API"
 
+# Every release also publishes a `tack-runner-<tag>-<platform>.tar.gz` archive,
+# ending in this same platform suffix, and the releases API lists it before
+# the `tack-<tag>-<platform>.tar.gz` one this installer actually wants. A bare
+# suffix match would pick it first, download it, then fail below — that
+# archive holds a binary named `tack-runner`, never one named `tack`.
+# Excluded explicitly; this script installs the board binary only.
 if [ -n "$VERSION" ]; then
-  url="$(printf '%s\n' "$urls" | grep "/download/$VERSION/" | grep -- "$suffix" | head -n 1 || true)"
+  url="$(printf '%s\n' "$urls" | grep "/download/$VERSION/" | grep -- "$suffix" | grep -v '/tack-runner-' | head -n 1 || true)"
   [ -n "$url" ] || err "no asset for $VERSION on $platform"
 else
-  url="$(printf '%s\n' "$urls" | grep -- "$suffix" | head -n 1 || true)"
+  url="$(printf '%s\n' "$urls" | grep -- "$suffix" | grep -v '/tack-runner-' | head -n 1 || true)"
   [ -n "$url" ] || err "no published $platform asset found"
 fi
 
