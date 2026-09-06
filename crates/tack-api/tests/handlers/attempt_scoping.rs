@@ -404,7 +404,12 @@ async fn manifest_artifact(
 
 /// Uploads content for an already-manifested artifact through the real
 /// runner-protocol write route, verifying the server committed it.
-async fn put_artifact_content(app: &axum::Router, attempt: &ClaimedAttempt, artifact_id: &str, content: Vec<u8>) {
+async fn put_artifact_content(
+    app: &axum::Router,
+    attempt: &ClaimedAttempt,
+    artifact_id: &str,
+    content: Vec<u8>,
+) {
     let auth = attempt.auth[0].1.clone();
     let response = app
         .clone()

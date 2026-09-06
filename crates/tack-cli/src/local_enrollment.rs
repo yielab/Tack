@@ -154,7 +154,9 @@ mod tests {
         assert!(
             !stored_session_orphaned(dir, "not-a-real-database-url")
                 .await
-                .expect("a session this function cannot even identify a runner id for must never fail")
+                .expect(
+                    "a session this function cannot even identify a runner id for must never fail"
+                )
         );
     }
 }

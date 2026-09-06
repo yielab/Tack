@@ -671,7 +671,10 @@ async fn seed_noise_rows(
           permission_policy, created_at, updated_at) VALUES {}",
         rows.join(",")
     );
-    sqlx::query(&sql).execute(repo.pool()).await.expect("seed noise rows");
+    sqlx::query(&sql)
+        .execute(repo.pool())
+        .await
+        .expect("seed noise rows");
 }
 
 /// An item whose only execution predates every other execution the
@@ -833,7 +836,10 @@ async fn list_executions_item_ids_returns_exactly_the_latest_row_per_item() {
         .into_iter()
         .map(|row| (row["item_id"].as_str().unwrap().to_owned(), row))
         .collect();
-    assert_eq!(by_item[&item_a]["request_id"], a_new_id, "must be item_a's newer row, not {a_old_id}");
+    assert_eq!(
+        by_item[&item_a]["request_id"], a_new_id,
+        "must be item_a's newer row, not {a_old_id}"
+    );
     assert_eq!(by_item[&item_a]["state"], "succeeded");
     assert_eq!(by_item[&item_b]["request_id"], b_id);
 }

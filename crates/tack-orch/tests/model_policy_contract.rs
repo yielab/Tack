@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use tack_core::models::ProjectModelDefault;
 use tack_orch::execution::{RequestedModelId, RequestedModelProvider};
 use tack_orch::model_policy::wiring::parse_model_default_convention;
-use tack_orch::model_policy::{ModelPolicySources, ModelPolicyTier, ResolvedModelPolicy, resolve_model_policy};
+use tack_orch::model_policy::{
+    ModelPolicySources, ModelPolicyTier, ResolvedModelPolicy, resolve_model_policy,
+};
 use tack_orch::scheduler::types::ModelSelector;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +71,9 @@ struct FixtureRow {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 enum ExpectedOutcome {
     Unresolved,
-    PinnedAuto { source: String },
+    PinnedAuto {
+        source: String,
+    },
     Explicit {
         source: String,
         provider: String,
@@ -196,7 +200,8 @@ fn build_fixture_rows() -> Vec<FixtureRow> {
 
 /// Path to the committed fixture, relative to this crate (`crates/tack-orch`).
 fn fixture_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts/model-policy/precedence-table.json")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/contracts/model-policy/precedence-table.json")
 }
 
 #[test]

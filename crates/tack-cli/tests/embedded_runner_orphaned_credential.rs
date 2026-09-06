@@ -242,7 +242,11 @@ fn embedded_runner_recovers_a_credential_orphaned_by_a_recreated_database() {
         "the on-disk session must be overwritten with the fresh identity's own credential"
     );
 
-    let lines = second_boot.log_lines.lock().expect("log lines lock").clone();
+    let lines = second_boot
+        .log_lines
+        .lock()
+        .expect("log lines lock")
+        .clone();
     let recovery_lines: Vec<&String> = lines
         .iter()
         .filter(|line| line.contains("no longer using"))

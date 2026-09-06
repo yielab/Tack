@@ -384,7 +384,11 @@ impl ListExecutionsQuery {
     pub const MAX_LIMIT: u32 = 2000;
 
     fn effective_limit(&self) -> i64 {
-        i64::from(self.limit.unwrap_or(Self::DEFAULT_LIMIT).min(Self::MAX_LIMIT))
+        i64::from(
+            self.limit
+                .unwrap_or(Self::DEFAULT_LIMIT)
+                .min(Self::MAX_LIMIT),
+        )
     }
 
     /// Parses `item_ids` into a list of `Uuid`s, `None` when the parameter
@@ -895,10 +899,7 @@ pub async fn list_executions(
     } else {
         let limit = query.effective_limit();
         let item_id = query.item_id.map(|id| id.to_string());
-        state
-            .repo
-            .list_executions(item_id.as_deref(), limit)
-            .await
+        state.repo.list_executions(item_id.as_deref(), limit).await
     }
     .map_err(|_| {
         error(
