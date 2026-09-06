@@ -38,7 +38,18 @@ export default defineConfig({
   // is excluded for a different reason: it targets a release artifact in Docker,
   // not this config's dev `cargo run`/`npm run dev` webServer — see
   // playwright.recovery-demo.config.ts and scripts/record-recovery-demo.sh.
-  testIgnore: ['**/screenshots.spec.ts', '**/hero-gif.spec.ts', '**/recovery-demo.spec.ts'],
+  // agent-assets.spec.ts is the same shape as the first two: it drives a
+  // release build of `tack serve --with-runner` with real harness binaries on
+  // PATH, not this config's dev pair, and it flips the one server-wide agent
+  // execution switch without holding helpers.ts's `executionToggleLock` — left
+  // in the default suite it fails on its own missing environment and makes
+  // every spec that reads a capability fail alongside it.
+  testIgnore: [
+    '**/screenshots.spec.ts',
+    '**/hero-gif.spec.ts',
+    '**/recovery-demo.spec.ts',
+    '**/agent-assets.spec.ts',
+  ],
   // One test file shouldn't leak state into another; each creates what it needs.
   fullyParallel: true,
   forbidOnly: isCI,

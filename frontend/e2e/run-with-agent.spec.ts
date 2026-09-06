@@ -1,5 +1,7 @@
-import { test, expect, type Locator } from '@playwright/test';
+import { type Locator } from '@playwright/test';
 import {
+  test,
+  expect,
   API,
   getOrCreateProject,
   getOrCreateItem,
@@ -96,7 +98,9 @@ test('Board: "Run with agent" opens the shared modal, and required-field reasons
 test('item-detail: submitting a run creates the request and it appears in the Execution tab without navigation', async ({
   page,
   request,
+  executionToggleLock,
 }) => {
+  void executionToggleLock;
   const projectId = await getOrCreateProject(request);
   // A guaranteed-fresh item (not `getOrCreateItem`, which would reuse
   // whatever item this project already has and accumulate a "Queued" badge
@@ -149,7 +153,9 @@ test('item-detail: submitting a run creates the request and it appears in the Ex
 test('the run form submits the project\'s configured model default, byte for byte, with zero hand-typed identifiers', async ({
   page,
   request,
+  executionToggleLock,
 }) => {
+  void executionToggleLock;
   const projectId = await getOrCreateProject(request);
   const itemId = await createFreshItem(request, projectId, `RWA project-default item ${Date.now()}`);
   const profileId = await createAgentProfile(request, `RWA project-default profile ${Date.now()}`);
