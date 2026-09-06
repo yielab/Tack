@@ -20,7 +20,7 @@ desktop-sidecar: ## Build `tack` and stage it as tack-desktop's Tauri sidecar
 	npm --prefix frontend run build
 	cargo build -p tack-cli --release --features embed-spa
 	mkdir -p crates/tack-desktop/binaries
-	cp target/release/tack crates/tack-desktop/binaries/tack-$$(rustc --print host-tuple)
+	cp "$${CARGO_TARGET_DIR:-target}/release/tack" crates/tack-desktop/binaries/tack-$$(rustc --print host-tuple)
 
 # `externalBin` lives in tauri.bundle.conf.json, not tauri.conf.json, so a plain
 # `cargo build --workspace` never demands a staged sidecar. Bundling does, and
