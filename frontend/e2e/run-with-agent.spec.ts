@@ -127,6 +127,25 @@ test('item-detail: submitting a run creates the request and it appears in the Ex
   await modal.getByRole('button', { name: 'Change for this run' }).click();
   await modal.getByLabel('Remote').fill('git@example.com:org/repo.git');
 
+  // An explicit, real, matching model choice — never left on whatever the
+  // shared `getOrCreateProject` project's own default model happens to be.
+  // That project is reused by every spec file that calls `getOrCreateProject`,
+  // `GET /api/projects` orders its results by `updated_at DESC`, and this
+  // test's own `request` client never scopes its create/patch calls to a
+  // project it exclusively owns — so under real concurrency, "the shared
+  // project" is whichever project *any* currently-running test most recently
+  // touched, not a stable identity. Leaving the model on its silent default
+  // ("Auto", or whatever "Project default" happened to resolve to) made this
+  // test's outcome depend on that ambient, cross-file state instead of on
+  // what this test itself set up. Selecting the target's own declared
+  // combination directly (`enrollRunner`'s fixture reports exactly one, so
+  // it is always index "0") ties the assertion to this test's own runner,
+  // the same way every project-touching test in `scheduler-e2e.spec.ts`
+  // already does.
+  await modal.getByLabel('Choose…').check();
+  await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
+  await expect(modal.getByText('Supported', { exact: true })).toBeVisible();
+
   const runButton = modal.getByRole('button', { name: 'Run', exact: true });
   await expect(runButton).toBeEnabled();
   await runButton.click();
