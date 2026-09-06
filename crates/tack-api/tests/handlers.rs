@@ -2,11 +2,14 @@
 //! operator-facing resource, the executions/runner-admin handlers exercised
 //! directly against their own routes, the same lifecycle proven again
 //! through the real production router, the two focused read-only
-//! runner/attempt routes, economics reporting, optimistic item-version
-//! concurrency, and template provisioning's rollback behavior.
+//! runner/attempt routes, the attempt-scoped artifact/decision list routes,
+//! economics reporting, optimistic item-version concurrency, and template
+//! provisioning's rollback behavior.
 
 mod common;
 
+#[path = "handlers/attempt_lists.rs"]
+mod attempt_lists;
 #[path = "handlers/crud.rs"]
 mod crud;
 #[path = "handlers/economics.rs"]
