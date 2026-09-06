@@ -6,7 +6,6 @@ import {
   createFreshItem,
   createItemWithAssignee,
   createSprintWithItem,
-  createFleet,
   createAgentProfile,
   createExecution,
   enrollRunner,
@@ -1108,8 +1107,14 @@ test('item detail Execution tab (with a real request) has no accessibility viola
   // A guaranteed-fresh item — see `run-with-agent.spec.ts`'s identical note
   // on why `getOrCreateItem` would accumulate state across repeated runs.
   const itemId = await createFreshItem(request, projectId, `A11y RWA detail ${Date.now()}`);
-  const fleetId = await createFleet(request, `A11y Fleet ${Date.now()}`);
   const profileId = await createAgentProfile(request, `A11y Profile ${Date.now()}`);
+  // An exact runner, not a fleet: `agent_fleet_members` has no write route
+  // on any API surface, so a fleet created here would always have zero
+  // members and the live-capability gate (VI-C2) would refuse to submit
+  // against it forever — the same constraint `scheduler-e2e.spec.ts`
+  // documents at length and works around the same way.
+  const modelId = `opaque/model-a11y-${Date.now()}`;
+  const { runnerId } = await enrollRunner(request, `A11y RWA Runner ${Date.now()}`, modelId);
 
   await page.goto(`/projects/${projectId}/board?item=${itemId}`);
   await waitForApp(page);
@@ -1117,9 +1122,29 @@ test('item detail Execution tab (with a real request) has no accessibility viola
   await drawer.getByRole('button', { name: 'Run with agent' }).click();
 
   const modal = page.getByRole('dialog', { name: /^Run with agent:/ });
-  await modal.getByRole('combobox', { name: 'Fleet' }).selectOption(fleetId);
+  // "Where it runs" disappears entirely whenever exactly one runner is
+  // active and no fleet exists (`RunWithAgentModal.tsx`'s
+  // `hideTargetPicker`) — select this test's own runner explicitly only
+  // when the picker actually renders, matching `scheduler-e2e.spec.ts`'s
+  // `fillExactRunnerTarget`.
+  const picker = modal.getByRole('combobox', { name: 'Machine or group' });
+  if ((await picker.count()) > 0) {
+    await picker.selectOption(`exact_runner:${runnerId}`);
+  }
   await modal.getByRole('combobox', { name: 'Agent profile' }).selectOption(profileId);
+  // The repository fieldset is a read-only summary until "Change for this
+  // run" is clicked — the free-text Remote field doesn't exist in the DOM
+  // before that (VI-C2 collapsed it).
+  await modal.getByRole('button', { name: 'Change for this run' }).click();
   await modal.getByLabel('Remote').fill('git@example.com:org/repo.git');
+  await modal.getByLabel('Base revision').fill('a11y-rwa-detail');
+  // A specific, matching model choice: with no default model configured
+  // anywhere (agent profile / project / fleet), the live-capability gate
+  // (VI-C2) refuses to submit an unresolved "Auto" request — it would
+  // queue forever. The target declares exactly one combination
+  // (`enrollRunner`'s fixed capability shape), so it is always index "0".
+  await modal.getByLabel('Choose…').check();
+  await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
   await modal.getByRole('button', { name: 'Run' }).click();
   await expect(modal).toBeHidden();
 
