@@ -615,6 +615,36 @@ byte-identical (`git diff` it in the handoff).
 
 ## Wave 17 — Proof
 
+### VI-C5 — Handler tests for VI-C4's two attempt-list routes (needs nothing)
+
+**Branch:** `agent/vi-c5-attempt-list-tests` from the `develop` tip you are given.
+
+**Read (≈ 10k):**
+- The board prelude's surface map only (`§VI.0`) plus your card.
+- The amendment that created this card:
+  `sed -n '/^## Amendments/,$p' docs/agent-handoffs/part-vi/VI-C4.md`.
+- The two handlers themselves — find them first
+  (`grep -rn "attempts/{attempt\|artifacts\|decisions" crates/tack-api/src/router.rs`), then
+  read only those two functions. **The order they guarantee comes from the handler's own
+  query, never from what the frontend renders.**
+- One neighbouring test file as the pattern to follow, and its module wiring
+  (`ls crates/tack-api/tests/`, then the `mod` list of the integration test that owns them).
+
+**Do not read:** the frontend, `docs/openapi.json`, any runner-protocol file, any other
+handoff.
+
+**Gate:** `cargo nextest run --workspace` green; the same run with each new assertion's
+behaviour reverted once, showing exactly that test fail;
+`cargo clippy --workspace --all-targets -- -D warnings`; `./scripts/check-comments.sh`;
+`./scripts/check-test-hygiene.sh` (your temp paths come from a `tempfile` guard, never
+`env::temp_dir().join(...)`). `CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VI-C5`.
+
+**Handoff extras:** the revert-once proof per test, pasted; the ordering the handler
+actually guarantees, cited by line.
+
+**Stop if:** a route cannot be tested without changing production code — record what you
+needed and hand it over rather than changing it.
+
 ### VI-D2 — Assets that show the execution plane (after C1, C2 and Part V's V-C2)
 
 **Branch:** `agent/vi-d2-assets`.
