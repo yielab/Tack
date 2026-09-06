@@ -2367,10 +2367,14 @@ coverage gates would all stay green while the public install path was broken" �
 right about the risk and blind to the instance, because resolving a URL is not installing from
 it.
 
-**Acceptance:** a push to `develop` produces a CI run where every job concludes `success` —
-paste the run id. And the install check is proven load-bearing the way this repo proves any
-other guard: revert `install.sh`'s `grep -v` once, watch the check fail, restore it. A check
-that cannot fail on the exact bug it exists to catch is not evidence.
+**Acceptance, all of it measured locally — this card does not push.** The E2E suite's real
+cost is measured on this machine, per project, with the command and the numbers pasted, and
+the job is changed so that cost fits with margin. The install check is proven load-bearing the
+way this repo proves any other guard: revert `install.sh`'s `grep -v` once, run
+`scripts/verify-install-urls.sh`, watch it fail, restore it. A check that cannot fail on the
+exact bug it exists to catch is not evidence. **The confirming CI run is the user's step, not
+this card's** — `origin/develop` is behind and pushing is theirs to authorize; the handoff ends
+by naming what they should see when they do.
 
 **Stop if:** making the E2E job fit needs a change in the frontend or the server. Record what
 you measured and hand it over — the budget is yours, the code under test is not.
