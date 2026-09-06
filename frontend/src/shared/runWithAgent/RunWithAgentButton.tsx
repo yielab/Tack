@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, Show } from 'solid-js';
+import { type Component, createSignal, createMemo, onMount, onCleanup, Show } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
 import { Button, Badge } from '../ui';
 import RunWithAgentModal from './RunWithAgentModal';
@@ -19,11 +19,12 @@ export interface RunWithAgentButtonProps {
    *  a labeled button (item-detail). */
   compact?: boolean;
   /** Shows a small badge, next to the trigger, for the item's most recent
-   *  execution request state — fed by the shared execution store, never a
-   *  second fetch. Off by default; only the Board card mounts it today.
-   *  Clicking it opens the
-   *  item to its Execution tab (`?item=<id>&tab=execution`), the same tab
-   *  a successful create switches item-detail to via `onCreated`. */
+   *  execution request state — registers this item with the shared
+   *  store's batched fetch (`store.ts#watchItem`) rather than issuing a
+   *  fetch of its own. Off by default; only the Board card mounts it
+   *  today. Clicking it opens the item to its Execution tab
+   *  (`?item=<id>&tab=execution`), the same tab a successful create
+   *  switches item-detail to via `onCreated`. */
   showStateChip?: boolean;
   onCreated?: (requestId: string) => void;
   capabilities?: () => RunnerCapabilities[];
@@ -41,21 +42,25 @@ const RunWithAgentButton: Component<RunWithAgentButtonProps> = (props) => {
   const [, setSearchParams] = useSearchParams();
   const store = useExecutionStore();
 
-  // The item's most recent execution request, read from the shared store —
-  // never a second fetch (`App.tsx` already loads the list once). `null`
-  // whenever there is none yet, or the one record fetched for it errored
-  // (an errored record is a real, distinct state, never mistaken for "no
-  // activity" — `ExecutionRequestRecord`'s own doc comment).
-  //
-  // If the item is absent from the cache AND the shared preload has hit its
-  // row cap (`store.listMayBeIncomplete()`), "no record" does not mean
-  // "never run" — it means unknown, so an explicit chip says that rather
-  // than silently rendering nothing, which would read as false confidence
-  // that the item has no activity.
+  // Registers this item with the store's batched badge fetch for as long as
+  // this component is mounted — never a per-card fetch of its own (see
+  // `store.ts#watchItem`'s doc comment for how many badges mounting at once
+  // still cost exactly one request).
+  onMount(() => {
+    const unwatch = store.watchItem(props.itemId);
+    onCleanup(unwatch);
+  });
+
+  // The item's most recent execution request, read from the shared store.
+  // `null` whenever there is none yet, or the one record fetched for it
+  // errored (an errored record is a real, distinct state, never mistaken
+  // for "no activity" — `ExecutionRequestRecord`'s own doc comment). Absence
+  // from the cache is conclusive: `watchItem`'s batched fetch asks the
+  // server by this exact id, so there is no bounded/truncated preload left
+  // to be uncertain about.
   const latestState = createMemo(() => {
     const record = store.requestsForItem(props.itemId)[0];
     if (record?.status === 'ready' && record.summary) return describeExecutionState(record.summary.state);
-    if (store.listMayBeIncomplete()) return { label: 'Unknown', tone: 'neutral' as const, known: false as const };
     return null;
   });
 

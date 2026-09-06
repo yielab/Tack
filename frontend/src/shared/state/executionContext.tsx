@@ -1,4 +1,4 @@
-import { createContext, useContext, onMount, onCleanup, type ParentComponent } from 'solid-js';
+import { createContext, useContext, onCleanup, type ParentComponent } from 'solid-js';
 import { createExecutionStore, createExecutionRealtime, type ExecutionStore } from '../execution';
 
 // The single shared instance of the execution store: every consumer must
@@ -21,16 +21,14 @@ const ExecutionStoreContext = createContext<ExecutionStore>();
 /**
  * Mount once, above every surface that needs execution data (Board,
  * item-detail, Sprint all live under the app shell — see `app/App.tsx`).
- * Loads the list once on mount and wires the shared bounded-poll realtime
+ * Fetches nothing itself on mount — each consumer drives its own fetch
+ * (`ExecutionTimeline`'s item-scoped `loadList`, `RunWithAgentButton`'s
+ * batched `watchItem`) — and wires the shared bounded-poll realtime
  * invalidation (`createExecutionRealtime`) so every consumer's view of a
  * request updates without a manual refetch or a page navigation.
  */
 export const ExecutionStoreProvider: ParentComponent = (props) => {
   const store = createExecutionStore();
-
-  onMount(() => {
-    void store.loadList();
-  });
 
   const realtime = createExecutionRealtime({
     watchedRequestIds: () => [...store.requests().keys()],

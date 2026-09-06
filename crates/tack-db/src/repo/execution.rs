@@ -329,6 +329,20 @@ pub struct RunnerListingRow {
     pub fleet_ids: Vec<String>,
 }
 
+/// One row of `GET /api/executions` (unscoped, one-item, or the
+/// `item_ids` batch) or `GET /api/executions/{id}`'s detail — the five
+/// scalar columns this surface exposes. Deliberately thinner than
+/// `execution_requests`' full row (no selector, agent profile, requested
+/// harness/model, repository/permission/budget/timeout/metadata columns).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionListingRow {
+    pub id: String,
+    pub item_id: String,
+    pub state: String,
+    pub cancellation_requested_at: Option<String>,
+    pub created_at: String,
+}
+
 /// One row of `GET /api/executions/{request_id}/attempts` — every column
 /// `execution_attempts` carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2438,6 +2452,86 @@ impl Repository {
             });
         }
         Ok(out)
+    }
+
+    /// Backs the unscoped and one-item shapes of `GET /api/executions` —
+    /// newest first, bounded by `limit` either way. `item_id`, when given,
+    /// scopes the result to that one item's requests instead of every
+    /// request the install has ever recorded.
+    #[instrument(skip(self))]
+    pub async fn list_executions(
+        &self,
+        item_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ExecutionListingRow>, sqlx::Error> {
+        let rows = match item_id {
+            Some(item_id) => {
+                sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests WHERE item_id = ? ORDER BY created_at DESC LIMIT ?")
+                    .bind(item_id)
+                    .bind(limit)
+                    .fetch_all(self.pool())
+                    .await?
+            }
+            None => {
+                sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests ORDER BY created_at DESC LIMIT ?")
+                    .bind(limit)
+                    .fetch_all(self.pool())
+                    .await?
+            }
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| ExecutionListingRow {
+                id: row.get("id"),
+                item_id: row.get("item_id"),
+                state: row.get("state"),
+                cancellation_requested_at: row.get("cancellation_requested_at"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
+    }
+
+    /// Backs the `item_ids` batch shape of `GET /api/executions` — exactly
+    /// one row per id in `item_ids` that has at least one execution
+    /// request (an id with none is simply absent, never padded with a
+    /// null row), carrying only its most recent request by `created_at`.
+    /// A window function, not `GROUP BY item_id HAVING MAX(created_at)`:
+    /// two requests for the same item can share a `created_at` value, and
+    /// only `id DESC` as a tiebreak keeps the choice deterministic across
+    /// repeated calls. `Ok(vec![])` for an empty `item_ids` rather than
+    /// issuing a query with an empty `IN ()`, which is invalid SQL —
+    /// matching [`Repository::list_dependencies_for_items`]'s guard.
+    #[instrument(skip(self))]
+    pub async fn list_latest_executions_for_items(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<ExecutionListingRow>, sqlx::Error> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "SELECT id, item_id, state, cancellation_requested_at, created_at FROM ( \
+                 SELECT id, item_id, state, cancellation_requested_at, created_at, \
+                        ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY created_at DESC, id DESC) AS rn \
+                 FROM execution_requests WHERE item_id IN ({placeholders}) \
+             ) WHERE rn = 1"
+        );
+        let mut q = sqlx::query(&query);
+        for id in item_ids {
+            q = q.bind(id);
+        }
+        let rows = q.fetch_all(self.pool()).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ExecutionListingRow {
+                id: row.get("id"),
+                item_id: row.get("item_id"),
+                state: row.get("state"),
+                cancellation_requested_at: row.get("cancellation_requested_at"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
     }
 
     /// Every attempt ever made against `request_id`, oldest first. Backs

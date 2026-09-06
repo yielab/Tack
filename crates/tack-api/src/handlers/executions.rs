@@ -342,25 +342,78 @@ pub struct ExecutionListResponse {
     pub data: Vec<ExecutionSummary>,
 }
 
-/// Query parameters for `GET /api/executions`. `item_id`, when present,
-/// scopes the result to one item's requests instead of every request the
-/// install has ever recorded; `limit` bounds either case so no request can
-/// scan the whole table.
+/// Query parameters for `GET /api/executions`. Three read shapes, in
+/// precedence order: `item_ids` (comma-separated) asks for the single
+/// latest execution per item, for a batch of items — the shape a
+/// Board/Sprint screen with many cards needs, one request regardless of
+/// how many cards are on screen, and wins over `item_id`/`limit` when
+/// present; else `item_id` scopes every request for one item; else the
+/// unscoped, install-wide list, bounded by `limit`.
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ListExecutionsQuery {
     pub item_id: Option<Uuid>,
+    /// Comma-separated item ids — returns exactly one row per id, its own
+    /// most recent execution. Takes precedence over `item_id`/`limit` when
+    /// present.
+    //
+    // A plain string field, not `Vec<Uuid>`: axum's `Query` extractor
+    // deserializes query parameters via `serde_urlencoded`, which cannot
+    // parse a repeated same-named key into a sequence field (confirmed
+    // against this exact version — `serde_urlencoded::from_str` on a
+    // repeated key errors "invalid type: string ..., expected a
+    // sequence"). Parsed by `ListExecutionsQuery::parsed_item_ids`, not at
+    // deserialize time, so a malformed id surfaces as this route's own
+    // contract-shaped `invalid_request` error instead of axum's generic
+    // query-rejection response.
+    #[param(
+        value_type = Option<String>,
+        example = "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222"
+    )]
+    #[serde(default)]
+    pub item_ids: Option<String>,
     pub limit: Option<u32>,
 }
 
 impl ListExecutionsQuery {
     /// Applied when `limit` is omitted.
     pub const DEFAULT_LIMIT: u32 = 200;
-    /// Hard cap even when a caller asks for more.
+    /// Hard cap even when a caller asks for more — also the ceiling on how
+    /// many ids `item_ids` may carry, so a pathologically long batch can't
+    /// force an unbounded `IN (...)`.
     pub const MAX_LIMIT: u32 = 2000;
 
     fn effective_limit(&self) -> i64 {
         i64::from(self.limit.unwrap_or(Self::DEFAULT_LIMIT).min(Self::MAX_LIMIT))
+    }
+
+    /// Parses `item_ids` into a list of `Uuid`s, `None` when the parameter
+    /// was absent or empty. `Err` names the malformed fragment verbatim
+    /// (never silently dropped) or, when the list is longer than
+    /// `MAX_LIMIT`, a message naming the count — both are surfaced by the
+    /// caller as `invalid_request`.
+    fn parsed_item_ids(&self) -> Result<Option<Vec<Uuid>>, String> {
+        let Some(raw) = self.item_ids.as_deref().map(str::trim) else {
+            return Ok(None);
+        };
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        let ids = raw
+            .split(',')
+            .map(|part| {
+                let part = part.trim();
+                Uuid::parse_str(part).map_err(|_| part.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if ids.len() > Self::MAX_LIMIT as usize {
+            return Err(format!(
+                "item_ids carries {} ids, more than the {} allowed",
+                ids.len(),
+                Self::MAX_LIMIT
+            ));
+        }
+        Ok(Some(ids))
     }
 }
 
@@ -820,26 +873,32 @@ pub async fn create_execution(
     tag = "execution-operator",
     params(ListExecutionsQuery),
     responses(
-        (status = 200, description = "Execution requests, newest first — scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit`", body = ExecutionListResponse),
+        (status = 200, description = "Execution requests, newest first. `item_ids` present: exactly one row per id that has at least one execution, the batch's own most recent one. Else scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit`", body = ExecutionListResponse),
+        (status = 400, description = "invalid_request (a malformed `item_ids` entry, or more ids than the route's cap)", body = RunnerV1ErrorEnvelope),
     ),
 )]
 pub async fn list_executions(
     State(state): State<OperatorExecutionState>,
     Query(query): Query<ListExecutionsQuery>,
 ) -> Result<Json<ExecutionListResponse>, (StatusCode, Json<Value>)> {
-    let limit = query.effective_limit();
-    let rows = match query.item_id {
-        Some(item_id) => {
-            sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests WHERE item_id = ? ORDER BY created_at DESC LIMIT ?")
-                .bind(item_id.to_string())
-                .bind(limit)
-                .fetch_all(state.repo.pool()).await
-        }
-        None => {
-            sqlx::query("SELECT id, item_id, state, cancellation_requested_at, created_at FROM execution_requests ORDER BY created_at DESC LIMIT ?")
-                .bind(limit)
-                .fetch_all(state.repo.pool()).await
-        }
+    let item_ids = query.parsed_item_ids().map_err(|bad_value| {
+        error(
+            StatusCode::BAD_REQUEST,
+            StableErrorCode::InvalidRequest,
+            "item_ids must be a comma-separated list of UUIDs",
+            json!({"field": "item_ids", "value": bad_value}),
+        )
+    })?;
+    let rows = if let Some(item_ids) = item_ids {
+        let item_ids: Vec<String> = item_ids.iter().map(Uuid::to_string).collect();
+        state.repo.list_latest_executions_for_items(&item_ids).await
+    } else {
+        let limit = query.effective_limit();
+        let item_id = query.item_id.map(|id| id.to_string());
+        state
+            .repo
+            .list_executions(item_id.as_deref(), limit)
+            .await
     }
     .map_err(|_| {
         error(
@@ -852,11 +911,11 @@ pub async fn list_executions(
     let data: Vec<ExecutionSummary> = rows
         .into_iter()
         .map(|row| ExecutionSummary {
-            request_id: row.get("id"),
-            item_id: row.get("item_id"),
-            state: row.get("state"),
-            cancellation_requested_at: row.get("cancellation_requested_at"),
-            created_at: row.get("created_at"),
+            request_id: row.id,
+            item_id: row.item_id,
+            state: row.state,
+            cancellation_requested_at: row.cancellation_requested_at,
+            created_at: row.created_at,
         })
         .collect();
     Ok(Json(ExecutionListResponse {

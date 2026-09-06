@@ -159,17 +159,21 @@ export const executionsApi = {
    *  (`list_executions`'s `item_id` query parameter) instead of every
    *  execution request the install has ever recorded — the one-item
    *  Execution tab (`ExecutionTimeline.tsx`) uses this so opening it never
-   *  pulls the whole table over the wire. Omitted for the app-wide preload
-   *  (`ExecutionStoreProvider`), which still gets every request up to
-   *  whichever `limit` it asks for (or the handler's own default bound,
-   *  200, if it asks for none — see `store.ts`'s
-   *  `EXECUTION_LIST_PRELOAD_LIMIT` for why the preload always asks
-   *  explicitly). `limit` forwards to `list_executions`'s own `?limit=`,
-   *  server-capped at `MAX_LIMIT` regardless of what is asked. */
-  list: (itemId?: string, limit?: number) => {
+   *  pulls the whole table over the wire. `limit` forwards to
+   *  `list_executions`'s own `?limit=`, server-capped at `MAX_LIMIT`
+   *  regardless of what is asked; meaningless (and ignored server-side)
+   *  whenever `itemIds` is also given.
+   *
+   *  `itemIds`, when given, asks for the latest execution for each of
+   *  those items in one request (`?item_ids=`, comma-joined) — what
+   *  `store.ts#watchItem` batches Board/Sprint badge reads into, instead of
+   *  a single shared "most recent N install-wide" fetch that degrades with
+   *  install size. Wins over `itemId`/`limit` server-side when present. */
+  list: (itemId?: string, limit?: number, itemIds?: readonly string[]) => {
     const params = new URLSearchParams();
     if (itemId) params.set('item_id', itemId);
     if (limit !== undefined) params.set('limit', String(limit));
+    if (itemIds && itemIds.length > 0) params.set('item_ids', itemIds.join(','));
     const qs = params.toString();
     return requestWithHeaders<ExecutionListResult>(qs ? `/executions?${qs}` : '/executions');
   },

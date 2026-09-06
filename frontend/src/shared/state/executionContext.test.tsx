@@ -30,7 +30,7 @@ describe('useExecutionStore', () => {
 });
 
 describe('ExecutionStoreProvider', () => {
-  it('loads the execution list once on mount and shares one store instance across consumers', async () => {
+  it('fetches nothing on mount, and shares one store instance so a fetch requested by one consumer is visible to all', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -75,8 +75,15 @@ describe('ExecutionStoreProvider', () => {
     // Same instance — this is the mechanism behind "every consumer sees one
     // consistent state," inherited by every consumer this Provider serves.
     expect(seenByA).toBe(seenByB);
-    expect(seenByA!.requests().has('req-1')).toBe(true);
-    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/executions'))).toBe(true);
+    // No eager preload any more — each consumer drives its own fetch
+    // (`ExecutionTimeline`'s scoped `loadList`, `RunWithAgentButton`'s
+    // batched `watchItem`).
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    seenByA!.watchItem('item-1');
+    await flush();
+    await flush();
+    expect(seenByB!.requestsForItem('item-1')[0]?.summary?.request_id).toBe('req-1');
   });
 
   it('disposes its realtime subscription on unmount without throwing', async () => {

@@ -6177,6 +6177,13 @@ export interface operations {
         parameters: {
             query?: {
                 item_id?: string;
+                /**
+                 * @description Comma-separated item ids — returns exactly one row per id, its own
+                 *     most recent execution. Takes precedence over `item_id`/`limit` when
+                 *     present.
+                 * @example 11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222
+                 */
+                item_ids?: string;
                 limit?: number;
             };
             header?: never;
@@ -6185,13 +6192,22 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Execution requests, newest first — scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit` */
+            /** @description Execution requests, newest first. `item_ids` present: exactly one row per id that has at least one execution, the batch's own most recent one. Else scoped to one item when `item_id` is given, otherwise every request the install has recorded up to `limit` */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionListResponse"];
+                };
+            };
+            /** @description invalid_request (a malformed `item_ids` entry, or more ids than the route's cap) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerV1ErrorEnvelope"];
                 };
             };
         };
