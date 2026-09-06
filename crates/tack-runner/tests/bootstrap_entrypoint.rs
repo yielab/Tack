@@ -133,10 +133,18 @@ async fn the_composition_root_stops_on_an_injected_shutdown_with_no_process_sign
     // instead of a process that never returns. It has to clear two very
     // different floors at once: comfortably above the delay a machine
     // saturated by the rest of this suite can add to a single OS thread's
-    // own scheduling (measured once at 110s against this same 5s budget),
-    // and comfortably below the point (three minutes) this workspace's own
-    // test runner terminates a still-running test outright, which would
-    // report a bare process kill instead of this test's own message.
+    // own scheduling, and comfortably below the point (three minutes) this
+    // workspace's own test runner terminates a still-running test outright,
+    // which would report a bare process kill instead of this test's own
+    // message. The upper floor is the exact one; the lower is not, and
+    // cannot be — a single observation of this test taking two orders of
+    // magnitude longer than its typical sub-second run is what rules the
+    // old budget out, but saturating a many-core machine with spare
+    // scheduling headroom does not reproduce it, so no number here is
+    // re-measurable on demand. That asymmetry is why this sits near the
+    // runner's kill boundary rather than just above any figure: the cost of
+    // being too generous is bounded and small, and the cost of being too
+    // tight is a test that fails for reasons that are not about the code.
     let outcome = tokio::time::timeout(Duration::from_secs(150), task)
         .await
         .expect("runtime stopped after shutdown was requested, with no signal sent")

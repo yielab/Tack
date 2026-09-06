@@ -220,3 +220,23 @@ test infrastructure, not user-facing surface.
 
 *(Appended by later readers, dated. The original text above is never rewritten — the
 history of what was believed and later falsified is the point.)*
+
+## Amendment — integrator, at merge
+
+The comment sizing the 150s budget asserted the 110s figure as a measurement
+(`measured once at 110s against this same 5s budget`). The card's own author
+could not reproduce it, and this repo's rule is that a load-bearing number is
+re-measured before it is quoted. A reader with the code but not this handoff
+would have taken it as verified.
+
+Rewritten to state what is actually true: the upper floor (the test runner's
+180s kill boundary) is exact and checkable; the lower one is a single
+unreproduced observation, and the reason 150s sits near the upper boundary
+rather than just above the lower one is that the two errors are not
+symmetric — being too generous costs bounded time on a failure that is
+already a failure, while being too tight costs a test that fails for reasons
+that have nothing to do with the code.
+
+The number itself did not change; only the claim made for it. The handoff's
+own "Known limitations" account of the gap was accurate and is what this
+amendment defers to.
