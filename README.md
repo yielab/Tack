@@ -113,6 +113,12 @@ external services.
 ## Screenshots
 
 <p align="center">
+  <img src="docs/screenshots/agents.png" width="98%" alt="The Agents page, fully earned: agent execution on, Codex and Claude Code both detected, Claude Code's own login verified by a real test run, a project default model saved, and that test run's own attempt shown Succeeded." />
+</p>
+<p align="center">
+  <img src="docs/screenshots/attempt.png" width="98%" alt="An item's Execution tab: a real attempt shown Succeeded, its requested-vs-actual model matched against claude-sonnet-4-5, and its usage economics — token cost measured, wall-clock cost explicitly Not measured rather than shown as zero." />
+</p>
+<p align="center">
   <img src="docs/screenshots/hero.gif" width="98%" alt="Board, Timeline, and vocabulary editor — project-management views only; no agent run is shown in this recording" />
 </p>
 <p align="center">
