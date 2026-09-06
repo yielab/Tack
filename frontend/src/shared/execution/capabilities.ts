@@ -180,6 +180,15 @@ export interface CombinationAvailability {
  * exact harness/provider/model combination usable right now, across every
  * runner capability snapshot the caller has. Always returns a typed reason,
  * whether supported or not — never a bare boolean (TODO.md III.2 rule 7).
+ *
+ * Mirrors `crates/tack-orch/src/scheduler/select.rs`'s `evaluate_candidate`
+ * exactly: a pairing counts as supported when a runner either declares it in
+ * `model_combinations`, OR attests `model_passthrough: supported` for that
+ * harness — the scheduler's own arm is `!declared && !passthrough`, checked
+ * with no regard to which provider/model was actually requested, because a
+ * passthrough harness forwards whatever it's given and validates it itself
+ * at run time. `'advisory'` and an absent attestation both mean "not
+ * attested" and reject exactly like `'unsupported'`, same as the scheduler.
  */
 export function isCombinationSupported(
   snapshots: RunnerCapabilities[],
@@ -192,27 +201,35 @@ export function isCombinationSupported(
   }
   let harnessSeen = false;
   let providerSeen = false;
-  let supportingRunnerCount = 0;
+  let declaredSupportingRunnerCount = 0;
+  let passthroughOnlySupportingRunnerCount = 0;
   for (const snapshot of snapshots) {
     for (const harness of snapshot.harnesses) {
       if (harness.harness_kind !== harnessKind) continue;
       harnessSeen = true;
       if (harness.probe_error !== null) continue;
+      let declaredHere = false;
       for (const combo of harness.model_combinations) {
         if (combo.model_provider !== modelProvider) continue;
         providerSeen = true;
-        if (combo.model_ids.includes(modelId)) supportingRunnerCount += 1;
+        if (combo.model_ids.includes(modelId)) declaredHere = true;
       }
+      // Counted once per reporting harness, never both ways for the same
+      // report — a runner is either supporting evidence or it isn't, exactly
+      // the per-candidate `declared || passthrough` the scheduler evaluates.
+      if (declaredHere) declaredSupportingRunnerCount += 1;
+      else if (harness.model_passthrough?.support === 'supported') passthroughOnlySupportingRunnerCount += 1;
     }
   }
+  const supportingRunnerCount = declaredSupportingRunnerCount + passthroughOnlySupportingRunnerCount;
   if (supportingRunnerCount > 0) {
     const noun = supportingRunnerCount === 1 ? 'runner' : 'runners';
     const verb = supportingRunnerCount === 1 ? 'reports' : 'report';
-    return {
-      supported: true,
-      reason: `${supportingRunnerCount} ${noun} ${verb} this combination`,
-      supportingRunnerCount,
-    };
+    const reason =
+      declaredSupportingRunnerCount > 0
+        ? `${supportingRunnerCount} ${noun} ${verb} this combination`
+        : `${supportingRunnerCount} ${noun} ${verb} this harness forwards an operator-chosen model verbatim (model passthrough)`;
+    return { supported: true, reason, supportingRunnerCount };
   }
   if (!harnessSeen) {
     return { supported: false, reason: 'no runner reports this harness', supportingRunnerCount: 0 };

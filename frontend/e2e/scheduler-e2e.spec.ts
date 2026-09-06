@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import {
   getOrCreateProject,
+  createFreshProject,
   createFreshItem,
   createAgentProfile,
-  createModelProfile,
   enrollRunner,
   claimOnce,
+  setProjectDefaultModel,
   waitForApp,
 } from './helpers';
 
@@ -59,9 +60,22 @@ async function fillExactRunnerTarget(
   runnerId: string,
   agentProfileId: string,
 ) {
-  await modal.getByLabel('Exact runner').check();
-  await modal.getByLabel('Runner id').fill(runnerId);
+  // "Where it runs" is one combined picker over active runners/fleets
+  // (`RunWithAgentModal.tsx`'s `targetOptions`) that disappears entirely,
+  // auto-selecting the sole target, whenever exactly one runner is active
+  // and no fleet exists — so it only needs an explicit selection when a
+  // real choice exists (which, on a server this whole suite shares, is true
+  // as soon as a second runner from any concurrently running test has
+  // enrolled).
+  const picker = modal.getByRole('combobox', { name: 'Machine or group' });
+  if ((await picker.count()) > 0) {
+    await picker.selectOption(`exact_runner:${runnerId}`);
+  }
   await modal.getByRole('combobox', { name: 'Agent profile' }).selectOption(agentProfileId);
+  // The repository fieldset is a read-only summary until "Change for this
+  // run" is clicked — the free-text Remote/Base revision fields don't exist
+  // in the DOM before that.
+  await modal.getByRole('button', { name: 'Change for this run' }).click();
   await modal.getByLabel('Remote').fill('git@example.com:org/e2e-scheduler.git');
   await modal.getByLabel('Base revision').fill(BASE_REVISION);
 }
@@ -74,17 +88,19 @@ test('healthy exact-runner selection is claimed, and the UI reflects it without 
   const itemId = await createFreshItem(request, projectId, `Scheduler E2E healthy ${Date.now()}`);
   const agentProfileId = await createAgentProfile(request, `E2E healthy profile ${Date.now()}`);
   const modelId = `opaque/model-healthy-${Date.now()}`;
-  const modelProfileId = await createModelProfile(request, `E2E healthy model ${Date.now()}`, 'openai', modelId);
   const { runnerId, credential } = await enrollRunner(request, `healthy-runner-${Date.now()}`, modelId);
 
   const { drawer, modal } = await openRunModal(page, projectId, itemId);
   await fillExactRunnerTarget(modal, runnerId, agentProfileId);
 
   // A specific, real, matching model choice — the live-capability gate
-  // (card III-E6: `RunWithAgentModal.tsx` now fetches `GET /api/runners`)
-  // must show it as genuinely supported, not merely "unverified."
-  await modal.getByLabel('Choose a model').check();
-  await modal.getByRole('combobox', { name: 'Model' }).selectOption(modelProfileId);
+  // (`RunWithAgentModal.tsx`'s "Choose…" list, built from the target's own
+  // `GET /api/runners` capability report) must show it as genuinely
+  // supported, not merely "unverified." The target declares exactly one
+  // combination (`helpers.ts#enrollRunner`'s fixed capability shape), so it
+  // is always index "0".
+  await modal.getByLabel('Choose…').check();
+  await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
   await expect(modal.getByText('Supported', { exact: true })).toBeVisible();
 
   const runButton = modal.getByRole('button', { name: 'Run' });
@@ -115,15 +131,14 @@ test('a saturated runner leaves a second exact-runner request visibly queued', a
   const projectId = await getOrCreateProject(request);
   const modelId = `opaque/model-saturated-${Date.now()}`;
   const agentProfileId = await createAgentProfile(request, `E2E saturation profile ${Date.now()}`);
-  const modelProfileId = await createModelProfile(request, `E2E saturation model ${Date.now()}`, 'openai', modelId);
   const { runnerId, credential } = await enrollRunner(request, `saturated-runner-${Date.now()}`, modelId, 1);
 
   const firstItemId = await createFreshItem(request, projectId, `Scheduler E2E saturation 1 ${Date.now()}`);
   {
     const { modal } = await openRunModal(page, projectId, firstItemId);
     await fillExactRunnerTarget(modal, runnerId, agentProfileId);
-    await modal.getByLabel('Choose a model').check();
-    await modal.getByRole('combobox', { name: 'Model' }).selectOption(modelProfileId);
+    await modal.getByLabel('Choose…').check();
+    await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
     await modal.getByRole('button', { name: 'Run' }).click();
     await expect(modal).toBeHidden();
   }
@@ -133,8 +148,8 @@ test('a saturated runner leaves a second exact-runner request visibly queued', a
   const secondItemId = await createFreshItem(request, projectId, `Scheduler E2E saturation 2 ${Date.now()}`);
   const { drawer, modal } = await openRunModal(page, projectId, secondItemId);
   await fillExactRunnerTarget(modal, runnerId, agentProfileId);
-  await modal.getByLabel('Choose a model').check();
-  await modal.getByRole('combobox', { name: 'Model' }).selectOption(modelProfileId);
+  await modal.getByLabel('Choose…').check();
+  await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
   await modal.getByRole('button', { name: 'Run' }).click();
   await expect(modal).toBeHidden();
 
@@ -157,15 +172,14 @@ test('an exact-runner request is never claimed by a different, otherwise-eligibl
   const projectId = await getOrCreateProject(request);
   const modelId = `opaque/model-exact-${Date.now()}`;
   const agentProfileId = await createAgentProfile(request, `E2E exact profile ${Date.now()}`);
-  const modelProfileId = await createModelProfile(request, `E2E exact model ${Date.now()}`, 'openai', modelId);
   const target = await enrollRunner(request, `exact-target-${Date.now()}`, modelId);
   const bystander = await enrollRunner(request, `exact-bystander-${Date.now()}`, modelId);
 
   const itemId = await createFreshItem(request, projectId, `Scheduler E2E exact runner ${Date.now()}`);
   const { drawer, modal } = await openRunModal(page, projectId, itemId);
   await fillExactRunnerTarget(modal, target.runnerId, agentProfileId);
-  await modal.getByLabel('Choose a model').check();
-  await modal.getByRole('combobox', { name: 'Model' }).selectOption(modelProfileId);
+  await modal.getByLabel('Choose…').check();
+  await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
   await modal.getByRole('button', { name: 'Run' }).click();
   await expect(modal).toBeHidden();
 
@@ -194,24 +208,31 @@ test('an unsupported model is blocked client-side with a named reason, using the
   page,
   request,
 }) => {
-  const projectId = await getOrCreateProject(request);
+  // A fresh project, never the shared one `getOrCreateProject` returns —
+  // this test writes the project's own default model, which the API has no
+  // route to clear once set (`helpers.ts#createFreshProject`'s own doc
+  // comment). `RunWithAgentModal.tsx`'s "Choose…" list only ever offers a
+  // combination the target itself declares (or a free-text override when it
+  // attests `model_passthrough`, which this fixture does not), so there is
+  // no dropdown entry for an arbitrary undeclared model any more — the
+  // project's own default-model tier is the one path left that reaches an
+  // explicit, chosen model the target genuinely doesn't support.
+  const projectId = await createFreshProject(request, `Scheduler E2E unsupported model project ${Date.now()}`);
   const declaredModelId = `opaque/model-declared-${Date.now()}`;
   const undeclaredModelId = `opaque/model-not-declared-${Date.now()}`;
   const agentProfileId = await createAgentProfile(request, `E2E unsupported profile ${Date.now()}`);
-  const undeclaredModelProfileId = await createModelProfile(
-    request,
-    `E2E unsupported model ${Date.now()}`,
-    'openai',
-    undeclaredModelId,
-  );
   const { runnerId } = await enrollRunner(request, `unsupported-model-runner-${Date.now()}`, declaredModelId);
+  await setProjectDefaultModel(request, projectId, 'openai', undeclaredModelId);
 
   const itemId = await createFreshItem(request, projectId, `Scheduler E2E unsupported model ${Date.now()}`);
   const { modal } = await openRunModal(page, projectId, itemId);
   await fillExactRunnerTarget(modal, runnerId, agentProfileId);
 
-  await modal.getByLabel('Choose a model').check();
-  await modal.getByRole('combobox', { name: 'Model' }).selectOption(undeclaredModelProfileId);
+  // The project's default model is auto-selected ("Project default — …")
+  // whenever one is configured, ahead of Auto — no explicit mode switch is
+  // needed here, only the target/profile/repository `fillExactRunnerTarget`
+  // already filled in.
+  await expect(modal.getByLabel(/^Project default —/)).toBeChecked();
 
   // The live capability gate (real `GET /api/runners` data — the runner
   // enrolled above declared a *different* model) must name this

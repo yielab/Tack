@@ -14,6 +14,8 @@ import {
   describeProjectModelDefault,
   projectDefaultModelPair,
   isModelPassthroughAttested,
+  parseModelDefaultConvention,
+  resolveAutoModelPolicy,
   type RunWithAgentFormValues,
 } from './shared';
 import type { RunnerCapabilities, HarnessCapability } from '../execution';
@@ -146,6 +148,7 @@ function capsWith(harness: {
   harness_kind: string;
   probe_error: string | null;
   model_combinations: { model_provider: string; model_ids: string[] }[];
+  model_passthrough?: { support: 'supported' | 'unsupported' | 'advisory'; reason: string | null };
 }): RunnerCapabilities[] {
   return [
     {
@@ -160,6 +163,7 @@ function capsWith(harness: {
           probe_error: harness.probe_error,
           probed_at: '2026-08-06T12:00:00Z',
           model_combinations: harness.model_combinations.map((c) => ({ ...c, discovery: 'reported' })),
+          ...(harness.model_passthrough ? { model_passthrough: harness.model_passthrough } : {}),
         },
       ],
       features: {
@@ -175,20 +179,11 @@ function capsWith(harness: {
 }
 
 describe('gateHarnessModelSelection', () => {
-  it('with zero capability snapshots and Auto selected, allows submission with an advisory (never a hard block)', () => {
-    const gate = gateHarnessModelSelection([], 'codex', null, null);
-    expect(gate.allowed).toBe(true);
-    expect(gate.advisory).toBe(true);
-    expect(gate.reason).toMatch(/no runner capability data/i);
-  });
-
   it('with zero capability snapshots and a SPECIFIC model chosen, blocks submission with a typed reason', () => {
-    // This is the other half of the same rule: "Auto" is a legal request
-    // shape with nothing concrete to validate, but a specific combination is
-    // a falsifiable claim, and with no real capability data available it
-    // cannot be verified as supported — TODO.md III.2 rule 7, "never report
-    // supported: true without at least one runner's real capability data
-    // backing it."
+    // This is a falsifiable claim ("this exact combination works"), and with
+    // no real capability data available it cannot be verified as supported —
+    // TODO.md III.2 rule 7, "never report supported: true without at least
+    // one runner's real capability data backing it."
     const gate = gateHarnessModelSelection([], 'codex', 'openai', 'opaque/model-alpha');
     expect(gate.allowed).toBe(false);
     expect(gate.advisory).toBe(false);
@@ -216,19 +211,190 @@ describe('gateHarnessModelSelection', () => {
     expect(gate.advisory).toBe(false);
   });
 
-  it('with real data present and Auto selected, a cleanly-probed harness is allowed non-advisory', () => {
-    const caps = capsWith({ harness_kind: 'codex', probe_error: null, model_combinations: [] });
-    const gate = gateHarnessModelSelection(caps, 'codex', null, null);
+  it('an explicit model undeclared by any runner is still allowed when the harness attests model_passthrough: supported', () => {
+    const caps = capsWith({
+      harness_kind: 'codex',
+      probe_error: null,
+      model_combinations: [],
+      model_passthrough: { support: 'supported', reason: null },
+    });
+    const gate = gateHarnessModelSelection(caps, 'codex', 'openai', 'gpt-5-codex');
     expect(gate.allowed).toBe(true);
-    expect(gate.advisory).toBe(false);
+    expect(gate.reason).toContain('model passthrough');
   });
 
-  it('surfaces a real probe error in the advisory text rather than hiding it', () => {
-    const caps = capsWith({ harness_kind: 'codex', probe_error: 'binary not found on PATH', model_combinations: [] });
+  // ── Auto ("let the runner decide") ────────────────────────────────────────
+  //
+  // Auto's fate now depends entirely on `autoResolution` (this module's
+  // `resolveAutoModelPolicy`), never on harness probe status — the scheduler
+  // (`crates/tack-orch/src/scheduler/select.rs`) rejects an unresolved Auto
+  // request unconditionally regardless of whether any runner was ever probed
+  // cleanly, so probe status has nothing to do with whether this submits.
+
+  it('with no autoResolution argument (defaults to unresolved), Auto is blocked and names the fix', () => {
+    const caps = capsWith({ harness_kind: 'codex', probe_error: null, model_combinations: [] });
     const gate = gateHarnessModelSelection(caps, 'codex', null, null);
+    expect(gate.allowed).toBe(false);
+    expect(gate.advisory).toBe(false);
+    expect(gate.reason).toMatch(/no agent profile, project, or fleet default model is configured/i);
+    expect(gate.reason).not.toMatch(/scheduler will still validate at claim time/i);
+  });
+
+  it('unresolved Auto is blocked even with zero capability snapshots — the same fix applies regardless', () => {
+    const gate = gateHarnessModelSelection([], 'codex', null, null, { outcome: 'unresolved' });
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/no agent profile, project, or fleet default model is configured/i);
+  });
+
+  it('a tier pinned explicitly to Auto is blocked with a distinct reason naming that tier', () => {
+    const gate = gateHarnessModelSelection([], 'codex', null, null, { outcome: 'pinned_auto', source: 'project' });
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/project is explicitly set to auto/i);
+  });
+
+  it('unresolved Auto carries a fix pointing at project settings when a href is given', () => {
+    const gate = gateHarnessModelSelection([], 'codex', null, null, { outcome: 'unresolved' }, '/projects/p1/settings?tab=agents');
+    expect(gate.fix).toEqual({ label: 'Set a default model for this project', href: '/projects/p1/settings?tab=agents' });
+  });
+
+  it('pinned_auto at the project tier also carries the fix (that IS the reachable setting)', () => {
+    const gate = gateHarnessModelSelection(
+      [],
+      'codex',
+      null,
+      null,
+      { outcome: 'pinned_auto', source: 'project' },
+      '/projects/p1/settings?tab=agents',
+    );
+    expect(gate.fix).toBeDefined();
+  });
+
+  it('pinned_auto at the agent-profile or fleet tier carries no fix — neither has a settings UI', () => {
+    const profileGate = gateHarnessModelSelection(
+      [],
+      'codex',
+      null,
+      null,
+      { outcome: 'pinned_auto', source: 'agent_profile' },
+      '/projects/p1/settings?tab=agents',
+    );
+    expect(profileGate.fix).toBeUndefined();
+    const fleetGate = gateHarnessModelSelection(
+      [],
+      'codex',
+      null,
+      null,
+      { outcome: 'pinned_auto', source: 'fleet' },
+      '/projects/p1/settings?tab=agents',
+    );
+    expect(fleetGate.fix).toBeUndefined();
+  });
+
+  it('an Auto request that resolves to Explicit re-runs the same combination check a direct choice would get', () => {
+    const caps = capsWith({
+      harness_kind: 'codex',
+      probe_error: null,
+      model_combinations: [{ model_provider: 'openai', model_ids: ['opaque/model-alpha'] }],
+    });
+    const gate = gateHarnessModelSelection(caps, 'codex', null, null, {
+      outcome: 'explicit',
+      source: 'project',
+      provider: 'openai',
+      model_id: 'opaque/model-alpha',
+    });
     expect(gate.allowed).toBe(true);
-    expect(gate.advisory).toBe(true);
-    expect(gate.reason).toContain('binary not found on PATH');
+    expect(gate.advisory).toBe(false);
+    expect(gate.reason).toContain("project's default model");
+    expect(gate.reason).toContain('openai / opaque/model-alpha');
+  });
+
+  it('an Auto request resolved to Explicit is still blocked when that resolved pair is genuinely unsupported', () => {
+    const caps = capsWith({
+      harness_kind: 'codex',
+      probe_error: null,
+      model_combinations: [{ model_provider: 'openai', model_ids: ['opaque/model-alpha'] }],
+    });
+    const gate = gateHarnessModelSelection(caps, 'codex', null, null, {
+      outcome: 'explicit',
+      source: 'agent_profile',
+      provider: 'openai',
+      model_id: 'opaque/model-DOES-NOT-EXIST',
+    });
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toContain("agent profile's default model");
+  });
+});
+
+describe('parseModelDefaultConvention', () => {
+  it('is null for null, undefined-ish, and non-object raw values', () => {
+    expect(parseModelDefaultConvention(null)).toBeNull();
+    expect(parseModelDefaultConvention(undefined)).toBeNull();
+    expect(parseModelDefaultConvention('not an object')).toBeNull();
+    expect(parseModelDefaultConvention(42)).toBeNull();
+  });
+
+  it('is null when the key is absent', () => {
+    expect(parseModelDefaultConvention({})).toBeNull();
+    expect(parseModelDefaultConvention({ other_field: true })).toBeNull();
+  });
+
+  it('parses the literal "auto"', () => {
+    expect(parseModelDefaultConvention({ default_model: 'auto' })).toEqual({ kind: 'auto' });
+  });
+
+  it('an unrecognised string literal is "no opinion", not a crash', () => {
+    expect(parseModelDefaultConvention({ default_model: 'sometimes' })).toBeNull();
+  });
+
+  it('parses an explicit provider/model_id pair', () => {
+    expect(parseModelDefaultConvention({ default_model: { provider: 'openai', model_id: 'opaque/model-alpha' } })).toEqual({
+      kind: 'explicit',
+      provider: 'openai',
+      model_id: 'opaque/model-alpha',
+    });
+  });
+
+  it('a partial pair (missing model_id) is "no opinion"', () => {
+    expect(parseModelDefaultConvention({ default_model: { provider: 'openai' } })).toBeNull();
+  });
+});
+
+describe('resolveAutoModelPolicy', () => {
+  it('is unresolved when every tier is absent', () => {
+    expect(resolveAutoModelPolicy(null, null, null)).toEqual({ outcome: 'unresolved' });
+  });
+
+  it('an agent-profile default wins even when a project default also exists (precedence)', () => {
+    const result = resolveAutoModelPolicy(
+      { default_model: { provider: 'profile-provider', model_id: 'profile-model' } },
+      { kind: 'explicit', provider: 'project-provider', model_id: 'project-model' },
+      null,
+    );
+    expect(result).toEqual({ outcome: 'explicit', source: 'agent_profile', provider: 'profile-provider', model_id: 'profile-model' });
+  });
+
+  it('a project default is used when the agent profile has no opinion', () => {
+    const result = resolveAutoModelPolicy(null, { kind: 'explicit', provider: 'openai', model_id: 'opaque/model-alpha' }, null);
+    expect(result).toEqual({ outcome: 'explicit', source: 'project', provider: 'openai', model_id: 'opaque/model-alpha' });
+  });
+
+  it('a fleet default is used only when both agent profile and project have no opinion', () => {
+    const result = resolveAutoModelPolicy(null, null, { default_model: { provider: 'openai', model_id: 'opaque/model-fleet' } });
+    expect(result).toEqual({ outcome: 'explicit', source: 'fleet', provider: 'openai', model_id: 'opaque/model-fleet' });
+  });
+
+  it('a tier pinned to literal "auto" stops the walk there — a concrete default one tier down never rescues it', () => {
+    const result = resolveAutoModelPolicy(
+      { default_model: 'auto' },
+      { kind: 'explicit', provider: 'openai', model_id: 'opaque/model-alpha' },
+      null,
+    );
+    expect(result).toEqual({ outcome: 'pinned_auto', source: 'agent_profile' });
+  });
+
+  it('a project pinned to "auto" also stops the walk before the fleet tier', () => {
+    const result = resolveAutoModelPolicy(null, { kind: 'auto' }, { default_model: { provider: 'openai', model_id: 'opaque/model-fleet' } });
+    expect(result).toEqual({ outcome: 'pinned_auto', source: 'project' });
   });
 });
 
