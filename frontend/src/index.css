@@ -595,13 +595,19 @@ body {
 *::-webkit-scrollbar-track { background: transparent; }
 
 /* Animations. */
+/* Fades via `background-color`, never `opacity` — `opacity` composites the
+   whole subtree against whatever is behind it, so any text inside (however
+   compliant its own token) briefly renders at a diluted, sub-AA contrast
+   while the value ramps from 0. `background-color` only repaints this
+   element's own fill; descendants keep their true, already-compliant
+   color and background from the first frame. */
 @keyframes tk-overlay {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { background-color: transparent; }
+  to   { background-color: var(--color-bg-overlay); }
 }
 @keyframes tk-drawer {
-  from { transform: translateX(24px); opacity: 0; }
-  to   { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(24px); }
+  to   { transform: translateX(0); }
 }
 @keyframes tk-pal {
   from { transform: translateY(-8px) scale(0.985); opacity: 0; }
