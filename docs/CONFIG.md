@@ -96,11 +96,20 @@ enroll` call, no token to copy anywhere.
   in-process, so no token is ever printed, copied, or configured by hand. A later start
   against the same state directory reuses the credential already on disk instead of
   provisioning a second runner.
-- **State directory.** `TACK_RUNNER_STATE_DIR` (default `.tack-runner`, relative to the
-  working directory `tack serve` was started from) holds the runner's credential
-  (`session.json`) and its attempt journal. Both are written owner-only
-  (`session.json` mode `0600`; the directory itself and journal entries `0700`/`0600`) —
-  confirmed with `stat -c '%a'` against a real run, not assumed from the write path.
+- **State directory.** Defaults to `<TACK_STORAGE_DIR>/runner` — scoped to the same
+  configuration as the database, so a server started against a different
+  `TACK_DATABASE_URL` (paired, as every other per-install artifact in this crate already
+  assumes, with its own `TACK_STORAGE_DIR`) never resolves to another server's runner
+  state. `TACK_RUNNER_STATE_DIR` still overrides this default when set, exactly as it
+  does for the standalone `tack-runner` binary (whose own default remains the bare,
+  cwd-relative `.tack-runner` — it has no database or `storage_dir` to scope against).
+  Holds the runner's credential (`session.json`) and its attempt journal, both written
+  owner-only (`session.json` mode `0600`; the directory itself and journal entries
+  `0700`/`0600`) — confirmed with `stat -c '%a'` against a real run, not assumed from the
+  write path. An install upgrading from before this default existed has its already-
+  enrolled state moved there automatically, once, the first time the new directory is
+  found missing and the old one is not — never the reverse, and never once the new
+  directory already exists.
 - **Vendor/provider credentials — Tack is never a model gateway.** Each harness
   authenticates itself using its own mechanism; Tack does not read, store, forward, or
   proxy any of it, embedded or standalone. `tack runner doctor` reports exactly what
