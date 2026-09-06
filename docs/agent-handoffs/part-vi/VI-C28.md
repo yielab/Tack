@@ -173,3 +173,8 @@ With the socket delivering events in the suite for the first time,
 runs, and passed 2 of 2 with the socket refused. Not this card's defect: the execution
 store's `loadAttempts` replaces ready data with `loading` on every 4 s realtime tick and the
 timeline unmounts the attempt panel meanwhile — carded as VI-C31, which this merge waited for.
+
+**2026-09-06, integrator, after VI-C31 landed.** Merged on top of VI-C31 with the origin
+line in place: full chromium suite (`npx playwright test --project=chromium --workers=2`)
+3 of 3 runs green — 78 passed in 41.0 s, 35.9 s, 36.2 s — where the same suite failed 2 of 2
+before VI-C31. `.githooks/pre-push` exit 0 on the merged tree.
