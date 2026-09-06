@@ -11,7 +11,7 @@
 | Part | Cycle | Phases | Status | Where |
 |---|---|---|---|---|
 | **VII** | **Desktop app & background service** | 61 | **ACTIVE** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. **VII-C2 integrated 2026-09-06** — the README now leads with the download and shows the app. Its correction to `crate-tour.md` exposed that the tray's agent-execution entry still says the route it reads does not exist, which is now **VII-B4** (Wave 22); **VII-B4 integrated 2026-09-06** — the tray now reads `GET /api/local-runner` and reports six typed states, so the app and the README screenshot beside it finally agree. **VII-D1 is the only card left in this Part**, held only until VI-D2 stops using the display | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
-| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
+| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation. The limitation VI-C21 documented is now **VI-C25**, and reading `engine.rs` to card it showed the handoff's "harmless" understates it: a `RecoveryPending` outcome keeps the workspace checkout on purpose, so a record naming an attempt the recreated database never had costs a retry every boot *and* holds its checkout indefinitely | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
 | **V** | **Adoption & First Public Release** | 59 | **ACTIVE** — Waves 11–12 done. **V-C2 and V-C3 both integrated 2026-09-06**; V-C3 published nothing, by design, and its walk of the stranger's path found that `install.sh` had installed nothing since `v0.1.0-beta.7` (fixed in the same change). **V-C4** carries the two CI checks that stayed green through it. The publish list — posts, issues, Discussions, GitHub description — is the user's to run, and is in `docs/LAUNCH-CHECKLIST.md` | [§V](#part-v--adoption--first-public-release-phase-59) |
 | **IV** | **Standalone Single-Binary Operation** | 58 | Done — Wave 10 integrated at `83fefab` | [§IV](#part-iv--standalone-single-binary-operation-phase-58) |
 | III | Harness-Agnostic Runner Fleet | 50–57 | Feature-complete, **tag refused** | [§III](#part-iii--harness-agnostic-runner-fleet-phases-5057), archive |
@@ -2232,6 +2232,52 @@ were quietly relying on the same opacity trick.
 **Stop if:** meeting 4.5:1 requires a colour that no longer reads as secondary text against
 primary — that is a design decision, not a contrast calculation. Say what the two constraints
 are and stop.
+
+---
+
+
+### VI-C25 — A journal record whose attempt no longer exists is retried, and its checkout kept, forever
+
+**Needs VI-C21 merged** (it is). Wave 17.
+
+**Owns:** `report_recovery_and_apply_disposition` and the restart scan's disposition handling in
+`crates/tack-runner/src/engine.rs`, its tests, and the handoff. Does **not** own the boot-time
+credential check VI-C21 added, and does **not** own the workspace manager's cleanup contract.
+
+VI-C21 made the embedded runner recover when its stored credential names a runner id a recreated
+database has never seen. The journal is keyed by `state_dir` + `attempt_id` and never by runner
+id, so it survives that swap intact — which is correct, and is why nothing is lost. But a record
+written *before* the swap names an attempt the current database has no row for. The
+acknowledgement comes back absent or mismatched, and `engine.rs` treats that the way it treats
+any unsettled evidence: it leaves the record in the restart scan, because "an absent or
+mismatched acknowledgement cannot settle local process evidence". That is the right default for
+its intended case — a server that was briefly unreachable — and the wrong one here, because this
+attempt is never coming back.
+
+**VI-C21's handoff called this harmless. It understates it.** A `RecoveryPending` outcome also
+deliberately keeps the workspace checkout, as the evidence an operator would need. So each such
+record costs a retry on every boot *and* holds its checkout on disk indefinitely, with nothing
+that ever revisits either. On a machine where agent worktrees and build targets already compete
+for the disk, an unbounded set of checkouts belonging to attempts that provably cannot resume is
+not a rounding error.
+
+**Tasks:** separate "the server does not know this attempt" from "the server did not answer" —
+these are the same code path today and must not be. The first is settled information and the
+record can be retired; the second is not and must keep its current behaviour exactly. Decide what
+"retired" means: quarantine keeps the checkout as evidence and stops the retry, deletion reclaims
+the space and destroys the evidence, and the choice belongs to this card with its reasoning in
+the handoff. Say explicitly what an operator loses under whichever you pick.
+
+**Acceptance:** a journal record naming an attempt absent from the server is retired on the next
+boot rather than rescanned, and a record whose acknowledgement merely failed to arrive is **not**
+— prove both, and prove the second by making the server unreachable rather than by making it
+answer "unknown". Assert the absence directly: the record is gone from the scan and the checkout
+is in whatever state you chose, not merely that no error was logged. State what happens to
+records already stranded by the time this ships. Prove load-bearing by reverting once.
+
+**Stop if:** the server's response cannot distinguish "no such attempt" from "not authorised to
+see this attempt" — retiring evidence on an authorisation error would destroy exactly what an
+operator needs. Say what the responses are and stop.
 
 ---
 
