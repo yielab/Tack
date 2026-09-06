@@ -102,7 +102,10 @@ git switch -c agent/<card-id-lowercase>-<slug> "$LINE"
 Implement against the card's **Acceptance** list — it is the specification, not a floor.
 Test the claim itself: for "writes nothing / rejects before X" claims, assert the absence
 directly (row counts, untouched checkpoint) and prove the test load-bearing by reverting the
-fix once. Run `/gate <scope>` before declaring done.
+fix once. Run `/gate <scope>` before declaring done, then `.githooks/pre-push` as the
+last step — it is what actually blocks a push, and it catches what a scoped gate does
+not: `cargo fmt` on both the workspace and `crates/tack-desktop`, and stale generated
+files. A card that lands unformatted is invisible until someone tries to push.
 
 **Before you write code, check yourself against `.claude/scope-discipline.md`.** The four
 questions that catch most of the waste in this tree:

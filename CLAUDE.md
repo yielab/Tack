@@ -59,7 +59,18 @@ cd frontend && npm run dev                 # http://localhost:5173, proxies /api
 cd frontend && npm run type-check && npx vitest run
 make e2e                                   # Playwright (make e2e-install once)
 make audit                                 # cargo audit + npm audit
+
+.githooks/pre-push                         # THE definition of done — run it before saying a change is finished
 ```
+
+**`.githooks/pre-push` is the gate that decides whether work can leave the machine**, and
+running it directly is the only check that cannot drift from it. It covers more than the
+test suite: `scripts/check-comments.sh`, `scripts/check-test-hygiene.sh`, **`cargo fmt --all
+--check` for the workspace *and* for `crates/tack-desktop` separately**, `cargo clippy
+--workspace --all-targets -- -D warnings`, and a freshness check on the lockfiles and
+`schema.gen.ts`. A green test suite is not a finished change. Formatting in particular is
+invisible until a push is attempted, so unformatted work accumulates silently across merges
+and then blocks the whole branch at once — which is exactly how it has failed here before.
 
 Live-harness runner tests are `#[ignore]` (Claude Code's is billed — run deliberately with
 `--run-ignored ignored-only`). Never `cargo test --workspace`: it prints ~84k tokens for a

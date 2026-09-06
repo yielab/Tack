@@ -114,6 +114,11 @@ All of the above: fmt, clippy, `cargo nextest run --workspace`, the three contra
 the frontend block. Add `make audit` for release-facing work. Every test runs once; there
 is no separate list of "named gates" to run again afterwards — CI has none either.
 
+Finish by running **`.githooks/pre-push`** itself. This list is a human transcription of it
+and can drift; the hook cannot. It also checks two things easy to omit by hand: `cargo fmt`
+on `crates/tack-desktop`, which is outside the workspace and so invisible to `--all`, and
+whether the lockfiles and `schema.gen.ts` still match the tree after a merge.
+
 ## Reporting rules
 
 - **Baselines come from the repo, not memory**: compare the summary line's test count
