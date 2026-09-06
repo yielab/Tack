@@ -83,6 +83,64 @@ fn load_runner_config(
     })
 }
 
+/// Where the embedded runner's on-disk state (its enrolled credential,
+/// attempt journal and secret store) lives when nothing more specific asks
+/// for another directory — one level under this server's own `storage_dir`,
+/// mirroring how `execution-artifacts` already nests there instead of
+/// colliding with attachments (`router.rs`). A server started against a
+/// different database — and, following the convention every other
+/// per-install artifact in this crate already follows, its own
+/// `TACK_STORAGE_DIR` — never resolves to the same runner state as another
+/// server's; that coupling, not merely a directory name, is what this
+/// function exists to establish.
+fn embedded_default_state_dir(storage_dir: &str) -> PathBuf {
+    Path::new(storage_dir).join("runner")
+}
+
+/// One-time, best-effort recovery for an install upgrading from before the
+/// embedded runner's default state directory followed `storage_dir`: if the
+/// crate's bare, cwd-relative default
+/// (`tack_runner::config::DEFAULT_STATE_DIR`) still holds state and the new,
+/// database-scoped directory does not exist yet, moves it there in a single
+/// rename — the alternative is stranding an already-enrolled credential
+/// somewhere this binary will never look again.
+///
+/// Never touches either directory once `new_dir` already exists: that means
+/// either a previous boot already migrated, or a fresh install already
+/// provisioned there, and this must never clobber either. A failed rename
+/// (for example, `new_dir` ending up on a different filesystem than the
+/// legacy default) is reported and the legacy directory is left exactly as
+/// it was — the caller falls through to provisioning a fresh identity at
+/// `new_dir` instead, so this never falls back to silently reusing state it
+/// could not verify moved intact.
+fn migrate_legacy_state_dir(new_dir: &Path) {
+    if new_dir.exists() {
+        return;
+    }
+    let legacy_dir = Path::new(tack_runner::config::DEFAULT_STATE_DIR);
+    if !legacy_dir.is_dir() {
+        return;
+    }
+    if let Some(parent) = new_dir.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(
+            %error,
+            "could not prepare the embedded runner's new state directory; its legacy state is left in place"
+        );
+        return;
+    }
+    match std::fs::rename(legacy_dir, new_dir) {
+        Ok(()) => tracing::info!(
+            "migrated the embedded runner's on-disk state to the directory scoped to this server's own storage configuration"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            "could not migrate the embedded runner's legacy state directory; it is left in place and a fresh identity will be provisioned instead"
+        ),
+    }
+}
+
 /// Whether the embedded runner should start at boot, combining
 /// `--with-runner` with its environment equivalent. Off unless one of the
 /// two explicitly says on. This only ever feeds `AppConfig::
@@ -292,8 +350,26 @@ pub struct EmbeddedRunnerControl {
 }
 
 impl EmbeddedRunnerControl {
+    /// Builds the runner configuration this control starts from. The state
+    /// directory defaults to [`embedded_default_state_dir`] — scoped to
+    /// `server_config.storage_dir`, so a server opened against a different
+    /// database never resolves to another server's runner state — unless
+    /// `TACK_RUNNER_STATE_DIR` is set, which still wins here exactly as it
+    /// would for the standalone binary (`docs/CONFIG.md`'s documented escape
+    /// hatch, never overridden by a default this module computes for
+    /// itself).
     fn new(server_config: tack_api::config::AppConfig) -> Result<Self, ConfigError> {
-        let runner_config = load_runner_config(ConfigOverrides::default(), None)?;
+        let command_line = if std::env::var_os("TACK_RUNNER_STATE_DIR").is_some() {
+            ConfigOverrides::default()
+        } else {
+            let default_state_dir = embedded_default_state_dir(&server_config.storage_dir);
+            migrate_legacy_state_dir(&default_state_dir);
+            ConfigOverrides {
+                state_dir: Some(default_state_dir),
+                ..ConfigOverrides::default()
+            }
+        };
+        let runner_config = load_runner_config(command_line, None)?;
         let secret_meta = load_secret_meta(&runner_config.state_dir);
         Ok(Self {
             server_config,
@@ -805,4 +881,118 @@ mod tests {
             "a failed start must not leave the control reporting running"
         );
     }
+
+    #[test]
+    fn embedded_default_state_dir_nests_under_storage_dir() {
+        assert_eq!(
+            embedded_default_state_dir("./storage"),
+            PathBuf::from("./storage/runner")
+        );
+        assert_eq!(
+            embedded_default_state_dir("/srv/tack-b/storage"),
+            PathBuf::from("/srv/tack-b/storage/runner")
+        );
+    }
+
+    /// Changes the process's current directory for the duration of a
+    /// closure, restoring it afterward even if the closure panics — needed
+    /// by every test below that exercises [`migrate_legacy_state_dir`],
+    /// since its legacy side is the crate's bare, cwd-relative default.
+    /// Sound under this crate's own rule for mutating process-global state
+    /// in tests: nextest gives each test its own process, so no sibling
+    /// test's thread observes this change.
+    fn with_cwd<T>(dir: &Path, body: impl FnOnce() -> T) -> T {
+        let original = std::env::current_dir().expect("current dir");
+        std::env::set_current_dir(dir).expect("set cwd");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        std::env::set_current_dir(original).expect("restore cwd");
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    #[test]
+    fn migrate_legacy_state_dir_moves_an_existing_legacy_directory_once() {
+        let cwd_guard = unique_temp_dir("migrate-cwd");
+        let target_root = unique_temp_dir("migrate-target");
+        let new_dir = target_root.path().join("storage").join("runner");
+
+        with_cwd(cwd_guard.path(), || {
+            let legacy = Path::new(tack_runner::config::DEFAULT_STATE_DIR);
+            std::fs::create_dir_all(legacy).expect("create legacy dir");
+            std::fs::write(legacy.join("session.json"), "legacy-session")
+                .expect("write legacy session");
+
+            migrate_legacy_state_dir(&new_dir);
+
+            assert!(
+                new_dir.join("session.json").is_file(),
+                "legacy state must be moved to the new, scoped directory"
+            );
+            assert_eq!(
+                std::fs::read_to_string(new_dir.join("session.json")).unwrap(),
+                "legacy-session"
+            );
+            assert!(
+                !legacy.exists(),
+                "the legacy directory must not be left behind after a successful migration"
+            );
+        });
+    }
+
+    #[test]
+    fn migrate_legacy_state_dir_never_touches_an_already_provisioned_new_directory() {
+        let cwd_guard = unique_temp_dir("migrate-cwd-noop");
+        let target_root = unique_temp_dir("migrate-target-noop");
+        let new_dir = target_root.path().join("runner");
+        std::fs::create_dir_all(&new_dir).expect("pre-create the new directory");
+        std::fs::write(new_dir.join("session.json"), "already-provisioned")
+            .expect("write new session");
+
+        with_cwd(cwd_guard.path(), || {
+            let legacy = Path::new(tack_runner::config::DEFAULT_STATE_DIR);
+            std::fs::create_dir_all(legacy).expect("create legacy dir");
+            std::fs::write(legacy.join("session.json"), "stale-legacy-session")
+                .expect("write legacy session");
+
+            migrate_legacy_state_dir(&new_dir);
+
+            assert_eq!(
+                std::fs::read_to_string(new_dir.join("session.json")).unwrap(),
+                "already-provisioned",
+                "an existing new-style directory must never be overwritten by a stale legacy one"
+            );
+            assert!(
+                legacy.join("session.json").is_file(),
+                "the legacy directory is left untouched once the new one already exists"
+            );
+        });
+    }
+
+    #[test]
+    fn migrate_legacy_state_dir_is_a_no_op_when_neither_directory_exists() {
+        let cwd_guard = unique_temp_dir("migrate-cwd-fresh");
+        let target_root = unique_temp_dir("migrate-target-fresh");
+        let new_dir = target_root.path().join("storage").join("runner");
+
+        with_cwd(cwd_guard.path(), || {
+            migrate_legacy_state_dir(&new_dir);
+
+            assert!(
+                !new_dir.exists(),
+                "a fresh install has nothing to migrate; the new directory is created \
+                 later, on first write, not by the migration step itself"
+            );
+        });
+    }
+
+    // The acceptance proof for two servers each seeing only their own
+    // runner's enrollment lives in `tests/embedded_runner_state_scoping.rs`
+    // as a real two-subprocess test, not here: `tack_api::server::serve_inner`
+    // installs a process-global `tracing` subscriber once per process
+    // (`init_tracing`'s `.init()` panics on a second call), so this crate's
+    // own unit tests — which all share one test binary process per test
+    // function, not per server — can boot at most one real embedded server
+    // each. Two genuinely separate `tack` processes have no such conflict.
 }
