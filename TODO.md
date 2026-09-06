@@ -2284,6 +2284,45 @@ operator needs. Say what the responses are and stop.
 ---
 
 
+### VI-C26 — Two of the three palettes are never scanned, and one of them is badly broken
+
+**Needs nothing.** Wave 17.
+
+**Owns:** `frontend/e2e/a11y.spec.ts`'s palette coverage, `graphite`'s `--color-primary-600` in
+`frontend/src/index.css`, and the handoff.
+
+The frontend's design tokens are two-axis — mode × palette — and `a11y.spec.ts` scans exactly one
+cell of that grid: the default light palette. `clay`, `graphite` and every dark variant are
+shipped untested. That is not a theoretical gap. Probing `data-palette="graphite"` by hand while
+fixing VI-C24 found a `color-contrast` violation that reproduces **statically, 4 times out of 4**
+— no animation, no timing, no flake: `--color-primary-600` (`#84cc16`) on the white sidebar
+background at **1.97:1**, against WCAG AA's 4.5:1. That is less than half the required ratio, and
+CI cannot see it because nothing asks it to look.
+
+The coverage gap is the more important half. VI-C24 fixed a real defect the suite *did* catch and
+that three handoffs still spent weeks dismissing as a flake; this one the suite cannot catch at
+all, and it is far worse than the one that took all that effort.
+
+**Tasks:** decide what palette coverage is affordable. Scanning every page in every palette
+multiplies an already 30-second suite; scanning one representative page per palette probably does
+not. The choice is this card's, and the reasoning belongs in the handoff — say what the new
+coverage does **not** cover, so the next person inherits a known boundary rather than a false
+sense of completeness. Then fix `graphite`'s violation. Check whether `clay` and the dark variants
+hide anything similar **before** deciding the coverage shape, so the shape is informed by what is
+actually there.
+
+**Acceptance:** the new scans fail before the colour fix and pass after — prove both, in that
+order, and give the measured ratio for every pair you change with the command that measured it.
+The full chromium suite still passes, and say what it costs in wall-clock against the 32s it runs
+in today. State plainly which palette × mode combinations remain unscanned after this card.
+
+**Stop if:** fixing `graphite`'s primary requires changing what the palette *is* rather than
+correcting a value — a primary that no longer reads as that palette's identity is a design
+decision, not a contrast calculation. Say what the constraints are and stop.
+
+---
+
+
 ## §VI.5 Definition of done, and deliberate exclusions
 
 | Claim | Proof |
