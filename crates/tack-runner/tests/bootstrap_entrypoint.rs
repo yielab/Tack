@@ -127,9 +127,19 @@ async fn the_composition_root_stops_on_an_injected_shutdown_with_no_process_sign
 
     shutdown_handle.request();
 
-    let outcome = tokio::time::timeout(Duration::from_secs(5), task)
+    // The claim here is that the runtime stops once shutdown is requested —
+    // not that it does so within any particular number of seconds — so this
+    // timeout exists only to turn an actual wedge into a reported failure
+    // instead of a process that never returns. It has to clear two very
+    // different floors at once: comfortably above the delay a machine
+    // saturated by the rest of this suite can add to a single OS thread's
+    // own scheduling (measured once at 110s against this same 5s budget),
+    // and comfortably below the point (three minutes) this workspace's own
+    // test runner terminates a still-running test outright, which would
+    // report a bare process kill instead of this test's own message.
+    let outcome = tokio::time::timeout(Duration::from_secs(150), task)
         .await
-        .expect("runtime stopped promptly after shutdown was requested, with no signal sent")
+        .expect("runtime stopped after shutdown was requested, with no signal sent")
         .expect("runtime task did not panic");
 
     assert!(
