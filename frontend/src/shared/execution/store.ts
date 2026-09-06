@@ -117,7 +117,15 @@ export interface ExecutionStore {
   getRequest: (requestId: string) => ExecutionRequestRecord | undefined;
   listStatus: () => ListStatus;
   listError: () => NormalizedExecutionError | undefined;
-  loadList: () => Promise<void>;
+  /** Fetches into the shared cache. Omit `itemId` for the app-wide preload
+   *  (bounded server-side by `list_executions`'s own default limit); pass
+   *  one to fetch exactly that item's rows regardless of how many other
+   *  requests the install has recorded — what a mounted `ExecutionTimeline`
+   *  calls so its item's history is never silently truncated by the
+   *  unscoped call's bound. Either call merges into the same
+   *  `VersionedCache`, so `requestsForItem` sees the union of every fetch
+   *  that has landed. */
+  loadList: (itemId?: string) => Promise<void>;
   loadOne: (requestId: string) => Promise<void>;
   /** Creates the request, then immediately hydrates it into the store so a
    *  caller sees it appear without a second manual fetch (E4's acceptance
@@ -242,11 +250,11 @@ export function createExecutionStore(): ExecutionStore {
     }
   }
 
-  async function loadList(): Promise<void> {
+  async function loadList(itemId?: string): Promise<void> {
     setListStatus('loading');
     const version = clock.next(GLOBAL_SEQUENCE_KEY); // one version for every row this call returns
     try {
-      const { data } = await executionsApi.list();
+      const { data } = await executionsApi.list(itemId);
       for (const row of data.data) applyFetchedSummary(row, version);
       setListStatus('ready');
       setListError(undefined);

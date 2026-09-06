@@ -28,6 +28,14 @@ describe('executionsApi', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method ?? 'GET').toBe('GET');
   });
 
+  it('list(itemId) calls GET /api/executions?item_id={id}, URL-encoded', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ protocol_version: 1, data: [] }));
+    await executionsApi.list('item/1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/executions?item_id=item%2F1');
+  });
+
   it('list() preserves response headers, not just the parsed body', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse(

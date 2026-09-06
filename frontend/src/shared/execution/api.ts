@@ -159,8 +159,19 @@ export const executionsApi = {
    *  handler sets none beyond the defaults today — so a future
    *  fencing/ETag-style header lands here automatically instead of being
    *  silently dropped by a `data`-only wrapper (this card's "preserve
-   *  headers" task; proven in `api.test.ts`). */
-  list: () => requestWithHeaders<ExecutionListResult>('/executions'),
+   *  headers" task; proven in `api.test.ts`).
+   *
+   *  `itemId`, when given, scopes the request to that item alone
+   *  (`list_executions`'s `item_id` query parameter) instead of every
+   *  execution request the install has ever recorded — the one-item
+   *  Execution tab (`ExecutionTimeline.tsx`) uses this so opening it never
+   *  pulls the whole table over the wire. Omitted for the app-wide preload
+   *  (`ExecutionStoreProvider`), which still gets every request up to the
+   *  handler's own default bound. */
+  list: (itemId?: string) =>
+    requestWithHeaders<ExecutionListResult>(
+      itemId ? `/executions?item_id=${encodeURIComponent(itemId)}` : '/executions',
+    ),
   get: (requestId: string) =>
     requestWithHeaders<ExecutionSummary>(`/executions/${encodeURIComponent(requestId)}`),
   create: (input: CreateExecutionInput) =>
