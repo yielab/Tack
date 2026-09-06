@@ -11,6 +11,7 @@ import {
   enrollRunner,
   claimOnceWithLease,
   waitForApp,
+  setPaletteAndTheme,
 } from './helpers';
 
 // Accessibility scans (WCAG 2.0/2.1 A & AA) on the key surfaces. axe-core finds
@@ -30,10 +31,10 @@ test.skip(({ browserName }) => browserName !== 'chromium', 'a11y scan runs on ch
 // fixed: see index.css token darkening and the Sidebar select aria-label.)
 const KNOWN_ISSUES: string[] = [];
 
-async function scan(page: import('@playwright/test').Page) {
+async function scan(page: import('@playwright/test').Page, extraDisabled: string[] = []) {
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-    .disableRules(KNOWN_ISSUES)
+    .disableRules([...KNOWN_ISSUES, ...extraDisabled])
     .analyze();
   return results.violations;
 }
@@ -50,6 +51,79 @@ test('board view has no accessibility violations', async ({ page, request }) => 
   await page.goto(`/projects/${projectId}/board`);
   await waitForApp(page);
   const violations = await scan(page);
+  expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
+});
+
+// Palette × mode coverage. Design tokens live on two independent axes — mode
+// (light/dark) × palette (teal/clay/graphite) — six combinations, and every
+// scan above always runs under the one combination Playwright's default
+// color scheme plus no stored palette produces: teal/light. The other five
+// were never scanned by anything, ever, and a hand probe found one of them
+// badly broken (see the graphite/light case below).
+//
+// Scanning every existing page in every combination would multiply this
+// file's cost six-fold for very little marginal signal — nearly every scan
+// above exercises the same handful of tokens (surface, text, border, primary,
+// semantic ramps) applied to different layouts, not different tokens. A
+// single representative, chrome-heavy page exercises those tokens once per
+// combination instead: the board view, which — via the persistent sidebar
+// (`Sidebar.tsx`), breadcrumb (`Breadcrumb.tsx`) and work-lens tabs
+// (`WorkTabs.tsx`) it renders in every project route — already covers most of
+// the token surface a page-specific scan would add on top. This leaves every
+// page-specific scan above running only ever under teal/light, and every
+// feature-specific token usage those pages alone reach (e.g. economics'
+// warning-band progress bar, the fleet health chips) unscanned under any
+// other palette or mode.
+const OTHER_MODES_AND_PALETTES: Array<['teal' | 'clay' | 'graphite', 'light' | 'dark']> = [
+  ['teal', 'dark'],
+  ['clay', 'light'],
+  ['clay', 'dark'],
+  ['graphite', 'dark'],
+];
+
+for (const [palette, mode] of OTHER_MODES_AND_PALETTES) {
+  test(`board view (${palette}/${mode}) has no accessibility violations`, async ({ page, request }) => {
+    const projectId = await getOrCreateProject(request);
+    await setPaletteAndTheme(page, palette, mode);
+    await page.goto(`/projects/${projectId}/board`);
+    await waitForApp(page);
+    const violations = await scan(page);
+    expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
+  });
+}
+
+// graphite/light is the one combination this probe found genuinely broken:
+// `--color-primary-600` (#84cc16, a bright lime) is used directly as
+// foreground text on light surfaces in several places (WorkTabs' active tab,
+// Breadcrumb's current-section label, among others) — a role only safe when
+// the token is dark, which every other palette's primary-600 already is.
+// Darkening graphite's primary-600 enough to fix that (down to roughly the
+// palette's own already-dark `--color-accent-ink`, ~#4d7c0f) does NOT close
+// this cleanly: `--color-on-accent` for graphite is deliberately dark
+// (`#1a2e05` — see `Button.tsx`'s "primary" variant comment on why), so every
+// place primary-600 is a *background* with on-accent text on top (the
+// sidebar's brand mark, every primary `<Button>`) depends on primary-600
+// staying bright. Measured directly (darkening only, on-accent left alone):
+// on-accent-on-darkened-primary drops from 7.40:1 to 2.92:1 — a NEW failure,
+// not a fix. The only value shape that clears both roles is on-accent
+// becoming light (matching how teal/clay already pair a dark primary-600
+// with a white on-accent) — which changes graphite's primary from "bright
+// lime, dark text on it" to "dark olive, white text on it": a different
+// palette identity, not a contrast correction, so it isn't made here. See
+// the handoff for the measurements and the options left for that decision.
+// Tracking this one rule, scoped to only this one scan, keeps every other
+// combination above (5 of 6) an unsuppressed, real gate.
+const GRAPHITE_LIGHT_KNOWN_ISSUES = ['color-contrast'];
+
+test('board view (graphite/light) has no accessibility violations other than the tracked, known one', async ({
+  page,
+  request,
+}) => {
+  const projectId = await getOrCreateProject(request);
+  await setPaletteAndTheme(page, 'graphite', 'light');
+  await page.goto(`/projects/${projectId}/board`);
+  await waitForApp(page);
+  const violations = await scan(page, GRAPHITE_LIGHT_KNOWN_ISSUES);
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
