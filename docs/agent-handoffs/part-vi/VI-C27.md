@@ -118,6 +118,9 @@ exercises today; left as a possible later improvement, noted here rather than ma
 - Integration test wall-clock, fix in place: 1.05 s (command above).
 - Integration test wall-clock, layer 1 reverted: 60.75 s to fail (the bounded wait).
 - Engine unit test, layer 2 reverted: 0.01 s to fail.
+- Gates on the final tree: `.githooks/pre-push` exit 0; `cargo nextest run --workspace`
+  → 1458 passed, 7 skipped, 26.4 s; chromium E2E (`--workers=2`) → 76 passed, 44.0 s,
+  including the two specs that store a key while execution is on.
 - Restart cost with real harnesses installed: **not measured here**; the only figure on
   record is harness discovery at up to ~24 s (`tack runner doctor`, noted in
   `embedded_runner_orphaned_credential.rs`), which is a boot cost this change neither
