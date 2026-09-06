@@ -1023,6 +1023,22 @@ where
             {
                 response
             }
+            Err(ProtocolClientError::StaleLease) => {
+                // `stale_lease` is the one answer that settles this rather
+                // than leaving it open: the server has no active lease
+                // under this attempt id, runner id and fencing token at
+                // all, and (this fencing token being fixed for the life of
+                // an attempt) never will again. That is different in kind
+                // from an absent reply or a transport failure, which say
+                // nothing about whether the attempt exists. Quarantine it
+                // exactly like an operator-facing disposition: the record
+                // leaves the restart scan, and its checkout is left on disk
+                // as the evidence an operator would need.
+                self.journal.quarantine(record)?;
+                return Ok(RunCycle::Quarantined {
+                    attempt_id: record.attempt_id.clone(),
+                });
+            }
             Ok(_) | Err(_) => {
                 // An absent or mismatched acknowledgement cannot settle local
                 // process evidence; leave the journal in the restart scan.
@@ -1219,6 +1235,13 @@ mod tests {
         recovery_reports: Arc<AtomicUsize>,
         reported_recoveries: Arc<Mutex<Vec<RecoveryObservationRequest>>>,
         recovery_failures_remaining: Arc<AtomicUsize>,
+        // Set to make every `observe_recovery` call fail with this exact
+        // error instead of consulting `recovery_failures_remaining` or
+        // `recovery_response` -- lets a test hold a single failure mode
+        // (e.g. `StaleLease`, standing in for the server settling "no such
+        // attempt") indefinitely across restarts, distinct from the finite,
+        // eventually-recovering retries `recovery_failures_remaining` models.
+        recovery_error: Arc<Mutex<Option<ProtocolClientError>>>,
         recovery_response: Arc<Mutex<RecoveryResponseConfig>>,
         refresh_requests: Arc<Mutex<Vec<RefreshRequest>>>,
     }
@@ -1442,6 +1465,14 @@ mod tests {
                 .lock()
                 .expect("fake protocol lock")
                 .push(report.clone());
+            if let Some(error) = self
+                .recovery_error
+                .lock()
+                .expect("fake protocol lock")
+                .clone()
+            {
+                return Err(error);
+            }
             let remaining = self.recovery_failures_remaining.load(Ordering::SeqCst);
             if remaining > 0 {
                 self.recovery_failures_remaining
@@ -1732,6 +1763,7 @@ mod tests {
             recovery_reports: Arc::new(AtomicUsize::new(0)),
             reported_recoveries: Arc::new(Mutex::new(Vec::new())),
             recovery_failures_remaining: Arc::new(AtomicUsize::new(0)),
+            recovery_error: Arc::new(Mutex::new(None)),
             recovery_response: Arc::new(Mutex::new(RecoveryResponseConfig {
                 disposition: RecoveryDisposition::SafePreSpawnRequeue,
                 replayed: false,
@@ -2881,6 +2913,149 @@ mod tests {
                 .next()
                 .is_some(),
             "operator disposition moves evidence out of restart scans"
+        );
+        std::fs::remove_dir_all(root).expect("remove temporary root");
+    }
+
+    #[tokio::test]
+    async fn stale_lease_on_recovery_retires_the_record_and_keeps_the_checkout() {
+        let root_dir = temporary_root("stale-lease-recovery");
+        let root = root_dir.path();
+        let journal = OwnerOnlyJournal::new(root);
+        let lease = work().lease;
+        let workspace_path = root.join("workspaces/attempt");
+        let record = AttemptJournal::prepared(
+            &lease,
+            super::super::journal::WorkspaceJournal {
+                workspace_id: super::super::WorkspaceId::new("ws"),
+                path: workspace_path.clone(),
+                base_revision: "revision".into(),
+            },
+        );
+        journal
+            .persist_before_spawn(&record)
+            .expect("prior journal");
+        // Stands in for the checkout a real harness would have left behind;
+        // nothing in this path is supposed to touch it.
+        std::fs::create_dir_all(&workspace_path).expect("fake checkout");
+        std::fs::write(workspace_path.join("evidence.txt"), b"operator evidence")
+            .expect("fake checkout file");
+        let protocol = protocol(work(), false, false);
+        *protocol.recovery_error.lock().expect("fake protocol lock") =
+            Some(ProtocolClientError::StaleLease);
+        let engine = RunnerEngine::new(
+            protocol.clone(),
+            adapter(journal.journal_path(&AttemptId::new("attempt"))),
+            journal.clone(),
+            WorkspaceManager::new(
+                root.join("workspaces"),
+                FakeWorktree {
+                    expected_journal: journal.journal_path(&AttemptId::new("attempt")),
+                    provision_after_journal: Arc::new(AtomicBool::new(false)),
+                },
+            ),
+        );
+
+        assert!(matches!(
+            engine
+                .recover(&session())
+                .await
+                .expect("recovery")
+                .as_slice(),
+            [RunCycle::Quarantined { .. }]
+        ));
+        assert!(
+            journal.unresolved().expect("scanned journal").is_empty(),
+            "an attempt the server has no lease for is retired from the restart scan, not rescanned"
+        );
+        assert!(
+            root.join("quarantine")
+                .read_dir()
+                .expect("quarantine")
+                .next()
+                .is_some(),
+            "the record is retired into quarantine, not deleted outright"
+        );
+        assert!(
+            workspace_path.join("evidence.txt").exists(),
+            "retiring the record must not destroy the checkout an operator would need"
+        );
+        std::fs::remove_dir_all(root).expect("remove temporary root");
+    }
+
+    #[tokio::test]
+    async fn unreachable_server_on_recovery_never_retires_the_record() {
+        let root_dir = temporary_root("unreachable-recovery");
+        let root = root_dir.path();
+        let journal = OwnerOnlyJournal::new(root);
+        let lease = work().lease;
+        let workspace_path = root.join("workspaces/attempt");
+        let record = AttemptJournal::prepared(
+            &lease,
+            super::super::journal::WorkspaceJournal {
+                workspace_id: super::super::WorkspaceId::new("ws"),
+                path: workspace_path.clone(),
+                base_revision: "revision".into(),
+            },
+        );
+        journal
+            .persist_before_spawn(&record)
+            .expect("prior journal");
+        std::fs::create_dir_all(&workspace_path).expect("fake checkout");
+        std::fs::write(workspace_path.join("evidence.txt"), b"operator evidence")
+            .expect("fake checkout file");
+        let protocol = protocol(work(), false, false);
+        // A transport failure means the server was never reached at all --
+        // as distinct from `StaleLease` above, this must never settle
+        // anything. Proven across two separate restarts, not one, so a
+        // fluke single-boot pass can't hide a "quarantine after N tries"
+        // regression.
+        *protocol.recovery_error.lock().expect("fake protocol lock") =
+            Some(ProtocolClientError::Transport);
+
+        for attempt_number in 0..2 {
+            let engine = RunnerEngine::new(
+                protocol.clone(),
+                adapter(journal.journal_path(&AttemptId::new("attempt"))),
+                journal.clone(),
+                WorkspaceManager::new(
+                    root.join("workspaces"),
+                    FakeWorktree {
+                        expected_journal: journal.journal_path(&AttemptId::new("attempt")),
+                        provision_after_journal: Arc::new(AtomicBool::new(false)),
+                    },
+                ),
+            );
+            assert!(
+                matches!(
+                    engine
+                        .recover(&session())
+                        .await
+                        .expect("recovery")
+                        .as_slice(),
+                    [RunCycle::RecoveryPending { .. }]
+                ),
+                "restart {attempt_number} must stay pending, never quarantined, on a bare transport failure"
+            );
+        }
+        assert_eq!(
+            journal.unresolved().expect("scanned journal").len(),
+            1,
+            "an unanswered server is never grounds to retire the record"
+        );
+        assert!(
+            root.join("quarantine").read_dir().is_err()
+                || root
+                    .join("quarantine")
+                    .read_dir()
+                    .expect("quarantine")
+                    .next()
+                    .is_none(),
+            "a transport failure must never move the record into quarantine"
+        );
+        assert!(
+            workspace_path.join("evidence.txt").exists(),
+            "the checkout is untouched while recovery is still unresolved"
         );
         std::fs::remove_dir_all(root).expect("remove temporary root");
     }
