@@ -2,7 +2,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render } from 'solid-js/web';
 import { MemoryRouter, Route, useSearchParams } from '@solidjs/router';
 import { ExecutionStoreProvider } from '../state/executionContext';
-import { EXECUTION_LIST_PRELOAD_LIMIT } from '../execution/store';
 import RunWithAgentButton from './RunWithAgentButton';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -175,32 +174,7 @@ describe('RunWithAgentButton', () => {
     expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'Queued')).toBe(false);
   });
 
-  it('showStateChip renders an explicit "Unknown" chip, not silence, when the item is absent from a preload that hit its row cap', async () => {
-    // The preload comes back at exactly EXECUTION_LIST_PRELOAD_LIMIT rows,
-    // none belonging to "item-1" — the shape a real install produces once
-    // it has more execution requests than the preload's cap covers, with
-    // this item's own most recent one older than every row returned.
-    const full = Array.from({ length: EXECUTION_LIST_PRELOAD_LIMIT }, (_, i) => ({
-      request_id: `req-${i}`,
-      item_id: `other-item-${i}`,
-      state: 'queued',
-      cancellation_requested_at: null,
-      created_at: '2026-01-01T00:00:00Z',
-    }));
-    const c = mount({ compact: true, showStateChip: true }, { executions: full });
-    await flush();
-    const chip = [...c.querySelectorAll('button')].find((b) => b.textContent === 'Unknown');
-    expect(chip).toBeTruthy();
-    expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'Queued')).toBe(false);
-  });
-
-  it('showStateChip still renders nothing (not "Unknown") when the item has no executions and the preload came back short of its cap', async () => {
-    const c = mount({ compact: true, showStateChip: true }, { executions: [] });
-    await flush();
-    expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'Unknown')).toBe(false);
-  });
-
-  it('a screen of many cards, each with showStateChip, still issues exactly one /executions fetch — one shared preload, not one request per card', async () => {
+  it('a screen of many cards, each with showStateChip, still issues exactly one /executions fetch — one batched call, not one request per card', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch({ executions: [] }));
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -231,8 +205,11 @@ describe('RunWithAgentButton', () => {
     await flush();
     const executionCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/executions'));
     expect(executionCalls).toHaveLength(1);
-    // The one call asks for the wider preload bound, not the server's
-    // smaller default.
-    expect(String(executionCalls[0][0])).toBe(`/api/executions?limit=${EXECUTION_LIST_PRELOAD_LIMIT}`);
+    // The one call asks for exactly this screen's item ids, one row-worth
+    // each — not an install-wide guess bounded by a row cap.
+    const url = new URL(String(executionCalls[0][0]), 'http://localhost');
+    const requestedIds = (url.searchParams.get('item_ids') ?? '').split(',');
+    expect(requestedIds.sort()).toEqual(Array.from({ length: ITEM_COUNT }, (_, i) => `item-${i}`).sort());
+    expect(url.searchParams.has('limit')).toBe(false);
   });
 });

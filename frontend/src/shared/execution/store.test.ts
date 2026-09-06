@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRoot } from 'solid-js';
 import { ApiError } from '../api/client';
-import { createExecutionStore, EXECUTION_LIST_PRELOAD_LIMIT } from './store';
+import { createExecutionStore } from './store';
 import { executionsApi } from './api';
 import type { ExecutionSummary } from './api';
 import { attemptsApi } from './attempts';
@@ -89,6 +89,12 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 
+/** Drains `watchItem`'s `queueMicrotask`-scheduled batch flush plus the
+ *  mocked API promise's own resolution — a `setTimeout` macrotask always
+ *  runs after every microtask already queued, so this is enough regardless
+ *  of how many microtask hops `loadForItems` needs. */
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
 describe('createExecutionStore — loadOne / loadList', () => {
   it('loadOne populates a ready record consumers can read', async () => {
     mockedApi.get.mockResolvedValue(withHeaders(summary()));
@@ -134,7 +140,7 @@ describe('createExecutionStore — loadOne / loadList', () => {
     );
     const store = createExecutionStore();
     expect(store.listStatus()).toBe('idle');
-    const promise = store.loadList();
+    const promise = store.loadList('item_1');
     await promise;
     expect(store.listStatus()).toBe('ready');
     expect(store.requests().size).toBe(2);
@@ -144,10 +150,10 @@ describe('createExecutionStore — loadOne / loadList', () => {
   it('loadList failure sets listStatus error + listError, without discarding rows fetched earlier', async () => {
     mockedApi.list.mockResolvedValueOnce(withHeaders({ protocol_version: 1, data: [summary()] }));
     const store = createExecutionStore();
-    await store.loadList();
+    await store.loadList('item_1');
 
     mockedApi.list.mockRejectedValueOnce(new ApiError(500, 'boom'));
-    await expect(store.loadList()).rejects.toBeInstanceOf(ApiError);
+    await expect(store.loadList('item_1')).rejects.toBeInstanceOf(ApiError);
     expect(store.listStatus()).toBe('error');
     expect(store.listError()?.message).toBe('boom');
     expect(store.getRequest('exec_1')).toBeDefined(); // earlier row survives
@@ -175,76 +181,107 @@ describe('createExecutionStore — loadOne / loadList', () => {
       }),
     );
     const store = createExecutionStore();
-    await store.loadList();
+    await store.loadList('item_1');
     const forItem1 = store.requestsForItem('item_1');
     expect(forItem1.map((r) => r.summary?.request_id)).toEqual(['c', 'a']);
   });
+});
 
-  it('loadList() (unscoped) asks the server for EXECUTION_LIST_PRELOAD_LIMIT rows instead of leaving limit unset', async () => {
+describe('createExecutionStore — watchItem() / loadForItems()', () => {
+  it('coalesces every watchItem call in the same tick into exactly one batched request', async () => {
     mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
     const store = createExecutionStore();
-    await store.loadList();
-    expect(mockedApi.list).toHaveBeenCalledWith(undefined, EXECUTION_LIST_PRELOAD_LIMIT);
+    store.watchItem('item_1');
+    store.watchItem('item_2');
+    store.watchItem('item_3');
+    await flush();
+    expect(mockedApi.list).toHaveBeenCalledTimes(1);
+    expect(mockedApi.list).toHaveBeenCalledWith(undefined, undefined, ['item_1', 'item_2', 'item_3']);
   });
 
-  it('loadList(itemId) (scoped) still asks for exactly one argument, unaffected by the preload limit', async () => {
-    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
-    const store = createExecutionStore();
-    await store.loadList('item_1');
-    expect(mockedApi.list).toHaveBeenCalledWith('item_1');
-  });
-
-  it('an item touched before the server\'s DEFAULT_LIMIT (200) of newer requests still shows its real state, because the preload asks past that bound', async () => {
-    const SERVER_DEFAULT_LIMIT = 200; // mirrors ListExecutionsQuery::DEFAULT_LIMIT, crates/tack-api/src/handlers/executions.rs
-    // 205 rows, newest first, where the OLDEST row belongs to the one item
-    // on screen this test cares about — a table seeded past the server's
-    // default bound, exactly the acceptance scenario.
-    const rows: ExecutionSummary[] = Array.from({ length: 205 }, (_, i) =>
-      summary({
-        request_id: `exec_${i}`,
-        item_id: i === 204 ? 'stale-item' : `other-item-${i}`,
-        state: i === 204 ? 'succeeded' : 'running',
-        created_at: `2026-01-01T00:00:${String(204 - i).padStart(2, '0')}Z`,
+  it('populates the cache with the batched response, keyed by whichever item each row belongs to', async () => {
+    mockedApi.list.mockResolvedValue(
+      withHeaders({
+        protocol_version: 1,
+        data: [
+          summary({ request_id: 'exec_1', item_id: 'item_1', state: 'queued' }),
+          summary({ request_id: 'exec_2', item_id: 'item_2', state: 'succeeded' }),
+        ],
       }),
     );
-    // A fake that actually applies `limit` the way the real handler's
-    // `ORDER BY created_at DESC LIMIT ?` does, which
-    // `list_executions_limit_bounds_the_unscoped_response` pins on the
-    // server side — every other test's plain
-    // `mockResolvedValue` echoes back whatever rows it's handed regardless
-    // of what limit was asked for, which cannot distinguish "asked for
-    // 200" from "asked for 2000"; this one can.
-    mockedApi.list.mockImplementation(async (_itemId?: string, limit?: number) =>
-      withHeaders({ protocol_version: 1, data: rows.slice(0, limit ?? SERVER_DEFAULT_LIMIT) }),
+    const store = createExecutionStore();
+    store.watchItem('item_1');
+    store.watchItem('item_2');
+    await flush();
+    expect(store.requestsForItem('item_1')[0]?.summary?.state).toBe('queued');
+    expect(store.requestsForItem('item_2')[0]?.summary?.state).toBe('succeeded');
+  });
+
+  it('an id with no execution stays absent from the cache — never conflated with "not yet fetched"', async () => {
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    const store = createExecutionStore();
+    store.watchItem('item_1');
+    await flush();
+    expect(store.requestsForItem('item_1')).toEqual([]);
+  });
+
+  it('unwatching removes an item from the next batch, without affecting one watched later in a separate tick', async () => {
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    const store = createExecutionStore();
+    const unwatchA = store.watchItem('item_a');
+    await flush();
+    expect(mockedApi.list).toHaveBeenLastCalledWith(undefined, undefined, ['item_a']);
+
+    unwatchA();
+    store.watchItem('item_b');
+    await flush();
+    expect(mockedApi.list).toHaveBeenLastCalledWith(undefined, undefined, ['item_b']);
+  });
+
+  it('two callers watching the same item both need to unwatch before it drops out of the batch', async () => {
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    const store = createExecutionStore();
+    const unwatch1 = store.watchItem('item_1');
+    await flush();
+    const unwatch2 = store.watchItem('item_1');
+    await flush();
+
+    unwatch1();
+    store.watchItem('item_2'); // forces a fresh batch to observe the current set
+    await flush();
+    expect(mockedApi.list).toHaveBeenLastCalledWith(undefined, undefined, ['item_1', 'item_2']);
+
+    unwatch2();
+    store.watchItem('item_3');
+    await flush();
+    expect(mockedApi.list).toHaveBeenLastCalledWith(undefined, undefined, ['item_2', 'item_3']);
+  });
+
+  it("an item whose only execution predates a large batch of others' rows still shows its real state — the badge asks by id, not by an install-wide row cap", async () => {
+    // Mirrors the server-side acceptance proof
+    // (`list_executions_item_ids_finds_an_item_whose_only_execution_predates_every_other_row`):
+    // a fake that actually answers per requested id, the way the real
+    // `item_ids` batch route does, rather than echoing back a fixed list
+    // regardless of what was asked (which could not tell "asked for
+    // everything" apart from "asked for exactly this one").
+    const allRequests = new Map<string, ExecutionSummary>();
+    allRequests.set('stale-item', summary({ request_id: 'exec_old', item_id: 'stale-item', state: 'succeeded' }));
+    for (let i = 0; i < 2005; i += 1) {
+      allRequests.set(`noise-item-${i}`, summary({ request_id: `exec_noise_${i}`, item_id: `noise-item-${i}`, state: 'running' }));
+    }
+    mockedApi.list.mockImplementation(async (_itemId, _limit, itemIds?: readonly string[]) =>
+      withHeaders({
+        protocol_version: 1,
+        data: (itemIds ?? []).flatMap((id) => {
+          const row = allRequests.get(id);
+          return row ? [row] : [];
+        }),
+      }),
     );
     const store = createExecutionStore();
-    await store.loadList();
+    store.watchItem('stale-item');
+    await flush();
     expect(store.requestsForItem('stale-item')[0]?.summary?.state).toBe('succeeded');
-  });
-
-  it('listMayBeIncomplete() is true once the unscoped preload comes back at the row cap, false once it comes back short of it', async () => {
-    const full: ExecutionSummary[] = Array.from({ length: EXECUTION_LIST_PRELOAD_LIMIT }, (_, i) =>
-      summary({ request_id: `exec_${i}` }),
-    );
-    mockedApi.list.mockResolvedValueOnce(withHeaders({ protocol_version: 1, data: full }));
-    const store = createExecutionStore();
-    expect(store.listMayBeIncomplete()).toBe(false); // never fetched yet
-    await store.loadList();
-    expect(store.listMayBeIncomplete()).toBe(true);
-
-    mockedApi.list.mockResolvedValueOnce(withHeaders({ protocol_version: 1, data: [summary()] }));
-    await store.loadList();
-    expect(store.listMayBeIncomplete()).toBe(false);
-  });
-
-  it('listMayBeIncomplete() is never set by an item-scoped loadList(itemId), even one returning many rows', async () => {
-    const many: ExecutionSummary[] = Array.from({ length: EXECUTION_LIST_PRELOAD_LIMIT }, (_, i) =>
-      summary({ request_id: `exec_${i}`, item_id: 'item_1' }),
-    );
-    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: many }));
-    const store = createExecutionStore();
-    await store.loadList('item_1');
-    expect(store.listMayBeIncomplete()).toBe(false);
   });
 });
 
@@ -485,8 +522,26 @@ describe('createExecutionStore — connectRealtime()', () => {
     return { realtime, emit: (e: ExecutionInvalidationEvent) => listeners.forEach((cb) => cb(e)) };
   }
 
-  it('a list-scope invalidation triggers loadList()', async () => {
+  it('a list-scope invalidation refreshes exactly the currently-watched badge set', async () => {
     mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    const store = createExecutionStore();
+    store.watchItem('item_1');
+    store.watchItem('item_2');
+    await new Promise((r) => setTimeout(r, 0)); // the watch's own initial batch
+
+    const { realtime, emit } = fakeRealtime();
+    store.connectRealtime(realtime);
+    mockedApi.list.mockClear();
+
+    emit({ scope: 'list' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockedApi.list).toHaveBeenCalledTimes(1);
+    expect(mockedApi.list).toHaveBeenCalledWith(undefined, undefined, ['item_1', 'item_2']);
+  });
+
+  it('a list-scope invalidation with nothing watched calls the API zero times, not with an empty item_ids', async () => {
     const store = createExecutionStore();
     const { realtime, emit } = fakeRealtime();
     store.connectRealtime(realtime);
@@ -495,7 +550,7 @@ describe('createExecutionStore — connectRealtime()', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(mockedApi.list).toHaveBeenCalledTimes(1);
+    expect(mockedApi.list).not.toHaveBeenCalled();
   });
 
   it('a request-scope invalidation triggers loadOne() for exactly that id', async () => {
@@ -535,13 +590,17 @@ describe('createExecutionStore — connectRealtime()', () => {
     expect(mockedAttemptsApi.list).toHaveBeenCalledWith('exec_9');
   });
 
-  it('the returned unsubscribe function detaches from the realtime source', () => {
+  it('the returned unsubscribe function detaches from the realtime source', async () => {
+    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
     const store = createExecutionStore();
+    store.watchItem('item_1'); // gives a 'list' emit something to refresh, if still subscribed
+    await new Promise((r) => setTimeout(r, 0));
+
     const { realtime, emit } = fakeRealtime();
     const unsubscribe = store.connectRealtime(realtime);
     unsubscribe();
 
-    mockedApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [] }));
+    mockedApi.list.mockClear();
     emit({ scope: 'list' });
     expect(mockedApi.list).not.toHaveBeenCalled();
   });

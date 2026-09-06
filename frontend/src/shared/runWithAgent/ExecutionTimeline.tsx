@@ -27,13 +27,10 @@ const ExecutionTimeline: Component<ExecutionTimelineProps> = (props) => {
   const store = useExecutionStore();
   const requests = createMemo(() => store.requestsForItem(props.itemId));
 
-  // The app-wide preload (`ExecutionStoreProvider`) is bounded server-side
-  // and exists for other consumers' "most recent state" badges — it can
-  // legitimately miss this item's own older rows once the install has more
-  // executions than that bound. An item-scoped fetch, re-run whenever
-  // `props.itemId` changes, guarantees this tab's own history is complete
-  // regardless of what else the install has recorded, without the caller
-  // having to reason about the bound at all.
+  // This tab needs the item's FULL request history, not just its most
+  // recent one (what a Board badge's batched `watchItem` fetch carries) —
+  // an item-scoped fetch, re-run whenever `props.itemId` changes,
+  // guarantees that regardless of what else the install has recorded.
   createEffect(() => {
     void store.loadList(props.itemId);
   });

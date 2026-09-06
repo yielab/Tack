@@ -41,23 +41,6 @@ function normalizeError(err: unknown): NormalizedExecutionError {
 export type ListStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 /**
- * Mirrors `crates/tack-api/src/handlers/executions.rs`'s
- * `ListExecutionsQuery::MAX_LIMIT` — the server's hard cap on `?limit=`,
- * duplicated here because no generated contract carries this number (it is
- * a plain query parameter, not a schema field); the two can drift if the
- * server-side constant ever changes without this one following. The
- * app-wide preload (`loadList()` with no `itemId`) asks for this many rows
- * explicitly instead of leaving `limit` unset, so an item whose most recent
- * execution is older than the handler's *default* limit (200) still lands
- * in the shared cache as long as the install has fewer than this many
- * execution requests in total — raising the practical threshold at which
- * `RunWithAgentButton`'s badge can go stale from 200 to this number, though
- * not eliminating the class of bug: an install that ever exceeds this many
- * execution requests hits the same gap again, one order of magnitude later.
- */
-export const EXECUTION_LIST_PRELOAD_LIMIT = 2000;
-
-/**
  * Cancellation is modeled as its own small state machine layered on top of
  * `ExecutionSummary.cancellation_requested_at`, not merged into
  * `ExecutionState` — see `api.ts`'s header note on why the cancel
@@ -131,26 +114,30 @@ export interface ExecutionStore {
   getRequest: (requestId: string) => ExecutionRequestRecord | undefined;
   listStatus: () => ListStatus;
   listError: () => NormalizedExecutionError | undefined;
-  /** True once the app-wide preload (`loadList()` with no `itemId`) has
-   *  come back with exactly `EXECUTION_LIST_PRELOAD_LIMIT` rows — meaning
-   *  execution requests older than what this fetch covers may exist, so an
-   *  on-screen item absent from the cache is genuinely unknown, not
-   *  necessarily "never run." `false` whenever the last such fetch returned
-   *  fewer rows than the cap (the table is provably covered in full) or no
-   *  unscoped fetch has resolved yet. An item-scoped `loadList(itemId)`
-   *  never sets this — that call is already exhaustive for its one item
-   *  regardless of row count. */
-  listMayBeIncomplete: () => boolean;
-  /** Fetches into the shared cache. Omit `itemId` for the app-wide preload
-   *  (bounded server-side by `list_executions`'s own default limit); pass
-   *  one to fetch exactly that item's rows regardless of how many other
-   *  requests the install has recorded — what a mounted `ExecutionTimeline`
-   *  calls so its item's history is never silently truncated by the
-   *  unscoped call's bound. Either call merges into the same
-   *  `VersionedCache`, so `requestsForItem` sees the union of every fetch
-   *  that has landed. */
-  loadList: (itemId?: string) => Promise<void>;
+  /** Fetches one item's full request history into the shared cache,
+   *  regardless of how many other requests the install has recorded —
+   *  what a mounted `ExecutionTimeline` calls so its item's history is
+   *  never silently truncated by any other consumer's bound. Merges into
+   *  the same `VersionedCache` every other fetch does, so `requestsForItem`
+   *  sees the union of every fetch that has landed. */
+  loadList: (itemId: string) => Promise<void>;
   loadOne: (requestId: string) => Promise<void>;
+  /**
+   * Registers interest in one item's latest execution for as long as the
+   * caller holds the returned unwatch function — what `RunWithAgentButton`
+   * calls on mount (via `onMount`/`onCleanup`) instead of relying on any
+   * shared, install-wide preload. Every `watchItem` call in the same
+   * microtask (e.g. a page mounting many badges at once) coalesces into
+   * exactly one batched `?item_ids=` request for the whole set, asking the
+   * server the question a badge actually means — "the latest execution for
+   * each of these item ids" — rather than "the most recent N requests
+   * install-wide," a question whose answer degrades with install size.
+   * Reference-counted: two callers watching the same id both need their own
+   * unwatch called before the id stops being asked about. Also drives the
+   * realtime `'list'`-scope refresh (`connectRealtime` below), which
+   * re-asks for exactly the currently-watched set on each tick.
+   */
+  watchItem: (itemId: string) => () => void;
   /** Creates the request, then immediately hydrates it into the store so a
    *  caller sees it appear without a second manual fetch or navigation.
    *  Resolves with the raw create result regardless of whether that
@@ -216,7 +203,13 @@ export function createExecutionStore(): ExecutionStore {
 
   const [listStatus, setListStatus] = createSignal<ListStatus>('idle');
   const [listError, setListError] = createSignal<NormalizedExecutionError | undefined>(undefined);
-  const [listMayBeIncomplete, setListMayBeIncomplete] = createSignal(false);
+
+  // Reference-counted: two badges watching the same item id both need their
+  // own unwatch called before the id drops out of the batch. Also read by
+  // `connectRealtime`'s 'list'-scope handler, so a periodic tick refreshes
+  // exactly the currently-watched set rather than an install-wide guess.
+  const watchedItemIds = new Map<string, number>();
+  let itemBatchScheduled = false;
 
   function deriveCancellation(summary: ExecutionSummary | undefined, requestId: string): CancellationState {
     const local = cancellations.get(requestId) ?? EMPTY_CANCELLATION_STATE;
@@ -275,27 +268,61 @@ export function createExecutionStore(): ExecutionStore {
     }
   }
 
-  async function loadList(itemId?: string): Promise<void> {
+  async function loadList(itemId: string): Promise<void> {
     setListStatus('loading');
     const version = clock.next(GLOBAL_SEQUENCE_KEY); // one version for every row this call returns
     try {
-      // The unscoped preload asks for `EXECUTION_LIST_PRELOAD_LIMIT`
-      // explicitly rather than leaving `limit` unset (which would fall back
-      // to the handler's much smaller default) — see that constant's own
-      // doc comment. An item-scoped call is already exhaustive for its one
-      // item regardless of row count, so it asks for nothing extra.
-      const { data } = itemId
-        ? await executionsApi.list(itemId)
-        : await executionsApi.list(undefined, EXECUTION_LIST_PRELOAD_LIMIT);
+      const { data } = await executionsApi.list(itemId);
       for (const row of data.data) applyFetchedSummary(row, version);
       setListStatus('ready');
       setListError(undefined);
-      if (!itemId) setListMayBeIncomplete(data.data.length >= EXECUTION_LIST_PRELOAD_LIMIT);
     } catch (err) {
       setListStatus('error');
       setListError(normalizeError(err));
       throw err;
     }
+  }
+
+  /** The batched fetch behind `watchItem` — never touches `listStatus`/
+   *  `listError` (those track `ExecutionTimeline`'s own single-item fetch,
+   *  a different call site). An id with no execution is simply absent from
+   *  the response and never written to the cache — the server has already
+   *  answered "no rows" for it authoritatively, so there is no ambiguity
+   *  left for a caller to paper over. */
+  async function loadForItems(itemIds: readonly string[]): Promise<void> {
+    if (itemIds.length === 0) return;
+    const version = clock.next(GLOBAL_SEQUENCE_KEY);
+    try {
+      const { data } = await executionsApi.list(undefined, undefined, itemIds);
+      for (const row of data.data) applyFetchedSummary(row, version);
+    } catch {
+      // Both call sites fire this without awaiting it, so a rejection here
+      // has nowhere to land and would surface as an unhandled rejection.
+      // A badge that cannot refresh keeps whatever it last showed and
+      // retries on the next realtime tick; there is no user action to
+      // offer and no state worth invalidating on one failed poll.
+    }
+  }
+
+  function watchItem(itemId: string): () => void {
+    watchedItemIds.set(itemId, (watchedItemIds.get(itemId) ?? 0) + 1);
+    // Coalesce every `watchItem` call within the same microtask (e.g. a
+    // page mounting a dozen badges in one render pass) into one request —
+    // `queueMicrotask` runs after all of them have registered but before
+    // any other network round-trip could observe a half-registered set.
+    if (!itemBatchScheduled) {
+      itemBatchScheduled = true;
+      queueMicrotask(() => {
+        itemBatchScheduled = false;
+        void loadForItems([...watchedItemIds.keys()]);
+      });
+    }
+    return () => {
+      const count = watchedItemIds.get(itemId);
+      if (count === undefined) return;
+      if (count <= 1) watchedItemIds.delete(itemId);
+      else watchedItemIds.set(itemId, count - 1);
+    };
   }
 
   async function create(input: CreateExecutionInput): Promise<CreateExecutionResult> {
@@ -408,7 +435,9 @@ export function createExecutionStore(): ExecutionStore {
   function connectRealtime(realtime: ExecutionRealtime): () => void {
     return realtime.onInvalidate((event) => {
       if (event.scope === 'list') {
-        void loadList();
+        // Refreshes exactly the currently-watched badge set, not an
+        // install-wide guess — see `watchItem`'s own doc comment.
+        void loadForItems([...watchedItemIds.keys()]);
         return;
       }
       void loadOne(event.requestId);
@@ -426,9 +455,9 @@ export function createExecutionStore(): ExecutionStore {
     getRequest,
     listStatus,
     listError,
-    listMayBeIncomplete,
     loadList,
     loadOne,
+    watchItem,
     create,
     cancel,
     requeue,
