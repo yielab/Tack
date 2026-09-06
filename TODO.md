@@ -10,9 +10,9 @@
 
 | Part | Cycle | Phases | Status | Where |
 |---|---|---|---|---|
-| **VII** | **Desktop app & background service** | 61 | **ACTIVE** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. VII-C2 is now unblocked (VI-C1 landed the same day); VII-D1 is last | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
-| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. VI-D2 still waits on Part V's V-C2, which owns `docs/screenshots/` | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
-| **V** | **Adoption & First Public Release** | 59 | **ACTIVE** — Waves 11–12 done, Wave 13 in flight (V-C2 unblocked, V-C3 waiting on it) | [§V](#part-v--adoption--first-public-release-phase-59) |
+| **VII** | **Desktop app & background service** | 61 | **ACTIVE** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. **VII-C2 integrated 2026-09-06** — the README now leads with the download and shows the app. Its correction to `crate-tour.md` exposed that the tray's agent-execution entry still says the route it reads does not exist, which is now **VII-B4** (Wave 22); **VII-D1 comes after it**, because D1's transcript walks that tray | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
+| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
+| **V** | **Adoption & First Public Release** | 59 | **ACTIVE** — Waves 11–12 done, Wave 13 in flight: **V-C2 integrated 2026-09-06**, V-C3 dispatched the same day. V-C3 prepares and stops — nothing it writes is published | [§V](#part-v--adoption--first-public-release-phase-59) |
 | **IV** | **Standalone Single-Binary Operation** | 58 | Done — Wave 10 integrated at `83fefab` | [§IV](#part-iv--standalone-single-binary-operation-phase-58) |
 | III | Harness-Agnostic Runner Fleet | 50–57 | Feature-complete, **tag refused** | [§III](#part-iii--harness-agnostic-runner-fleet-phases-5057), archive |
 | II | Agnostic Control Plane | 39–49 | Superseded after Wave B by Part III | [§II](#part-ii--agnostic-control-plane-phases-3949), archive |
@@ -80,8 +80,9 @@ card's block only. It names what to read, how much it costs, the gate, and when 
 |---|---|---|---|
 | 18 — The daemon, two ways | VII-A2 · VII-B1 | 61 | **Integrated 2026-09-04** — both cards on `develop`; handoffs `docs/agent-handoffs/part-vii/VII-A2.md`, `VII-B1.md`. Integration found the workspace membership itself was wrong: Tauri pulls GTK/WebKit/glib into whatever workspace holds it, so `cargo build --workspace` first demanded a staged sidecar and committed icons, then failed three CI jobs on `glib-2.0 not found` — the server would have needed desktop system libraries to compile. **`crates/tack-desktop` is now excluded from the root workspace and is its own**, with its own lockfile, CI job and Dependabot entry; `externalBin` moved to a bundle-only overlay and the icon set is committed, which also settles the `.gitignore` question `7cc6221` had routed to VII-C1. VII-B2 and VII-B3 work inside that workspace and must not touch the root lockfile. VII-B2 and VII-B3 are dispatchable in parallel from the integration tip |
 | 19 — Lifecycle and data | VII-B2 · VII-B3 | 61 | **Integrated 2026-09-04** — both cards on `develop`; handoffs `docs/agent-handoffs/part-vii/VII-B2.md`, `VII-B3.md`. The two shared `main.rs`, and the damaging half of that merged without a conflict: B2 passed the tray's first-run marker a `root` local that B3 had deleted when it replaced the temporary data root, and git saw no overlap because the two edits sat far enough apart. Caught by compiling, not by reading the diff — resolved to B3's real `paths.root`. `capabilities/default.json` took the union of both permission sets; a missing entry there fails at runtime, not at build. **Left for VII-C1:** the tree now carries two independent first-run signals in the same directory, B2's `.autostart-initialized` marker and B3's `settings.json`. Both work and neither reads the other. |
-| 20 — Ship | VII-C1 → VII-C2 | 61 | Not started — C1 after B2 + B3; C2 after C1 **and Part VI's VI-C1** |
-| 21 — Proof | VII-D1 | 61 | Not started — last |
+| 20 — Ship | VII-C1 → VII-C2 | 61 | **Both integrated** — VII-C1 2026-09-05 at `03df038`, **VII-C2 2026-09-06** (handoff `docs/agent-handoffs/part-vii/VII-C2.md`). C2 puts the download first in the README with two screenshots of the shipped app, and states the tray's "closing the window does not stop it" contract where someone meets it. Integration checked both screenshots by opening them. C2's own correction to `crate-tour.md` — the tray makes no HTTP request — is what produced **VII-B4** |
+| 22 — Corrections | VII-B4 | 61 | Not started, **before D1** — the tray's agent-execution entry is a hard-coded "unknown" whose doc comment says `GET /api/local-runner` does not exist. It does (VI-B3), and the Agents page shipped (VI-C1), so the app's own menu now contradicts the README screenshot beside it. Carries `make desktop-sidecar`'s `CARGO_TARGET_DIR` bug, found the same way |
+| 21 — Proof | VII-D1 | 61 | Not started — last, and now **after Wave 22**: D1's transcript walks the tray, and B4 changes what the tray says |
 
 ## §VII.0 Cold-start context capsule
 
@@ -175,6 +176,7 @@ rule 8 applies as written.
 | `.github/workflows/release.yml` (one new `desktop` job), `.github/workflows/ci.yml` (one `tack-desktop` check step), `crates/tack-desktop/icons/tack.svg`, the release-notes paragraph about unsigned builds | VII-C1 |
 | `README.md` §"Run it" (that section only), the book's install page, `docs/book/src/developer/crate-tour.md` entry for `tack-desktop`, `docs/screenshots/desktop-window.png` + `desktop-tray.png`, `CHANGELOG.md` `[Unreleased]` desktop lines | VII-C2 — **`README.md` and `docs/screenshots/**` are shared with Parts V and VI; see §VII.3** |
 | `crates/tack-desktop/src/{main,supervisor,first_run}.rs` | VII-C3 — **after C1 merges**. Disjoint from `tray.rs` and `lifecycle.rs`, which VII-B2 owns and this card must not change |
+| `crates/tack-desktop/src/tray.rs`, the `desktop` and `desktop-sidecar` targets in `Makefile` | VII-B4 — **after VII-C2**, and **before VII-D1**. Must not touch `lifecycle.rs`, `main.rs` or `supervisor.rs` |
 | `docs/agent-handoffs/part-vii/VII-D1.md` (the transcript), the per-platform `measured / not_measured` table in the book's install page | VII-D1 |
 | `TODO.md`, `docs/book/src/roadmap.md` statuses | wave integrator only |
 
@@ -437,6 +439,46 @@ contains, and hand it over.
 
 ---
 
+### VII-B4 — The tray says what is true, and `desktop-sidecar` honours `CARGO_TARGET_DIR`
+
+**Needs nothing more than what is on `develop`.** Wave 22, **before VII-D1** — D1's
+transcript walks this menu.
+
+**Owns:** `crates/tack-desktop/src/tray.rs`, the `desktop` and `desktop-sidecar` targets in
+`Makefile`, and the VII-B4 handoff. **Does not touch** `lifecycle.rs`, `main.rs`,
+`supervisor.rs`, `paths.rs` or `first_run.rs`.
+
+**Context, one.** `tray.rs` carries a hard-coded menu entry reading *"Agent execution:
+unknown — the switch arrives with the Agents page"*, built `enabled: false`, above a doc
+comment stating that `GET /api/local-runner` "does not exist yet". Both statements were true
+when they were written and neither is true now: VI-B3 shipped the route, VI-C1 shipped the
+Agents page, and VII-C2 put a screenshot of that page in the README — beside a tray
+screenshot whose second line still says the feature is coming. The app contradicts its own
+download page.
+
+**Context, two.** `make desktop-sidecar` builds `tack` and then copies it from
+`target/release/tack` literally, so with `CARGO_TARGET_DIR` set — which every agent working
+this tree is told to set — the build succeeds and the copy fails, or worse, stages a stale
+binary that is still there from an earlier run.
+
+**Tasks:**
+- Make the tray entry reflect the runner's real state, read from the route that now exists.
+  Decide and record whether it is a live switch or a status line; a status line that is
+  correct beats a switch that races the server. Whichever it is, the **failure** states —
+  server not answering yet, request failed — are typed and shown, never rendered as "off".
+- Fix the `Makefile` copy so it reads the same target directory `cargo` wrote to.
+
+**Acceptance:** the tray's real text is proven by a screenshot of the running app with
+execution on and a second with it off — not by reading the source. The unknown/unreachable
+state is proven by launching with no server answering. `make desktop-sidecar` is run twice,
+once with `CARGO_TARGET_DIR` set and once without, and the staged binary's `sha256` matches
+the one `cargo` just built in both — paste both hashes. `make desktop` still builds.
+
+**Stop if:** making the tray honest needs a change in `main.rs` or `lifecycle.rs` — those are
+VII-B2's and VII-B3's files. Record what you needed and hand it over.
+
+---
+
 ### VII-D1 — The stranger installs from the release page and never opens a terminal
 
 **Needs everything.** Wave 21, last.
@@ -522,7 +564,7 @@ i18n, time tracking and in-UI diff review stay deferred — see §VI.5.
 | 14 — Truth first | VI-A1 · VI-A2 · VI-A3 | 60 | **Integrated** at `927f850` on `develop` (handoffs: `docs/agent-handoffs/part-vi/VI-A1.md`, `VI-A2.md`, `VI-A3.md`). All three adversarially verified against the real tree, not just their own reports — A1's live worked example re-checked, A3's stranger-read test and render proofs opened, A2's ADR cited by line against 0050/0058. `mdbook build` clean; the only `docs/CONFIG.md` conflict (A1's new bullet vs. A2's rewritten paragraph, both anticipated it) resolved keeping both contributions. **ADR 0061 is `Status: proposed` — Wave 15 (VI-B1/B2/B3) does not branch until the user records acceptance with a date in `VI-A2.md`.** One non-blocking finding routed to VI-D1: `docs/book/src/roadmap.md:3273` wants a forward reference to ADR 0061 once accepted (not fixed here — outside every Wave-14 card's ownership). |
 | 15 — Provider at the runner boundary | VI-B1 · VI-B2 · VI-B3 | 60 | **VI-B1 and VI-B2 integrated 2026-09-04** (handoffs `docs/agent-handoffs/part-vi/VI-B1.md`, `VI-B2.md`). **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038` (handoffs `VI-B3.md`, `VI-B4.md`). Both were green alone and neither built after the merge: B4 made the discovery report's catalog one status per provider and B3 called it expecting a single one. Reconciled at integration, which is the first moment either card could have seen the other. Two comments the merge falsified were repointed, one caught by `check-comments.sh` rather than by reading. **VI-B4 corrected its own central claim under challenge:** its first vendor-name grep covered only the dispatch functions and reported zero; run over the whole tree with each file split at its own `#[cfg(test)]`, two production sites still named Vercel, one of which would have recorded an unobserved model as harness-reported for the next gateway added. VI-B5 follows B4 alone, because it changes the contract B4's acceptance holds byte-identical. **opencode was removed from the tree the same day** (ADR 0063 decision 8, handoff `docs/agent-handoffs/part-vi/opencode-removal.md`) — Tack ships adapters for two harnesses and is not limited to two: an unknown harness name still parses and is refused at claim with the same typed reason any undeclared one gets. **VI-B2 landed narrower and better-shaped than its card:** opencode's gateway path was measured working but deliberately not built, because it is the only harness that could not be credentialed by per-spawn injection — it needed a written config file. That card also claimed the provider machinery carries no vendor name and that a second endpoint is three data rows and no code path. **Measured 2026-09-05, it is not:** `attach_catalog` looks up the Vercel config key by name rather than walking the configured providers, and the three rows only suffice for a provider whose catalog is a bearer-authenticated `data[].id` list. VI-B4 makes the claim true. Two card errors corrected by measurement: the default secret name had to be `vercel-ai-gateway/default`, since `SecretStore::resolve` never appends the label, and the card's vendor URL for codex 404s. **Escalated, now carded:** the catalog publishes per-model pricing, context windows and modalities, and `ModelCombination` has nowhere to put them — a reviewed wire field, not the `additional` map. ADR 0063 decision 5 records it; **VI-B5 owns it**. ADR 0061 accepted by the user on 2026-09-03 (recorded in `docs/agent-handoffs/part-vi/VI-A2.md`, amendments). Sequential B1 → B2 → B3; base `2958e9e`. Decision 1 of ADR 0061 was refined on 2026-09-03 before acceptance (platform keychain first, owner-only file where none answers, backend reported); VI-B1's card and dispatch block already match. |
 | 16 — UI-first flow | VI-C1 · VI-C2 · VI-C3 · VI-C4 | 60 | **Wave complete — VI-C1 integrated 2026-09-05** (handoff `VI-C1.md`): the Agents page, the sidebar entry, the Board's first-run banner, and the Fleet page's runner management moved under *Advanced*. Its stated blocker was wrong and its own amendment says so — the runner-v1 completion route is at `handlers/runner_protocol.rs:198`, in `tack-api` and not in either adapter; the eight live 404s came from guessed names and from percent-encoding that never delivered the real path. The real residual limit is narrower: a genuine harness subprocess reporting its own completion needs that adapter's argv and output shape. **VI-C2, VI-C3 and VI-C4 integrated 2026-09-04** (handoffs `docs/agent-handoffs/part-vi/VI-C2.md`, `VI-C3.md`, `VI-C4.md`). C2 merged with no conflict — it is frontend-only and shared no file with the desktop cards it integrated alongside. C1 still needs B2 + B3. VI-C4's two routes ship with no handler test in `tack-api` — the next Wave 16 card touching that crate owns adding them (see its amendment). |
-| 17 — Proof | VI-C5 · VI-D1 · VI-D2 | 60 | **VI-C5 dispatched 2026-09-05** — it needs nothing and shares no file with the other two, so it runs now rather than waiting for them. D2 (assets) needs C1, C2 and Part V's V-C2, which owns `docs/screenshots/`; D1 goes last and needs everything |
+| 17 — Proof | VI-C5 · VI-C6 · VI-C7 · VI-D1 · VI-D2 | 60 | **VI-C5 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-vi/VI-C5.md`) — six handler tests, each proven load-bearing; the integrator re-ran the ordering proof independently by flipping `repo/execution.rs`'s `ORDER BY` to `DESC` and watching exactly the two ordering tests fail. It declared one gap, now carded as **VI-C6**: neither route's unknown-attempt path is covered. **VI-C7** was added from V-C2's surviving escalation. Original note follows. **VI-C5 dispatched 2026-09-05** — it needs nothing and shares no file with the other two, so it runs now rather than waiting for them. D2 (assets) needs C1, C2 and Part V's V-C2, which owns `docs/screenshots/`; D1 goes last and needs everything |
 
 **Integration line:** `develop`, the repository's default branch — same as Parts III–V.
 Branch every card from `develop`. Do not create a `plan/*` line.
@@ -726,6 +768,8 @@ estimate). Seven rules are specific to this Part:
 | `migrations.rs` (**062 only**), `crates/tack-core` project model, `crates/tack-db/src/repo/` project reads/writes, the project handlers, `crates/tack-orch/src/model_policy/wiring.rs` project tier, `frontend/src/features/settings/**` Agents tab, `frontend/src/features/fleet/runnerFleet/{AgentProfilesPanel,FleetsPanel}.tsx` | VI-C3 |
 | The two attempt list handlers, their mounts in `router.rs` (those two only), `DecisionInbox.tsx`, `ArtifactDownloadPanel.tsx`, `frontend/src/features/item-detail/tabs/AgentActivityTab.tsx` | VI-C4 |
 | New handler tests in `crates/tack-api/tests/` for those same two routes | VI-C5 — production files stay untouched |
+| The unknown-attempt cases in `crates/tack-api/tests/handlers/attempt_lists.rs` | VI-C6 — additions only; VI-C5's tests stay byte-identical |
+| Nothing in the tree. `docs/agent-handoffs/part-vi/VI-C7.md` only | VI-C7 — a measurement card; a fix it finds is written as a diff in the handoff, not applied |
 | `docs/openapi.json`, `frontend/src/shared/api/schema.gen.ts` | **generated** — regenerated by whichever of B3 / C3 / C4 lands; the integrator re-runs `UPDATE_OPENAPI=1 … openapi_contract` and `npm run gen:api` after each merge. Never hand-edited |
 | `docs/contracts/runner-v1/**`, `crates/tack-orch/tests/runner_contract.rs` | **VI-B5, and nobody else.** VI-B2 escalated the field and VI-B5 carries it; every other card holds these files byte-identical and escalates with evidence instead. Smuggling one through `additional` to dodge the pin is forbidden — that is a contract change without a review |
 | `scripts/smoke.sh`, the amendments to every page VI-A1 wrote, the final pass on `docs/CONFIG.md`, the one "Run it" sentence in `README.md` that names the Agents page (and the final README merge), `CHANGELOG.md` `[Unreleased]` | VI-D1 |
@@ -1463,6 +1507,64 @@ this card's file — record what you needed and hand it over.
 
 ---
 
+### VI-C6 — What the two attempt-list routes do with an attempt that does not exist
+
+**Needs nothing** — VI-C5's file is on `develop`. Wave 17, alongside the other proof cards.
+
+**Owns:** additions to `crates/tack-api/tests/handlers/attempt_lists.rs` and the VI-C6
+handoff. **Production files stay untouched**, `git diff --stat` proves it.
+
+**Context.** VI-C5 covered auth, the empty case and ordering on
+`GET /api/executions/{id}/attempts/{n}/artifacts` and `.../decisions`, and declared one gap
+in its own handoff: neither route's unknown-attempt path is tested. An id nobody ever created
+and an id belonging to a *different* execution are different questions and both are open.
+
+**Tasks:** find out what each route actually does for an attempt that does not exist, and for
+an attempt number that exists under another execution, then pin it. Read the answer from the
+handler, never from the OpenAPI spec — the spec records intent and this card records
+behaviour.
+
+**Acceptance:** each new test proven load-bearing by reverting the behaviour it asserts once
+and watching exactly that test fail — name the test, paste the failure. If a route answers
+`200` with an empty list for an attempt that was never created, that is the finding: say so
+in the handoff, with the handler line that does it and what a caller would conclude, and
+**pin the current behaviour anyway** so a later change is visible.
+
+**Stop if:** the honest answer needs a production change. VI-C4 owns those handlers and is
+closed — record what you needed and hand it over rather than changing it.
+
+---
+
+### VI-C7 — Does dispatching to Codex ever produce a claimable request on `develop`?
+
+**Needs nothing.** Wave 17. **Measure and report — this card changes no production file.**
+
+**Owns:** `docs/agent-handoffs/part-vi/VI-C7.md` and nothing else.
+
+**Context.** V-C2 recorded that dispatching through *Run with agent* with harness = Codex and
+model mode = *Auto* never produced a claimable request in over three minutes — the attempt sat
+in `queued`. That was measured against the published `v0.1.0-beta.7` artifact, not this line,
+and V-C2's own amendment says so: two of the three observations it filed alongside this one
+were already false on `develop`. This one has never been re-measured, and it sits directly
+under Part VI's promise — a stranger picks an agent and a model and gets a run.
+
+**Tasks:** reproduce it on today's `develop`, with a real runner, from the dialog rather than
+from the API. If it reproduces, follow it until you can name the component that stops:
+whether the request is written at all, whether the runner's claim filter matches it, and what
+`Auto` resolves to at each hop. If it does not reproduce, that is just as much a result —
+record the exact conditions under which it does not, because the next card will rely on them.
+
+**Acceptance:** a verdict with timestamps and ids, not an impression: the request id, the
+attempt id, what each hop held, and the command that shows it. Whichever way it goes, the
+handoff ends with the one-line answer someone can act on. If you find the cause, name the
+file and line and put the smallest fix **in the handoff as a diff** — do not apply it. Another
+card is recording live video against this same tree while you work.
+
+**Stop if:** reproducing needs a credential you do not have, or a change to the runner. Both
+are findings, not this card's files.
+
+---
+
 ### VI-D1 — Prove the stranger's path, and make the docs match what shipped
 
 **Last card. Needs everything, VI-D2 included.**
@@ -1611,7 +1713,7 @@ acceptance gate verifiable without trusting its author's handoff.
 |---|---|---|---|
 | 11 — Release blockers | V-A1 · V-A2 · V-A3 · V-A4 | 59 | **Done, all four integrated** at `45416e7` on `develop` (handoffs: `docs/agent-handoffs/part-v/V-A1.md` … `V-A4.md`). Local-only artifacts awaiting explicit user approval to publish: `main` branch (V-A1), tag `v0.1.0-beta.7` (V-A3), GitHub description/topics/Pages (V-A4) — see each handoff's Next step. |
 | 12 — Honest posture & prune | V-B1 · V-B2 | 59 | **Done, both integrated** at `990349f` on `develop` (handoffs: `docs/agent-handoffs/part-v/V-B1.md`, `V-B2.md`). V-B1: ADR 0059 (single-operator), non-loopback+no-token startup refusal now has an explicit opt-out (`TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK`); README paragraph proposed in the handoff, not yet merged (V-A4 already shipped this cycle). V-B2: ADR 0060 decides **keep** docket as a maintained optional bridge (not gate/delete), backed by measured numbers; no code/schema change shipped. |
-| 13 — Distribution & launch | V-C1 · V-C2 · V-C3 | 59 | V-C1 **done, integrated** at `135b941` (handoff: `docs/agent-handoffs/part-v/V-C1.md`) — Homebrew/AUR/Nix/ghcr.io recipes + cargo-binstall metadata, all four verified with real installs in disposable containers; found and fixed a pre-existing `Dockerfile` toolchain-ordering bug along the way. **V-C2 is now unblocked** — Part IV Wave 10 (all six cards, including IV-A4 zero-touch enrollment) and V-A2 are both done, so the demo can now be recorded as one command (`tack serve --with-runner`) with no hang risk. V-C3 remains blocked on V-C2. |
+| 13 — Distribution & launch | V-C1 · V-C2 · V-C3 | 59 | V-C1 **done, integrated** at `135b941` (handoff: `docs/agent-handoffs/part-v/V-C1.md`) — Homebrew/AUR/Nix/ghcr.io recipes + cargo-binstall metadata, all four verified with real installs in disposable containers; found and fixed a pre-existing `Dockerfile` toolchain-ordering bug along the way. **V-C2 is now unblocked** — Part IV Wave 10 (all six cards, including IV-A4 zero-touch enrollment) and V-A2 are both done, so the demo can now be recorded as one command (`tack serve --with-runner`) with no hang risk. **V-C2 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-v/V-C2.md`) — `docs/screenshots/recovery-demo.gif`, an attempt reaching *Needs operator*, an operator decision, and the same attempt reaching *Succeeded*, re-recordable with `scripts/record-recovery-demo.sh` against a published artifact in Docker. **That unblocks V-C3, dispatched 2026-09-06, and Part VI's VI-D2.** V-C2's escalation carries a dated amendment worth reading before trusting any card that measures a release artifact: recording from a published tag measures a *past* tree, and two of its three original product observations were already false on `develop` by the time it wrote them. The surviving one is carded as **VI-C7**. |
 
 **Integration line:** `develop`, the repository's default branch — same as Parts III and IV,
 and for the same reason. Branch every card from `develop`. Do not create a `plan/*` line.

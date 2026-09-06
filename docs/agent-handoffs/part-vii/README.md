@@ -366,6 +366,42 @@ sequenced (§VII.3).
 
 ---
 
+## Wave 22 — Corrections (before Wave 21)
+
+### VII-B4 — The tray says what is true, and `desktop-sidecar` honours `CARGO_TARGET_DIR`
+
+**Branch:** `agent/vii-b4-tray-truth` from the `develop` tip you are given.
+
+**Read (≈ 9k):**
+- `§VII.0` and your card.
+- `crates/tack-desktop/src/tray.rs` whole — it is 100 lines.
+- The route you are meant to read, found with one grep for `local_runner` in
+  `crates/tack-api/src/router.rs`, then that handler only.
+- `Makefile`, the `desktop` and `desktop-sidecar` targets only.
+- `docs/agent-handoffs/part-vii/VII-C2.md`'s escalation — it is why this card exists.
+
+**Do not read:** the rest of the desktop crate, the frontend, any other handoff.
+
+**This crate is not in the root workspace.** Build it with
+`--manifest-path crates/tack-desktop/Cargo.toml`; `cargo --workspace` never sees it, and
+you must not touch the root `Cargo.lock`.
+
+**Gate:** `make desktop` builds; `make desktop-sidecar` run twice, once with
+`CARGO_TARGET_DIR` set and once without, with the staged binary's `sha256` matching the
+freshly built one both times — paste both hashes; `cargo clippy --manifest-path
+crates/tack-desktop/Cargo.toml --all-targets -- -D warnings`;
+`./scripts/check-comments.sh`. `CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VII-B4`.
+
+**Handoff extras:** three screenshots of the *running* app's menu — execution on, execution
+off, and no server answering — not source quotes. The old comment claimed a route did not
+exist; do not replace it with a new claim you have not seen on screen.
+
+**Live rules — other cards are running servers on this machine:** your own port
+(`TACK_PORT=3314`), your own database under your worktree (**never** the repository's
+`tack.db`), and kill what you start.
+
+**Stop if:** honesty needs `main.rs` or `lifecycle.rs`. Those are VII-B2's and VII-B3's.
+
 ## Wave 21 — Proof
 
 ### VII-D1 — The stranger's install

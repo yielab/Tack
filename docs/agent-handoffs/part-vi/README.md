@@ -645,6 +645,62 @@ actually guarantees, cited by line.
 **Stop if:** a route cannot be tested without changing production code — record what you
 needed and hand it over rather than changing it.
 
+### VI-C6 — The unknown-attempt cases VI-C5 declared (needs nothing)
+
+**Branch:** `agent/vi-c6-unknown-attempt` from the `develop` tip you are given.
+
+**Read (≈ 9k):**
+- The board prelude's surface map only (`§VI.0`) plus your card.
+- `crates/tack-api/tests/handlers/attempt_lists.rs` whole — VI-C5's six tests are the
+  pattern, the harness and the file you extend.
+- The gap section of `docs/agent-handoffs/part-vi/VI-C5.md`
+  (`grep -n "404\|unknown" docs/agent-handoffs/part-vi/VI-C5.md`, then that range).
+- The two handlers themselves, found with one grep over `crates/tack-api/src/router.rs`.
+
+**Do not read:** `docs/openapi.json`, the frontend, any runner-protocol file, any other
+handoff. **The spec records intent; you are recording behaviour, and where they disagree
+the handler wins and the disagreement is the finding.**
+
+**Gate:** `cargo nextest run --workspace` green; the revert-once proof per new test;
+`cargo clippy --workspace --all-targets -- -D warnings`; `./scripts/check-comments.sh`;
+`./scripts/check-test-hygiene.sh`. `CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VI-C6`.
+
+**Handoff extras:** `git diff --stat` showing nothing outside your test file and the
+handoff; what a caller would wrongly conclude, if either route answers `200` for an
+attempt that never existed.
+
+**Stop if:** the honest answer needs a production change. Record it and hand it over.
+
+### VI-C7 — Re-measure the Codex dispatch stall (needs nothing; changes no file)
+
+**Branch:** `agent/vi-c7-codex-dispatch` from the `develop` tip you are given.
+
+**Read (≈ 10k):**
+- The board prelude's surface map only (`§VI.0`) plus your card.
+- The escalation *and its amendment* in `docs/agent-handoffs/part-v/V-C2.md` — the
+  amendment is the point: it says what that escalation was measured against and what had
+  already stopped being true.
+- `frontend/src/shared/runWithAgent/RunWithAgentModal.tsx` — what the dialog sends.
+- The claim route and its filter, found with one grep for `\.route(` in
+  `crates/tack-api/src/handlers/runner_protocol.rs`.
+
+**Do not read:** the whole runner crate, the whole orch crate, any other card's handoff.
+Follow one request through the hops; do not audit the system.
+
+**Live rules — another card is recording video against this same tree while you work:**
+your own port (`TACK_PORT=3312`), your own database under your worktree
+(**never** the repository's `tack.db`, which is real data), your own runner state dir. Kill
+what you start. `CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VI-C7`.
+
+**Gate:** none in code — you change no file but your handoff. The gate is evidence: ids,
+timestamps, and the command that shows each one.
+
+**Handoff extras:** the one-line verdict, first. If it reproduces, the component that
+stops and the smallest fix **as a diff in the handoff, not applied**. If it does not, the
+exact conditions under which it does not.
+
+**Stop if:** it needs a credential you do not have, or a runner change. Both are findings.
+
 ### VI-D2 — Assets that show the execution plane (after C1, C2 and Part V's V-C2)
 
 **Branch:** `agent/vi-d2-assets`.
@@ -665,6 +721,16 @@ count and file size measured; the request id of the completed run recorded.
 
 **Handoff extras:** vocabulary check on alt texts; the measured sizes; V-C2's slot
 untouched (`git diff` shows no change to its lines).
+
+**Unblocked 2026-09-06.** V-C1, V-C2, VI-C1 and VI-C2 are all on `develop`;
+`docs/screenshots/recovery-demo.gif` is V-C2's and is not yours. **Live rules — other cards
+are running servers on this same machine:** your own port (`TACK_PORT=3311`), your own
+database under your worktree (**never** the repository's `tack.db`, which is real data),
+your own runner state dir; kill what you start.
+`CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VI-D2`. **If a dispatch of yours sits in
+`queued` and never runs, that is VI-C7's card, in flight beside you** — record what you saw,
+with ids and timestamps, switch harness or model mode, and keep recording. Do not debug it,
+and do not let it stop the assets.
 
 ### VI-D1 — Prove the stranger's path, and make the docs match what shipped (last)
 
