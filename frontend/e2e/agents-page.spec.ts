@@ -93,9 +93,18 @@ test('steps 1, 2 and 4: turning agent execution on reveals both agents installed
   await expect(stepSection(page, 'Default model').getByLabel('Model ID', { exact: true })).toHaveValue(modelId);
 
   // Leave the machine as this test found it, for every other spec in this
-  // suite that assumes agent execution starts off.
-  await page.getByRole('button', { name: 'Turn off' }).click();
-  await expect(page.getByText('Stopped', { exact: true })).toBeVisible({ timeout: 15_000 });
+  // suite that assumes agent execution starts off — but only when it is
+  // still this test's own to turn off. `execution-toggle.spec.ts` and
+  // `provider-key-panel.spec.ts` drive this identical, single, server-wide
+  // switch too; if one of them already turned it off while this test was
+  // busy reloading and re-reading the saved default above, the goal this
+  // step exists for is already met, and clicking a button that no longer
+  // reads "Turn off" would itself be the flaky assertion.
+  const offAlready = (await page.getByRole('button', { name: /Turn (on|off)/ }).textContent())?.includes('Turn on');
+  if (!offAlready) {
+    await page.getByRole('button', { name: 'Turn off' }).click();
+    await expect(page.getByText('Stopped', { exact: true })).toBeVisible({ timeout: 15_000 });
+  }
 });
 
 test('step 5: a test run reaches the real production router and appears in the timeline as queued, then leased', async ({
@@ -106,35 +115,36 @@ test('step 5: a test run reaches the real production router and appears in the t
   const projectName = `Agents page e2e test run ${Date.now()}`;
   await createFreshProject(request, projectName);
   const modelId = `e2e-test-run-${Date.now()}`;
-
-  // The page auto-selects a target with no operator-facing picker, so an
-  // already-active runner left over from an earlier local
-  // run of this same spec (or from `a11y.spec.ts`'s own enrollments, on a
-  // reused `e2e.db`) would otherwise race this test's own for that
-  // selection. Revoking every pre-existing active runner first makes this
-  // test's own the only eligible one, deterministically, on a fresh CI
-  // checkout and on a repeat local run alike.
-  const before = await request.get(`${API}/runners`).then((r) => r.json());
-  for (const row of before.data as Array<{ runner_id: string; name: string; state: string }>) {
-    // Never revoke the embedded runner's own row (`local-*`) — its
-    // credential lives in the webServer's own state directory and is
-    // meant to be reused across the whole suite; revoking it here would
-    // strand every other spec that turns it back on later.
-    if (row.state === 'active' && !row.name.startsWith('local-')) {
-      await request.post(`${API}/runners/${encodeURIComponent(row.runner_id)}/revoke`);
-    }
-  }
-
-  // A runner this test controls the credential for, standing in for "an
-  // active agent with an installed harness" — the embedded runner (the
-  // previous test's own subject) is left off here on purpose: driving a
-  // real harness subprocess to a genuine "succeeded" completion needs each
-  // adapter's own argv/output shape, which is out of reach from a frontend
-  // test (see the handoff's "What is left" section). This proves the
-  // request reaches the real scheduler/lease pipeline instead, exactly as
-  // far as `execution-attempt-detail.spec.ts` already proves for the older
-  // "Run with agent" modal.
   const { runnerId, credential } = await enrollRunner(request, `agents-page-test-run-${Date.now()}`, modelId);
+
+  // `TestRunStep.tsx#pickTestRunTarget` auto-selects a target with no
+  // operator-facing picker. The rule it actually implements: this
+  // machine's own embedded runner wins whenever it is active with an
+  // installed harness, unconditionally — `runnerObservations.ts`'s own
+  // sort puts it first regardless of age. Only once no local runner
+  // qualifies does it fall through to the *rest* of `GET /api/runners`'
+  // un-scoped list, taken in whatever order that response arrives;
+  // `pickTestRunTarget` never re-sorts those by age itself. "Oldest
+  // active wins" among them is true only as a side effect of the server
+  // happening to return that list ordered by `created_at` — the function
+  // has no age rule of its own. Every other spec file that enrolls a
+  // runner (`scheduler-e2e`, `run-with-agent`, `execution-attempt-detail`,
+  // `a11y`) leaves it active forever on a reused `e2e.db`, so with the
+  // embedded runner off (as every other spec in this suite leaves it),
+  // a runner enrolled here would only ever win that fallback by accident.
+  // Filtering *this page's own view* of that one response down to this
+  // test's own runner — never touching the real database, so no other
+  // spec file's own state is read or written — makes the choice this
+  // test's own regardless of what any concurrently running file has
+  // enrolled. Every other route this page calls, and the real `POST
+  // /api/executions` the button below sends, stay entirely unmocked.
+  await page.route('**/api/runners', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    body.data = (body.data as Array<{ runner_id: string }>).filter((r) => r.runner_id === runnerId);
+    await route.fulfill({ response, json: body });
+  });
 
   await page.goto('/agents');
   await waitForApp(page);
