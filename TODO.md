@@ -1606,6 +1606,22 @@ finding, not a test — write it up and stop.
 needs) and the VI-C9 handoff. **Does not touch** the scheduler: its rejection is correct given
 the contract.
 
+**Both directions are closed, and three cards found it independently.** VI-C7 measured the
+Auto path; VI-D2 hit the explicit path while trying to record the hero and had to dispatch
+around the button with `POST /executions`; V-C4 found `scheduler-e2e.spec.ts`'s four tests
+failing deterministically on chromium and firefox — roughly six minutes per browser of CI's
+E2E budget — waiting on this very gate to resolve. The suite has been reporting this defect
+for some time, buried inside a job that was cancelled before it could say so.
+
+**The explicit half.** `isCombinationSupported`
+(`frontend/src/shared/execution/capabilities.ts:184-207`) iterates only
+`harness.model_combinations` and never consults `model_passthrough`. Both bundled harnesses
+ship `model_combinations` empty and attest `model_passthrough: Supported`
+(`codex.rs:740`, `claude_code.rs:913`), and the scheduler honours that attestation — its arm
+rejects only when `!declared && !passthrough`. So the server accepts an explicit model on
+both harnesses and the dialog disables the button for exactly that case. **The gate is
+stricter than the contract, and it blocks the only path that works.**
+
 **Context.** VI-C7 measured it end to end. The dialog defaults every harness to *Auto*. A
 request reaches the scheduler as `ModelSelector::AutoSelect` when no tier — agent profile,
 project, fleet — names an explicit model, and also when a tier is pinned to the literal
@@ -1625,11 +1641,13 @@ the default-model step reachable from the place the operator hits the wall. Whet
 a resolution preview on the wire or only what the client already knows is this card's to
 decide and to record — decide it from the code, not from this paragraph.
 
-**Acceptance:** on an install with no default model at any tier, an operator cannot submit a
-dispatch that will never run without being told so in the dialog, in words naming the fix. On
-an install where a tier names an explicit model, the same dispatch still submits and still
-runs — prove both live, with request ids. The false "the scheduler will still validate at
-claim time" string is gone from the tree.
+**Acceptance:** an explicit model on a harness attesting `model_passthrough: Supported`
+submits and runs — prove it live, with the request id, through the button and not around it.
+On an install with no default model at any tier, an operator cannot submit a dispatch that
+will never run without being told so in the dialog, in words naming the fix. On an install
+where a tier names an explicit model, the same dispatch still submits and still runs. The
+false "the scheduler will still validate at claim time" string is gone from the tree.
+`scheduler-e2e.spec.ts`'s four tests pass without being weakened — they were right.
 
 **Stop if:** the honest fix needs a server route that does not exist. Name it and stop.
 
@@ -1783,7 +1801,7 @@ acceptance gate verifiable without trusting its author's handoff.
 |---|---|---|---|
 | 11 — Release blockers | V-A1 · V-A2 · V-A3 · V-A4 | 59 | **Done, all four integrated** at `45416e7` on `develop` (handoffs: `docs/agent-handoffs/part-v/V-A1.md` … `V-A4.md`). Local-only artifacts awaiting explicit user approval to publish: `main` branch (V-A1), tag `v0.1.0-beta.7` (V-A3), GitHub description/topics/Pages (V-A4) — see each handoff's Next step. |
 | 12 — Honest posture & prune | V-B1 · V-B2 | 59 | **Done, both integrated** at `990349f` on `develop` (handoffs: `docs/agent-handoffs/part-v/V-B1.md`, `V-B2.md`). V-B1: ADR 0059 (single-operator), non-loopback+no-token startup refusal now has an explicit opt-out (`TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK`); README paragraph proposed in the handoff, not yet merged (V-A4 already shipped this cycle). V-B2: ADR 0060 decides **keep** docket as a maintained optional bridge (not gate/delete), backed by measured numbers; no code/schema change shipped. |
-| 13 — Distribution & launch | V-C1 · V-C2 · V-C3 · V-C4 | 59 | **V-C3 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-v/V-C3.md`) — and it found the launch's own blocker while walking the stranger's path instead of reading it: **`install.sh` had installed nothing since `v0.1.0-beta.7`.** Two archives per release end in the same platform suffix, the releases API lists `tack-runner-…` first, so the advertised one-liner downloaded the runner archive and died on `no 'tack' binary found in archive`. One `grep -v`; verified against the live API, broken before and right after. Everything else it prepared is unpublished by design. Its amendment corrects three of its own claims after review. Two green-but-blind CI checks it surfaced are now **V-C4**. Original note follows. | V-C1 **done, integrated** at `135b941` (handoff: `docs/agent-handoffs/part-v/V-C1.md`) — Homebrew/AUR/Nix/ghcr.io recipes + cargo-binstall metadata, all four verified with real installs in disposable containers; found and fixed a pre-existing `Dockerfile` toolchain-ordering bug along the way. **V-C2 is now unblocked** — Part IV Wave 10 (all six cards, including IV-A4 zero-touch enrollment) and V-A2 are both done, so the demo can now be recorded as one command (`tack serve --with-runner`) with no hang risk. **V-C2 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-v/V-C2.md`) — `docs/screenshots/recovery-demo.gif`, an attempt reaching *Needs operator*, an operator decision, and the same attempt reaching *Succeeded*, re-recordable with `scripts/record-recovery-demo.sh` against a published artifact in Docker. **That unblocks V-C3, dispatched 2026-09-06, and Part VI's VI-D2.** V-C2's escalation carries a dated amendment worth reading before trusting any card that measures a release artifact: recording from a published tag measures a *past* tree, and two of its three original product observations were already false on `develop` by the time it wrote them. The surviving one is carded as **VI-C7**. |
+| 13 — Distribution & launch | V-C1 · V-C2 · V-C3 · V-C4 | 59 | **V-C4 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-v/V-C4.md`). *Verify install URLs* now runs `install.sh` for real into a scratch directory and asserts a runnable `tack` lands; the integrator re-ran its revert-once proof independently — with the `grep -v` reverted it downloads 2.14 MB and fails with `no 'tack' binary found in archive`. E2E's budget went 25 → 40 minutes on measured numbers (3.45 overhead + 8.40 chromium + 7.00 firefox, webkit unmeasurable on this machine and recorded as such, not as a webkit fact). **That will turn a cancellation into an honest failure, which is the point:** `scheduler-e2e.spec.ts`'s four tests fail deterministically on VI-C9's gate. **Bring the budget back down once VI-C9 lands** — about twelve of those minutes are the failing tests. Original note follows. | **V-C3 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-v/V-C3.md`) — and it found the launch's own blocker while walking the stranger's path instead of reading it: **`install.sh` had installed nothing since `v0.1.0-beta.7`.** Two archives per release end in the same platform suffix, the releases API lists `tack-runner-…` first, so the advertised one-liner downloaded the runner archive and died on `no 'tack' binary found in archive`. One `grep -v`; verified against the live API, broken before and right after. Everything else it prepared is unpublished by design. Its amendment corrects three of its own claims after review. Two green-but-blind CI checks it surfaced are now **V-C4**. Original note follows. | V-C1 **done, integrated** at `135b941` (handoff: `docs/agent-handoffs/part-v/V-C1.md`) — Homebrew/AUR/Nix/ghcr.io recipes + cargo-binstall metadata, all four verified with real installs in disposable containers; found and fixed a pre-existing `Dockerfile` toolchain-ordering bug along the way. **V-C2 is now unblocked** — Part IV Wave 10 (all six cards, including IV-A4 zero-touch enrollment) and V-A2 are both done, so the demo can now be recorded as one command (`tack serve --with-runner`) with no hang risk. **V-C2 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-v/V-C2.md`) — `docs/screenshots/recovery-demo.gif`, an attempt reaching *Needs operator*, an operator decision, and the same attempt reaching *Succeeded*, re-recordable with `scripts/record-recovery-demo.sh` against a published artifact in Docker. **That unblocks V-C3, dispatched 2026-09-06, and Part VI's VI-D2.** V-C2's escalation carries a dated amendment worth reading before trusting any card that measures a release artifact: recording from a published tag measures a *past* tree, and two of its three original product observations were already false on `develop` by the time it wrote them. The surviving one is carded as **VI-C7**. |
 
 **Integration line:** `develop`, the repository's default branch — same as Parts III and IV,
 and for the same reason. Branch every card from `develop`. Do not create a `plan/*` line.
