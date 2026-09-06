@@ -36,6 +36,28 @@ export async function waitForApp(page: Page): Promise<void> {
 }
 
 /**
+ * Pre-seeds the mode/palette localStorage keys `shared/state/theme.ts` and
+ * `shared/state/palette.ts` read on boot (`initTheme()`/`initPalette()` in
+ * `src/index.tsx`), via `addInitScript` so the value exists before that boot
+ * code runs — the SPA renders the target combination on first paint, with no
+ * UI toggle click (and its own render pass) needed first. Must be called
+ * before `page.goto`.
+ */
+export async function setPaletteAndTheme(
+  page: Page,
+  palette: 'teal' | 'clay' | 'graphite',
+  mode: 'light' | 'dark',
+): Promise<void> {
+  await page.addInitScript(
+    ([p, m]) => {
+      localStorage.setItem('tack_palette', p);
+      localStorage.setItem('tack_theme', m);
+    },
+    [palette, mode] as [string, string],
+  );
+}
+
+/**
  * The one name `global-setup.ts` ensures exists before any worker starts,
  * and the name `getOrCreateProject`'s own fallback below matches on when
  * that hasn't run. A fixed name — rather than "whichever project sorts
