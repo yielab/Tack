@@ -229,7 +229,9 @@ fn ensure_loopback(config: &tack_api::config::AppConfig) -> anyhow::Result<()> {
 ///
 /// 1. a manually configured `enrollment_credential` — always wins, and is
 ///    left untouched;
-/// 2. a durable session already on disk under `state_dir` — reused as is.
+/// 2. a durable session already on disk under `state_dir`, *if* its runner
+///    id still resolves against this server's own database
+///    (`local_enrollment::stored_session_orphaned`) — reused as is.
 ///    [`crate::local_enrollment::self_provision`] is not called, so a
 ///    restart against an already-enrolled `state_dir` never mints a second
 ///    one-time token or creates a second pending runner row. The config's
@@ -239,10 +241,20 @@ fn ensure_loopback(config: &tack_api::config::AppConfig) -> anyhow::Result<()> {
 ///    credential before it ever looks at `state_dir` — see that
 ///    placeholder's own doc comment for the full explanation and why it is
 ///    not transmitted on a normal restart;
-/// 3. otherwise, a one-time token self-provisioned in-process against the
-///    server's own database (legitimate here specifically because the
-///    operator and the runner are the same person on the same machine — see
-///    `docs/adr/0058-standalone-single-binary-runner.md`).
+/// 3. otherwise (nothing on disk, or a session whose runner id this
+///    database has no row for — the case where `storage_dir` stayed put but
+///    the database underneath it was deleted and recreated), a one-time
+///    token self-provisioned in-process against the server's own database
+///    (legitimate here specifically because the operator and the runner are
+///    the same person on the same machine — see
+///    `docs/adr/0058-standalone-single-binary-runner.md`). The orphaned
+///    session file itself is left on disk untouched: `establish_session`
+///    (`tack_runner::transport`) still finds it, still tries `refresh`
+///    first, still gets refused by this same database for the same reason,
+///    and falls through to redeeming the fresh credential this branch just
+///    provisioned — the same fallback that already existed, now reached
+///    with a real token instead of the placeholder that used to reach it by
+///    mistake.
 ///
 /// Only ever called after [`ensure_loopback`] has already passed, since it
 /// runs after the server has started — self-provisioning inherits that
@@ -255,9 +267,21 @@ async fn ensure_runner_credential(
         return Ok(());
     }
     if crate::local_enrollment::has_stored_session(&runner_config.state_dir) {
-        runner_config.enrollment_credential =
-            Some(crate::local_enrollment::stored_session_placeholder());
-        return Ok(());
+        if crate::local_enrollment::stored_session_orphaned(
+            &runner_config.state_dir,
+            &server_config.database_url,
+        )
+        .await?
+        {
+            tracing::info!(
+                "the embedded runner's stored credential belongs to a database this server is \
+                 no longer using; provisioning a fresh identity instead of reusing it"
+            );
+        } else {
+            runner_config.enrollment_credential =
+                Some(crate::local_enrollment::stored_session_placeholder());
+            return Ok(());
+        }
     }
     let credential = crate::local_enrollment::self_provision(&server_config.database_url).await?;
     runner_config.enrollment_credential = Some(credential);

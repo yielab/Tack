@@ -32,6 +32,7 @@ pub use transport::{
     DecisionAnswer, DecisionCreateReport, DecisionCreateResponse, DecisionOption,
     DecisionPollReport, DecisionPollResponse, EventBatchReport, EventBatchResponse,
     HttpPullProtocol, HttpRunnerClient, ProtocolEvent, ResolvedDecision, RetryPolicy,
+    persisted_session_runner_id,
 };
 pub use workspace::{
     CleanupResult, UnavailableWorktreeProvisioner, Workspace, WorkspaceError, WorkspaceManager,
