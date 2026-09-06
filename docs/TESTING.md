@@ -231,6 +231,79 @@ make e2e             # run the whole suite (chromium + firefox + webkit)
 make e2e-ui          # interactive runner for debugging
 ```
 
+### The database is reset every run, not just named "throwaway"
+
+`frontend/playwright.config.ts`'s API `webServer` entry deletes `e2e.db*` and
+`storage-e2e/` (in that order — see the config's own comment for why the
+order matters) before it runs `cargo run -p tack-cli -- serve`, so every
+invocation starts from an empty database and an empty storage dir. Before
+this reset existed, nothing ever threw the file away: across one real
+session it reached 383 enrolled runners, 100 projects, 277 execution
+requests and 723 items, and the suite's own failure count tracked that
+growth — different tests failing at each level, all passing when run alone.
+**A flake rate measured against this database means nothing unless the
+database's starting state is stated with it.**
+
+The reset itself is not the expensive part. Measured directly against the
+command the `webServer` entry runs (`time (rm -rf storage-e2e && rm -f
+e2e.db*)`): **2ms** against a single run's leftovers (~900KB database, 40KB
+storage dir) and **8ms** against ~284 accumulated `agent_runners` rows
+(~8.2MB database, 240KB storage dir) — `rm` unlinks, it doesn't read, so the
+cost does not grow with what's being thrown away.
+
+The expensive part, if you skip the reset, is everything downstream. Three
+consecutive full chromium runs from a clean state (`time npx playwright test
+--project=chromium --workers=2`, `CARGO_TARGET_DIR` pointed at a warm
+target) measured **58s, 33s, 34s** (the first pays a one-time compile-check
+cost the other two don't) with row counts identical at the end of every run:
+`agent_runners` 15, `projects` 4, `items` 21, `execution_requests` 11. Left
+to accumulate instead — a manually-run server reused across repeated
+invocations, never reset — the same class of run slowed as `agent_runners`
+climbed, on an otherwise idle machine: 17s at 0, 24s at 225. A later run
+against a further-accumulated database (~285 `agent_runners`) took nearly
+two minutes and failed 16 tests that pass at every other level measured
+here, none of them the same test — but the machine was no longer idle by
+then (an unrelated CPU load spike, not from this suite, was independently
+confirmed via `uptime` and `ps`), so that number is directional corroboration,
+not a clean measurement. It is nonetheless consistent with this cycle's
+earlier report of 383 runners producing 9 failures where a clean database
+produces none. Resetting every time is faster than not, not merely more
+correct.
+
+If you need to inspect what a run left behind — debugging a failure,
+checking a migration — copy `e2e.db`/`storage-e2e` aside before the *next*
+run reclaims them; there is no flag to skip the reset.
+
+### Running this suite while another instance is also running it
+
+The API server binds a **fixed** port (3399) and the SPA a fixed port
+(5199), the same for every checkout — there is nothing per-worktree or
+per-process about them. Locally (never in CI), Playwright's
+`reuseExistingServer` means a second invocation that finds something
+already answering the health check on that port **reuses it** instead of
+starting its own — and the reset above only ever runs in the codepath that
+starts a fresh server. Reuse is silent: nothing reports that the server
+answering your requests belongs to a different checkout, with a different
+database, possibly mid-run itself.
+
+This is not hypothetical — it is the concrete explanation for several
+irreconcilable flake-rate measurements produced across this codebase's
+history, each taken without realizing another process on the same machine
+was answering the same port. If a run reports failures that don't reproduce
+solo and don't match anything you changed, check for another instance
+before trusting the number:
+
+```bash
+pgrep -af "playwright|tack serve"   # any other run or leftover server
+ss -ltnp | grep -E '3399|5199'      # who actually holds this suite's ports
+```
+
+A `tack serve` on a *different* port (3210 is the plain `tack serve`
+default; an installed release build or another tool may sit there) is
+unrelated and safe to ignore. One already on 3399 or 5199 is not — either
+wait for it to finish or coordinate with whoever's running it; there is no
+per-worktree isolation for these ports today.
+
 Layout (`frontend/e2e/`):
 
 | File | Covers |

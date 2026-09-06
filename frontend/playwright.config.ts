@@ -9,7 +9,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // `webServer` block below, so `npm run test:e2e` is the only command needed.
 //
 // The API runs against a throwaway SQLite file (e2e.db) and storage dir so a
-// run never touches your working database.
+// run never touches your working database. "Throwaway" is enforced, not just
+// named: the API webServer's own `command` below deletes both before it starts
+// `cargo run`, so a fresh invocation of this suite always starts from an empty
+// database and an empty storage dir, never whatever the previous run left
+// behind. The deletion runs inside the process Playwright spawns, strictly
+// before that process opens the database — never as a separate step racing a
+// server that might already be reading it. When `reuseExistingServer` finds a
+// server already up (the local, non-CI default), the command never runs and
+// that server's existing database is reused untouched — the developer already
+// chose persistence by leaving that server running. See docs/TESTING.md's
+// E2E section for the measured cost of resetting every run.
 
 // Fake `claude`/`codex` binaries (`e2e/fixtures/harness-shims/`), prepended
 // ahead of the real PATH so the embedded runner's own probe (a real
@@ -80,7 +90,34 @@ export default defineConfig({
       // early when tack.toml exists and ignores all TACK_* env vars, so the
       // toml's absence here is what lets TACK_PORT / DATABASE_URL take effect.
       // cargo still resolves the workspace by searching upward.
-      command: 'cargo run -p tack-cli -- serve',
+      //
+      // The `rm` step ahead of `cargo run` is the reset: both the database
+      // and the storage dir hold state (a runner credential in storage-e2e
+      // is tied to a runner id in e2e.db), so both are removed before
+      // either is recreated. Order matters, not just presence: storage-e2e
+      // goes first so that a process interrupted between the two `rm`s
+      // lands on the safe half-state (a database that outlives its
+      // credential, which is just a normal restart to the embedded runner
+      // — it self-provisions) rather than the dangerous one (a credential
+      // that outlives its database, pointing at a runner id the fresh
+      // database has never seen — the failure mode this suite's own
+      // history calls out as its own bug class). `e2e.db*` (not a fixed
+      // list of suffixes) also catches `-wal`/`-shm`/`-journal` and the
+      // `<db>.before-<migration>.sqlite` snapshot a rebuild-style migration
+      // leaves beside the database (`crates/tack-db/src/migrations.rs`'s
+      // `backup_path`) — anything this server itself might write next to
+      // the file, not just the file. `-f`/`-rf` make an already-clean
+      // checkout a no-op rather than an error. This whole command only runs
+      // when Playwright actually spawns a server (see `reuseExistingServer`
+      // above the object below) — a developer who leaves a server running
+      // across invocations keeps its database on purpose. Reusing an
+      // existing server means reusing *whatever* answers this health check
+      // first, including one a different, unrelated process on this same
+      // machine already started on this same fixed port — this command
+      // never runs in that case, and neither does the reset. See
+      // docs/TESTING.md's E2E section for what that looks like and how to
+      // tell it apart from a real failure.
+      command: 'rm -rf storage-e2e && rm -f e2e.db* && cargo run -p tack-cli -- serve',
       url: `http://127.0.0.1:${API_PORT}/api/health`,
       timeout: 180_000, // first compile can be slow
       reuseExistingServer: !isCI,
