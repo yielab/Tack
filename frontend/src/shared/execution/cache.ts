@@ -1,8 +1,7 @@
-// Framework-agnostic request/attempt cache primitives (TODO.md III-E2 tasks:
-// "request/attempt cache" and the acceptance bar "a stale event can never
-// overwrite a newer snapshot"). No SolidJS dependency and no I/O — plain
-// data structures, independently unit-testable, that `store.ts` composes
-// with reactivity and network calls layered on top.
+// Framework-agnostic request/attempt cache primitives: a stale event can
+// never overwrite a newer snapshot. No SolidJS dependency and no I/O —
+// plain data structures, independently unit-testable, that `store.ts`
+// composes with reactivity and network calls layered on top.
 
 /**
  * A per-key cache where a write only applies if it is at least as new as

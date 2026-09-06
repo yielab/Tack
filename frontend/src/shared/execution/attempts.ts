@@ -1,42 +1,39 @@
-// Wire-format boundary for the per-request attempt/event surface (TODO.md
-// III-F4): `GET /executions/{id}/attempts` and `GET
-// /executions/{id}/attempts/{attempt_number}/events`. Both routes were added
-// by card III-E6 (`crates/tack-api/src/handlers/executions.rs`,
-// `list_execution_attempts`/`list_execution_attempt_events`) but deliberately
-// left unwired on the frontend — see that card's own handoff, "Schema/API/
-// contract change requested from another owner" item 5: "wiring them in is
-// now purely mechanical ... A natural F4 task." This file is that wiring's
-// wire-format layer; `store.ts#loadAttempts`/`attemptsFor` is the reactive
-// layer built on top of it.
+// Wire-format boundary for the per-request attempt/event surface:
+// `GET /executions/{id}/attempts` and `GET
+// /executions/{id}/attempts/{attempt_number}/events`
+// (`crates/tack-api/src/handlers/executions.rs`,
+// `list_execution_attempts`/`list_execution_attempt_events`). This file is
+// that wiring's wire-format layer; `store.ts#loadAttempts`/`attemptsFor` is
+// the reactive layer built on top of it.
 //
 // Every shape below is copied field-for-field from the real handler
 // (`AttemptSummary`/`AttemptListResponse`/`EventSummary`/`EventListResponse`
 // in `executions.rs`), the same hand-typed-from-Rust convention `api.ts`'s
-// header comment already documents for this whole domain (still true today —
-// this domain's OpenAPI schemas type `model_provenance`/`usage_economics` via
+// header comment documents for this whole domain (this domain's OpenAPI
+// schemas type `model_provenance`/`usage_economics` via
 // `#[schema(value_type = ...)]` mirrors defined in `executions.rs` itself,
 // not surfaced as reusable named schemas in `schema.gen.ts`).
 //
 // `model_provenance` (nullable — `null` until the attempt reports
-// `actual_execution`) and `usage_economics` (always present) were added to
-// `AttemptSummary` by the Wave 5 integrator (III-F6b/III-F6e), wiring III-F3's
-// pure `tack_orch::usage_provenance` resolution into this handler. Both are
-// typed here from `tack_orch::usage_provenance::{ModelProvenance,
-// UsageEconomics, RunnerTimeCost}` (via `executions.rs`'s own
+// `actual_execution`) and `usage_economics` (always present) on
+// `AttemptSummary` wire `tack_orch::usage_provenance`'s pure resolution into
+// this handler. Both are typed here from
+// `tack_orch::usage_provenance::{ModelProvenance, UsageEconomics,
+// RunnerTimeCost}` (via `executions.rs`'s own
 // `ModelProvenanceSchema`/`UsageEconomicsSchema`/`RunnerTimeCostSchema`
 // OpenAPI mirrors, which this file matches byte-for-byte).
 
 import { requestWithHeaders } from '../api/client';
 import type { Measurement } from './types';
 
-// ─── Model provenance (III-F3 `usage_provenance.rs::ModelProvenance`) ──────
+// ─── Model provenance (`usage_provenance.rs::ModelProvenance`) ─────────────
 
 /**
  * Whether an attempt ran on what was requested. A tagged union, never
  * collapsed into a bare "matched" boolean, so both sides of a mismatch are
- * always visible (III.2 rule 7's spirit applied to provenance, not just
- * numbers) — see `attemptFormat.ts#describeModelProvenance` for the display
- * layer.
+ * always visible — unsupported is typed, unknown is explicit, applied to
+ * provenance, not just numbers — see
+ * `attemptFormat.ts#describeModelProvenance` for the display layer.
  */
 export type ModelProvenance =
   | { kind: 'matched'; provider: string; model_id: string }
@@ -49,7 +46,7 @@ export type ModelProvenance =
       actual_model_id: string;
     };
 
-// ─── Usage economics (III-F3 `usage_provenance.rs::UsageEconomics`) ────────
+// ─── Usage economics (`usage_provenance.rs::UsageEconomics`) ───────────────
 
 /**
  * The runner-witnessed wall-clock dimension — a plain fact, never itself a
@@ -57,9 +54,8 @@ export type ModelProvenance =
  * `usage_provenance.rs`'s own doc comment). `wall_clock_ms` is `null` only
  * until both `started_at`/`ended_at` are known; `cost_usd_estimated` is a
  * `Measurement` because turning that duration into a dollar figure needs an
- * infra rate no deployment configures today (III-F3 handoff, "Schema/API/
- * contract change requested" item 2) — every real response has this at
- * `{value: null, source: 'not_measured'}`.
+ * infra rate no deployment configures today — every real response has this
+ * at `{value: null, source: 'not_measured'}`.
  */
 export interface RunnerTimeCost {
   wall_clock_ms: number | null;
@@ -68,11 +64,11 @@ export interface RunnerTimeCost {
 
 /**
  * Two independently-provenanced dollar dimensions, deliberately never
- * summed into one figure (III-F3): the harness/vendor's own self-reported
- * token cost, and this card's derived runner-infra-time cost. Always
- * present on an `AttemptSummary` (unlike `model_provenance`), because both
- * sub-fields degrade to an honest `not_measured` rather than needing to be
- * absent themselves.
+ * summed into one figure: the harness/vendor's own self-reported token
+ * cost, and a derived runner-infra-time cost. Always present on an
+ * `AttemptSummary` (unlike `model_provenance`), because both sub-fields
+ * degrade to an honest `not_measured` rather than needing to be absent
+ * themselves.
  */
 export interface UsageEconomics {
   model_token_cost_usd_estimated: Measurement<number>;

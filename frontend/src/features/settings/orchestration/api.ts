@@ -1,27 +1,25 @@
-// Wire-format boundary for the project-settings "Orchestration" panel (TODO.md
-// Wave 4, card D2, tasks 36.3/36.4: budget + policy panels). Every assumption
+// Wire-format boundary for the project-settings "Orchestration" panel
+// (budget + policy panels). Every assumption
 // about `GET/PUT /api/projects/{id}/orch-link`, `GET /api/control-planes`,
 // `GET /api/projects/{id}/orch-budget`, and `GET /api/projects/{id}/orch-policy`
 // lives in this one file — `BudgetPanel.tsx`, `PolicyPanel.tsx`,
 // `LinkForm.tsx`, and `OrchestrationPanel.tsx` only ever import types and
 // functions from here, never construct a request body or read a raw wire
-// field themselves. Mirrors the pattern A5 set for `features/fleet/api.ts`
-// and D1/C4 repeated for `features/approvals/api.ts`/`shared/dispatch/api.ts`.
+// field themselves, the same pattern every other feature's `api.ts` in
+// this tree follows.
 //
 // Every field below is copied field-for-field from the real Rust handler
 // (`crates/tack-api/src/handlers/orch.rs` — `OrchLinkView`/`OrchLinkResponse`,
-// `ControlPlaneResponse`, `OrchBudgetResponse`, `OrchPolicyResponse`), written
-// after the backend landed in the same session (not a guess).
+// `ControlPlaneResponse`, `OrchBudgetResponse`, `OrchPolicyResponse`), not
+// a guess.
 //
 // **No "paused" field anywhere in here, deliberately.** `OrchBudgetResponse`'s
 // own doc comment (`handlers/orch.rs`) explains why: docket has no HTTP route
 // to clear a budget pause, and the one read-side proxy that exists (a
 // `paused_refused` trace event) can't be attributed to a single linked
-// project with Tack's current schema. See TODO.md §6 (card D2) for the full
-// write-up. Do not add a `paused`/`is_paused` field here without first
-// closing that gap server-side — a client-invented pause indicator would be
-// exactly the "silently does nothing" control the card explicitly warns
-// against.
+// project with Tack's current schema. Do not add a `paused`/`is_paused`
+// field here without first closing that gap server-side — a client-invented
+// pause indicator would silently do nothing.
 
 import { request, isOrchestrationDisabledError } from '../../../shared/api/client';
 
@@ -78,8 +76,7 @@ export interface OrchBudget {
   /** `null` = stale/unknown (unlinked, or the linked plane is unreachable).
    *  `0` = a reachable plane that genuinely has nothing mirrored yet. */
   cost_usd_estimated: number | null;
-  /** Always `null` today — no pricing-snapshot mechanism exists yet
-   *  (TODO.md §0 rule 6). */
+  /** Always `null` today — no pricing-snapshot mechanism exists yet. */
   pricing_snapshot_at: string | null;
 }
 
@@ -139,7 +136,7 @@ export const orchestrationApi = {
 
 /** True when a request failed because orchestration is disabled server-side —
  *  distinct from any other failure. Delegates to
- *  `shared/api/client.ts#isOrchestrationDisabledError` (TODO.md card E2, the
+ *  `shared/api/client.ts#isOrchestrationDisabledError` (the
  *  same "409/403 + machine-readable code, 404 kept only as a legacy
  *  fallback" contract `features/settings/orchestrationSettings/api.ts`
  *  documents in full); kept as its own export so every existing caller

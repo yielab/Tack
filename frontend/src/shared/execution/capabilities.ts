@@ -1,31 +1,27 @@
-// Pure capability-selector logic for the Part III execution surface
-// (TODO.md III-E2 task: "capability selector — what harness/provider/model
-// combinations are actually usable, driven by real runner-reported
-// capability data, not assumptions").
+// Pure capability-selector logic: what harness/provider/model combinations
+// are actually usable, driven by real runner-reported capability data, not
+// assumptions.
 //
 // Every function here takes `RunnerCapabilities[]` (see `types.ts`) as a
 // plain argument — it performs no I/O and knows nothing about HTTP, caching,
-// or where the snapshots came from. This mirrors TODO.md's Wave 4 sibling
-// card III-E1 ("Pure selection performs no I/O and never grants the
-// authoritative lease") applied to the frontend's read-side equivalent: a
-// component decides whether to let an operator pick a harness/provider/model
+// or where the snapshots came from, the same "pure selection, never grants
+// the authoritative lease" split `crates/tack-orch/src/scheduler` draws
+// server-side, applied to the frontend's read-side equivalent: a component
+// decides whether to let an operator pick a harness/provider/model
 // combination, never whether to actually grant a lease.
 //
-// **There is currently no operator-facing endpoint that returns
-// `RunnerCapabilities` for a registered runner** (see `api.ts`'s header
-// note on the missing `GET /runners`). Every function below is fully usable
-// and fully tested against the frozen `docs/contracts/runner-v1/
-// capabilities.json` fixture shape today; only the data source is missing.
-// A future `GET /runners` (or per-fleet roster) response can be fed straight
-// into these functions without any further design work here.
+// `GET /runners` feeds these functions today via `RunWithAgentModal.tsx`'s
+// `runnerSummaryToCapabilities` adapter (see `types.ts`'s `RunnerCapabilities`
+// doc comment) — every function below is tested against the frozen
+// `docs/contracts/runner-v1/capabilities.json` fixture shape.
 //
 // No function in this file ever reports `supported: true` without at least
 // one runner's real capability data backing it, and never reports
-// `supported: false` without a specific, typed reason — "unsupported is
-// typed, unknown is explicit" (TODO.md III.2 rule 7), extended to this
-// module's own vocabulary: an empty snapshot list is `false` with the
-// explicit reason `'no runner capability data available'`, never a
-// structural zero indistinguishable from "checked, and it's unsupported."
+// `supported: false` without a specific, typed reason — unsupported is
+// typed, unknown is explicit, extended to this module's own vocabulary: an
+// empty snapshot list is `false` with the explicit reason `'no runner
+// capability data available'`, never a structural zero indistinguishable
+// from "checked, and it's unsupported."
 
 import type { CapabilitySupport, CapabilityValue, FeatureCapabilities, ModelCombination, RunnerCapabilities } from './types';
 
@@ -61,8 +57,8 @@ export function gateFeature(capabilities: RunnerCapabilities, feature: FeatureNa
 /**
  * Gates one feature across every runner that could serve a fleet/`any`
  * selector. `enabled` is true the moment at least one runner supports it
- * (advisory or supported) — the scheduler (III-E1), not this function,
- * decides which runner within the fleet actually gets picked; this is only
+ * (advisory or supported) — the scheduler, not this function, decides
+ * which runner within the fleet actually gets picked; this is only
  * "could the operator ever expect this control to do something." Reports
  * `supportingRunnerCount`/`totalRunnerCount` so a caller can render
  * "supported by 2 of 3 runners" rather than a bare boolean.
@@ -176,10 +172,10 @@ export interface CombinationAvailability {
 }
 
 /**
- * The single function a "Run with agent" submit gate (E4) needs: is this
+ * The single function a "Run with agent" submit gate needs: is this
  * exact harness/provider/model combination usable right now, across every
  * runner capability snapshot the caller has. Always returns a typed reason,
- * whether supported or not — never a bare boolean (TODO.md III.2 rule 7).
+ * whether supported or not — never a bare boolean.
  *
  * Mirrors `crates/tack-orch/src/scheduler/select.rs`'s `evaluate_candidate`
  * exactly: a pairing counts as supported when a runner either declares it in

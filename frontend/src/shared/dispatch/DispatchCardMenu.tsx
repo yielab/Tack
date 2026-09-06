@@ -7,12 +7,12 @@ export interface DispatchCardMenuProps {
   itemId: string;
   itemTitle: string;
   /** Whether dispatch controls should render at all. `false` for the
-   *  overwhelmingly common "orchestration not enabled" case (TODO.md §0 rule
-   *  8) — the menu trigger itself doesn't mount, rather than mounting and
-   *  failing when clicked ("no dispatch controls," this card's own brief,
-   *  not "a control that errors"). Today's only caller (`Board.tsx`) feeds
-   *  this from `useAgentActivityMap`'s `orchAvailable()`, which card G1
-   *  found is the wrong signal — see that function's doc comment for why
+   *  overwhelmingly common "orchestration not enabled" case — the menu
+   *  trigger itself doesn't mount, rather than mounting and
+   *  failing when clicked: no dispatch controls,
+   *  not a control that errors. Today's only caller (`Board.tsx`) feeds
+   *  this from `useAgentActivityMap`'s `orchAvailable()`, which is
+   *  the wrong signal — see that function's doc comment for why
    *  and for the real one (`Capabilities.dispatch`) this prop should read
    *  once a per-project capability value is reachable at that call site.
    *  `dispatch` itself carries no `reason` on the wire (it's a plain
@@ -26,11 +26,11 @@ export interface DispatchCardMenuProps {
 }
 
 /**
- * The "board card menu" task 35.8 asks for — today a single action
- * (Dispatch to agents), built as a real menu rather than a bare button so a
- * future card can add more item actions here without a second component.
- * Stops propagation on every interaction so it never triggers the card's own
- * click-to-open-drawer handler (`Board.tsx`'s `ItemCard`).
+ * The per-item board card menu — today a single action
+ * (Dispatch to agents), built as a real menu rather than a bare button so
+ * more item actions can be added here later without a second component.
+ * Stops propagation on every interaction so it never triggers the item
+ * card's own click-to-open-drawer handler (`Board.tsx`'s `ItemCard`).
  */
 const DispatchCardMenu: Component<DispatchCardMenuProps> = (props) => {
   const [open, setOpen] = createSignal(false);

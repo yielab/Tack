@@ -1,9 +1,8 @@
-// The shared item-execution store (TODO.md III-E2 tasks: "item execution
-// store", "optimistic cancellation with rollback and an explicit
-// conflict/error state"). This is the single reactive source of truth every
-// consumer (E3's fleet/runner UI, E4's "Run with agent" surfaces) must read
-// through — the acceptance bar "every consumer sees one consistent state
-// (no divergent copies of the same request/attempt)" means components call
+// The shared item-execution store: optimistic cancellation with rollback
+// and an explicit conflict/error state. This is the single reactive source
+// of truth every consumer (the fleet/runner UI, the "Run with agent"
+// surfaces) must read through, so every consumer sees one consistent state
+// — no divergent copies of the same request/attempt. Components call
 // `createExecutionStore()` once (typically via a context Provider the same
 // way `shared/state/projectItemsContext.tsx` wraps `api.items.list`) and
 // share the instance, rather than each maintaining its own fetch+signal.
@@ -76,10 +75,9 @@ const EMPTY_CANCELLATION_STATE: CancellationState = {
 /**
  * A request's full known state. `status: 'error'` with `summary: undefined`
  * means "we have never successfully fetched this request" (e.g. a bad id
- * passed to `loadOne`) — this is what makes the acceptance bar "errors
- * never render as empty data" concrete: a component checks `status`, and an
- * `'error'` record is never mistaken for "zero data" or silently rendered
- * as if it were a fresh, empty request.
+ * passed to `loadOne`) — errors never render as empty data: a component
+ * checks `status`, and an `'error'` record is never mistaken for "zero
+ * data" or silently rendered as if it were a fresh, empty request.
  */
 export interface ExecutionRequestRecord {
   status: 'ready' | 'error';
@@ -90,10 +88,9 @@ export interface ExecutionRequestRecord {
 }
 
 /**
- * Attempts (III.1.3), read through `GET /executions/{id}/attempts` (card
- * III-E6 added the route; card III-F4 — this file — wires it in here; see
- * `attempts.ts`'s header comment for the full history). Modeled the same
- * way `ExecutionRequestRecord`/`ListStatus` are: an explicit state machine
+ * Attempts, read through `GET /executions/{id}/attempts` — see
+ * `attempts.ts`'s header comment for how that route's shape is modeled.
+ * Modeled the same way `ExecutionRequestRecord`/`ListStatus` are: an explicit state machine
  * so "never fetched", "fetching", "fetched, zero attempts exist", and
  * "fetch failed" are four genuinely different, never-conflated states — in
  * particular `ready` with an empty `data` array is NOT the same thing as
@@ -128,9 +125,9 @@ export interface ExecutionStore {
   loadList: (itemId?: string) => Promise<void>;
   loadOne: (requestId: string) => Promise<void>;
   /** Creates the request, then immediately hydrates it into the store so a
-   *  caller sees it appear without a second manual fetch (E4's acceptance
-   *  bar: "request appears without navigation"). Resolves with the raw
-   *  create result regardless of whether that hydration fetch succeeds. */
+   *  caller sees it appear without a second manual fetch or navigation.
+   *  Resolves with the raw create result regardless of whether that
+   *  hydration fetch succeeds. */
   create: (input: CreateExecutionInput) => Promise<CreateExecutionResult>;
   /** Optimistically marks the request as cancellation-pending, then
    *  confirms or rolls back against the real response. Rethrows on

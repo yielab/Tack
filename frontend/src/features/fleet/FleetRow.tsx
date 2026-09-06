@@ -88,8 +88,8 @@ const FleetRow: Component<FleetRowProps> = (props) => {
                 : `Last seen ${relativeTime(row().last_seen_at)}`}
           </div>
         </Show>
-        {/* Capability negotiation (card G1): read straight from the wire
-            payload, never from `control_plane_kind` — TODO.md §II.0 rule 6.
+        {/* Capability negotiation: read straight from the wire
+            payload, never from `control_plane_kind`.
             `capabilities` is only `null` in the `unconfigured` case above,
             where there is nothing to ask. Pause is the capability every
             operator is most likely to reach for from this exact row (a
@@ -154,7 +154,7 @@ const FleetRow: Component<FleetRowProps> = (props) => {
       </td>
 
       {/* Burn vs budget — tokens are the primary measure, at least as
-          prominent as the dollar figure beneath them (TODO.md §0 rule 6). */}
+          prominent as the dollar figure beneath them. */}
       <td style={cellStyle}>
         <Show
           when={!stale()}

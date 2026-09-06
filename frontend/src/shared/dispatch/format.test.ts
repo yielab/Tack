@@ -191,8 +191,7 @@ describe('summarizeSprintDispatchCounts', () => {
       { decision: 'waiting_approval', count: 1 },
       { decision: 'blocked', count: 1 },
     ]);
-    // The specific misrepresentation the card's brief calls out by name:
-    // never a single merged "4 dispatched" bucket.
+    // Never a single merged "4 dispatched" bucket.
     const dispatchedEntry = counts.find((c) => c.decision === 'dispatched');
     expect(dispatchedEntry?.count).not.toBe(SUMMARY.total);
   });

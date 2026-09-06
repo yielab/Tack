@@ -1,20 +1,18 @@
-// Wire-format boundary for verified artifact download (TODO.md III-F4):
+// Wire-format boundary for verified artifact download:
 // `GET /executions/{request_id}/attempts/{attempt_number}/artifacts/
-// {artifact_id}/content` — mounted in production by the Wave 5 integrator
-// (III-F6/F6a) at `crates/tack-api/src/handlers/runner_protocol/
-// artifact_download.rs`, proven through the real router by
-// `crates/tack-api/tests/f6a_artifact_wiring_test.rs`.
+// {artifact_id}/content` — mounted in production at
+// `crates/tack-api/src/handlers/runner_protocol/artifact_download.rs`,
+// proven through the real router by `crates/tack-api/tests/wiring/artifact.rs`.
 //
-// `artifactsApi.list` calls the discovery route this card adds — `GET
+// `artifactsApi.list` calls the discovery route — `GET
 // /executions/{request_id}/attempts/{attempt_number}/artifacts`
 // (`crates/tack-api/src/handlers/attempt_lists.rs`), returning every
 // manifest recorded for that attempt, oldest first — `artifact_id` is no
 // longer something an operator has to already know.
 //
 // Two HTTP outcomes from `download` distinguish two genuinely different
-// server states, per this card's acceptance bar ("artifact failure
-// visible") and III.2 rule 7 ("unmeasured is nullable" applied to presence,
-// not just numbers):
+// server states, and neither collapses into the other ("unmeasured is
+// nullable" applied to presence, not just numbers):
 //   - `404 not_found` — no artifact manifest exists under this id at all.
 //   - `409 conflict` — the manifest exists, but its content has not been
 //     verified (streamed + checksummed) yet; genuinely different from
@@ -66,9 +64,9 @@ export const artifactsApi = {
   },
   /** Fetches the verified artifact content as a `Blob`, carrying the
    *  operator's bearer token (unlike a plain `<a href download>`, which
-   *  cannot attach an `Authorization` header — see this card's handoff for
-   *  why a fetch+blob download was chosen over the simpler anchor-tag
-   *  pattern `FilesTab.tsx` uses for attachments). Throws `ApiError` with
+   *  cannot attach an `Authorization` header — a fetch+blob download is
+   *  chosen over the simpler anchor-tag pattern `FilesTab.tsx` uses for
+   *  attachments precisely because it needs that header). Throws `ApiError` with
    *  the real status on any non-2xx response — callers should check
    *  {@link isArtifactNotFound}/{@link isArtifactContentNotVerified} to
    *  render the two distinct failure states named above. */

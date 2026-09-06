@@ -1,50 +1,45 @@
-// Wire-format boundary for the Part III operator execution/fleet/runner/
-// profile surface (TODO.md III-E2). See `types.ts`'s header comment for why
-// these shapes are hand-typed rather than imported from `../api/schema.gen`.
-// Every shape in *this* file is copied directly from the live Rust handler
-// that produces it — cited per section below.
+// Wire-format boundary for the operator execution/fleet/runner/profile
+// surface. See `types.ts`'s header comment for why these shapes are
+// hand-typed rather than imported from `../api/schema.gen`. Every shape in
+// *this* file is copied directly from the live Rust handler that produces
+// it — cited per section below.
 //
-// **Update (card III-E6, Wave 4 integration boundary):** this domain's
-// OpenAPI schemas were `{}` (free-form) when E2 wrote the note above — no
-// longer true. `crates/tack-api/src/handlers/executions.rs`/`runner_admin.rs`
-// now carry real `#[derive(ToSchema)]` DTOs and `docs/openapi.json`/
+// `crates/tack-api/src/handlers/executions.rs`/`runner_admin.rs` carry real
+// `#[derive(ToSchema)]` DTOs and `docs/openapi.json`/
 // `frontend/src/shared/api/schema.gen.ts` are regenerated and drift-checked.
 // This file's hand-typed shapes were deliberately *not* migrated to import
 // the generated types — matching each field to its generated equivalent
-// across every consumer in this domain is a larger refactor outside III-E6's
-// own scope — but every shape below was written to match the real handler
-// field-for-field already, so that swap remains mechanical whenever a future
-// card takes it on.
+// across every consumer in this domain is a larger refactor, not done here
+// — but every shape below was written to match the real handler
+// field-for-field already, so that swap remains mechanical whenever
+// whoever takes it on does.
 //
-// **`GET /runners` now exists** (`runnersApi.list()` below) — closes the gap
-// E2, E3 and E5 each independently hit and documented as "Gap 1," and is now
-// wired into `RunWithAgentModal.tsx`'s live capability fetch (see that
-// file's own comment on why: with no live data, a *specific* model choice
-// was unconditionally hard-blocked at every real call site — the only
-// request shape a real operator could ever submit through the UI was
-// `Auto`, which the scheduler (`tack_orch::scheduler`, card III-E1) always
-// rejects too, an integration gap between two Wave-4 cards this route
-// closes). Two gaps from E2's original list remain open, requested from a
-// future owner:
+// `GET /runners` exists (`runnersApi.list()` below) and is wired into
+// `RunWithAgentModal.tsx`'s live capability fetch (see that file's own
+// comment on why: with no live data, a *specific* model choice was
+// unconditionally hard-blocked at every real call site — the only request
+// shape a real operator could ever submit through the UI was `Auto`, which
+// the scheduler (`tack_orch::scheduler`) always rejects too). Two gaps
+// remain open, requested from a future owner:
 //   - `GET /runner-fleets/{id}` (single fleet + roster) — only
 //     `POST`/`GET` (list) exist; `RunnerSummary.fleet_ids` (via `GET
 //     /runners`) is the only membership read path today.
-//   - `GET /executions/{id}/attempts` (+ `.../attempts/{n}/events`) now
-//     exist server-side (card III-E6) and are covered by
-//     `crates/tack-api/tests/e6_routes_test.rs`, but are deliberately not
-//     wrapped here yet — wiring them into `store.ts#attemptsFor`'s
-//     `AttemptAvailability` union and every consumer
-//     (`ExecutionTimeline.tsx` and their existing tests) is exactly the
-//     kind of larger, ripple-through-two-cards'-test-suites refactor this
-//     integration card's own scope note excludes. `ExecutionTimeline.tsx`
-//     still shows the typed "not available yet" placeholder.
+//   - `GET /executions/{id}/attempts` (+ `.../attempts/{n}/events`) exist
+//     server-side and are covered by
+//     `crates/tack-api/tests/handlers/operator_read_routes.rs`, but are
+//     deliberately not wrapped here yet — wiring them into
+//     `store.ts#attemptsFor`'s `AttemptAvailability` union and every
+//     consumer (`ExecutionTimeline.tsx` and their existing tests) is a
+//     larger, ripple-through-multiple-test-suites refactor, not done here.
+//     `ExecutionTimeline.tsx` still shows the typed "not available yet"
+//     placeholder.
 //
 // **A wire inconsistency worth flagging alongside that gap:** `POST
 // /executions/{id}/cancel`'s success response
 // (`crates/tack-api/src/handlers/executions.rs`, `request_cancellation`,
 // line ~515) hardcodes `"state":"cancellation_requested"` — a string that is
-// NOT a member of `ExecutionState` (III.1.1's frozen ten-state lifecycle has
-// no such state; cancellation intent is instead the separate
+// NOT a member of `ExecutionState` (the frozen ten-state lifecycle has no
+// such state; cancellation intent is instead the separate
 // `cancellation_requested_at` timestamp column `list_executions`/
 // `get_execution` already expose). A client that calls `cancel()` and then
 // re-fetches via `get()` will see the row's REAL current lifecycle state
@@ -158,8 +153,7 @@ export const executionsApi = {
   /** Preserves response headers via `requestWithHeaders` even though the
    *  handler sets none beyond the defaults today — so a future
    *  fencing/ETag-style header lands here automatically instead of being
-   *  silently dropped by a `data`-only wrapper (this card's "preserve
-   *  headers" task; proven in `api.test.ts`).
+   *  silently dropped by a `data`-only wrapper (proven in `api.test.ts`).
    *
    *  `itemId`, when given, scopes the request to that item alone
    *  (`list_executions`'s `item_id` query parameter) instead of every
@@ -310,8 +304,7 @@ export const modelProfilesApi = {
     }),
 };
 
-// ── Runners (enrollment/revocation only — see header note on the missing
-//    list endpoint) ─────────────────────────────────────────────────────────
+// ── Runners ─────────────────────────────────────────────────────────────────
 
 /** `POST /runners/enrollment` request body — `CreatePendingRunner`
  *  (runner_admin.rs lines 100-113). */
@@ -359,9 +352,7 @@ export interface RevokeEnrollmentTokenResult {
 
 /**
  * The row shape returned by `GET /runners[?fleet_id=]`
- * (`crates/tack-api/src/handlers/runner_admin.rs::list_runners`, added by
- * card III-E6 — this route did not exist when E2/E3/E5 each independently
- * documented its absence as "Gap 1" in their own handoffs). `labels`/
+ * (`crates/tack-api/src/handlers/runner_admin.rs::list_runners`). `labels`/
  * `capability_snapshot` are the handler's own best-effort parse of the
  * stored JSON columns (`null` only if the stored value is somehow not
  * valid JSON — `labels_raw`/`capability_snapshot_raw` always carry the raw
@@ -375,7 +366,7 @@ export interface RunnerSummary {
   labels_raw: string;
   total_capacity: number;
   available_capacity: number;
-  /** Parsed `EmbeddedCapabilitySnapshot` — see `capabilities.ts`'s
+  /** Parsed `EmbeddedCapabilitySnapshot` — see `RunWithAgentModal.tsx`'s
    *  `runnerSummaryToCapabilities` for how this is adapted into the
    *  `RunnerCapabilities` shape `gateHarnessModelSelection` expects
    *  (that type nests `protocol_version`/`runner_version` *inside* the

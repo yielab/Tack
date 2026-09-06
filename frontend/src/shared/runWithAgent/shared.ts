@@ -1,20 +1,18 @@
-// Pure, framework-agnostic logic behind the "Run with agent" UI (TODO.md
-// III-E4, Wave 4 / Phase 54: "item/sprint Run with agent and activity").
+// Pure, framework-agnostic logic behind the "Run with agent" UI.
 //
 // Kept separate from the SolidJS components below so that payload
 // construction, capability gating, and default-provenance logic are unit
 // testable without mounting anything — and, more importantly, so that
 // `RunWithAgentModal.tsx` (the ONE shared modal all three surfaces mount) has
-// a single, provably-shared code path from form state to wire body. That is
-// what backs this card's acceptance bar "all three surfaces (Board,
-// item-detail, Sprint) create the same payload shape when launching a run —
-// no divergent DTOs between entry points": Board/item-detail/Sprint never
-// build a `CreateExecutionInput` themselves, they only collect a
-// `RunWithAgentFormValues` and hand it to the one modal, which calls
-// {@link buildCreateExecutionInput} exactly once.
+// a single, provably-shared code path from form state to wire body: all
+// three surfaces (Board, item-detail, Sprint) create the same payload shape
+// when launching a run, with no divergent DTOs between entry points.
+// Board/item-detail/Sprint never build a `CreateExecutionInput` themselves,
+// they only collect a `RunWithAgentFormValues` and hand it to the one
+// modal, which calls {@link buildCreateExecutionInput} exactly once.
 //
-// Vocabulary note (III.0): this module is about the NEW, neutral Part III
-// execution domain (`ExecutionRequest` via `tack-runner`) — never the legacy
+// This module is about the newer, neutral execution domain
+// (`ExecutionRequest` via `tack-runner`) — never the older
 // `shared/dispatch/**` Docket "dispatch" concept. Nothing here imports from
 // or is compatible with `shared/dispatch/**`; see that folder's own files
 // for the older, unrelated feature.
@@ -96,20 +94,20 @@ export interface RunWithAgentFormValues {
  *
  * The nested `agent_profile_snapshot`/`repository_snapshot`/
  * `permission_policy` objects are untyped (`unknown`) on the wire-boundary
- * type because the operator API publishes no OpenAPI schema for this domain
- * yet (see `shared/execution/api.ts`'s header comment) — but they are NOT
- * arbitrary here: their shape is copied field-for-field from the real Rust
- * structs one layer deeper (`crates/tack-orch/src/execution/types.rs`):
+ * type: `docs/openapi.json`'s `CreateExecution` schema leaves each as a bare
+ * description with no `type`/`properties`, because the real Rust structs one
+ * layer deeper (`crates/tack-orch/src/execution/types.rs`) live in a crate
+ * that does not derive `ToSchema`. They are NOT arbitrary here, though:
+ * their shape is copied field-for-field from those structs:
  *   - `AgentProfileSnapshot { name, instructions, tool_policy, timeout_seconds, budgets }`
  *   - `RepositorySnapshot { kind, remote, base_revision, subdirectory }`
  *   - `PermissionPolicy { tools, network }`
- * confirmed against `docs/agent-handoffs/part-iii/III-E5.md`'s own
- * adversarial finding (E5's first draft defaulted `agent_profile_snapshot`/
- * `permission_policy` to `{}` and got a live 400 `missing field \`network\`` —
- * this module's fields exist specifically because that mistake is already
- * documented). `budgets`/`environment`/`metadata` are left at `{}`, which
- * E5's same finding confirmed is genuinely safe to default (untyped `Value`
- * fields end-to-end).
+ * A live test against a real server confirmed defaulting
+ * `agent_profile_snapshot`/`permission_policy` to `{}` gets a 400 `missing
+ * field \`network\`` — this module's fields exist specifically because that
+ * mistake is already documented. `budgets`/`environment`/`metadata` are left
+ * at `{}`, which that same test confirmed is genuinely safe to default
+ * (untyped `Value` fields end-to-end).
  */
 export function buildCreateExecutionInput(values: RunWithAgentFormValues): CreateExecutionInput {
   return {
@@ -154,40 +152,6 @@ export function buildCreateExecutionInput(values: RunWithAgentFormValues): Creat
  *  two different submissions of the same open modal. */
 export function generateIdempotencyKey(): string {
   return crypto.randomUUID();
-}
-
-// ─── Resolved-default provenance ────────────────────────────────────────────
-
-/**
- * Why a default was pre-filled — or the honest statement that nothing was.
- * III-E4's task text asks for "resolved default provenance (show why a
- * default was chosen — profile default vs. project default vs. fleet
- * default)". That resolution precedence (request override → agent profile →
- * project → fleet) is III-F3's job (TODO.md Wave 5, "Model resolution and
- * usage provenance") — a card that has not landed as of Wave 4, and E4 only
- * depends on E2. There is today no server-side default to report and no
- * endpoint that would report one; inventing a client-side "first item in the
- * list wins" convention and labeling it "the default" would be exactly the
- * fabricated-provenance this project's rules forbid (TODO.md III.2 rule 7:
- * "no structural zero standing in for unknown"). This type makes that a
- * typed, explicit state instead — the same pattern `shared/execution/
- * store.ts`'s `AttemptAvailability` already established for a different,
- * also-currently-missing read path.
- */
-export type DefaultProvenance =
-  | { status: 'resolved'; source: 'request_override' | 'profile' | 'project' | 'fleet'; description: string }
-  | { status: 'not_available'; reason: string };
-
-const DEFAULT_RESOLUTION_NOT_AVAILABLE_REASON =
-  'No server-side default was resolved for this field — profile/project/fleet default ' +
-  'precedence (TODO.md III-F3, Wave 5) has not landed yet. Choose explicitly.';
-
-/** Always `not_available` today — see this module's `DefaultProvenance` doc
- *  comment. A future card wiring III-F3's real resolution output can replace
- *  this function's body with a real `{status: 'resolved', ...}` case without
- *  changing any caller's shape. */
-export function resolveDefaultProvenance(): DefaultProvenance {
-  return { status: 'not_available', reason: DEFAULT_RESOLUTION_NOT_AVAILABLE_REASON };
 }
 
 // ─── Model policy resolution (mirrors crates/tack-orch/src/model_policy/**) ─
@@ -305,7 +269,7 @@ export function resolveAutoModelPolicy(
 export interface CombinationGate {
   /** Whether the submit control should allow this selection through. */
   allowed: boolean;
-  /** Always present — never a silent disable (TODO.md III.2 rule 7). */
+  /** Always present — never a silent disable. */
   reason: string;
   /** `true` when `allowed` is true only because there is no concrete
    *  evidence either way (an advisory, not a real confirmation) — lets a
@@ -322,12 +286,11 @@ export interface CombinationGate {
 }
 
 /**
- * The submit-gate this card's acceptance bar requires ("an unsupported
- * harness/provider/model combination cannot be submitted — disabled +
- * reasoned, not merely rejected server-side"), built on top of
- * `shared/execution/capabilities.ts#isCombinationSupported` — the exact
- * function that module's own header comment names as "the single function a
- * 'Run with agent' submit gate (E4) needs."
+ * The submit-gate an unsupported harness/provider/model combination must
+ * pass: disabled and reasoned, never merely rejected server-side. Built on
+ * top of `shared/execution/capabilities.ts#isCombinationSupported` — the
+ * exact function that module's own header comment names as "the single
+ * function a 'Run with agent' submit gate needs."
  *
  * Two cases:
  *
@@ -465,9 +428,8 @@ export function isTerminalStateString(state: string): boolean {
 /**
  * A small, self-contained relative-time formatter. `shared/agentActivity/
  * format.ts` already has an equivalent `relativeTime`, but that module
- * belongs to the older, distinct Part II Docket agent-activity domain
- * (III.0's vocabulary rule) — this card's brief is explicit about keeping
- * the new execution UI structurally independent from it, so this ~12-line
+ * belongs to the older, distinct Docket agent-activity domain — the
+ * execution UI stays structurally independent from it, so this ~12-line
  * function is duplicated on purpose rather than importing across that
  * boundary for one date-formatting helper.
  */
@@ -498,10 +460,10 @@ export function isActiveRunnerState(state: string): boolean {
 }
 
 /** Whether the target picker should stay hidden and the one active runner
- *  used directly, with no free-text id anywhere — this card's "hidden when
- *  exactly one machine is active — the common case" task. More than one
- *  active runner, or a fleet also existing as an alternative, means a real
- *  choice exists and the picker must render. */
+ *  used directly, with no free-text id anywhere — hidden when exactly one
+ *  machine is active, the common case. More than one active runner, or a
+ *  fleet also existing as an alternative, means a real choice exists and
+ *  the picker must render. */
 export function shouldHideTargetPicker(activeRunnerCount: number, fleetCount: number): boolean {
   return activeRunnerCount === 1 && fleetCount === 0;
 }
@@ -510,27 +472,25 @@ export function shouldHideTargetPicker(activeRunnerCount: number, fleetCount: nu
  * Whether the product should show its "agent execution is off" state
  * instead of the run form.
  *
- * Measured against this branch's base (2026-09-04): no persisted execution
- * on/off flag exists yet (`grep -n "local-runner"
- * crates/tack-api/src/router.rs` is empty — that's VI-B3, not landed here),
- * and `/api/executions` and its sibling routes are mounted unconditionally
- * (`frontend/e2e/run-with-agent.spec.ts`'s own header note: "an always-on
- * operator surface, NOT gated behind TACK_ORCH_ENABLE"). The only
- * currently-observable signal is therefore indirect: the §VI.0 surface map's
- * "Turn on agent execution" row is still a console step
- * (`tack serve --with-runner`) today, and without it no runner ever enrolls
- * — so zero active runners is read as "execution is off" until VI-B3 lands a
- * real flag this function can switch to reading instead.
+ * `/api/local-runner` exists and reports whether the embedded runner
+ * (`tack serve --with-runner`) is on, but that only answers for the
+ * embedded case — a remote runner can supply execution capacity with the
+ * embedded one off. `/api/executions` and its sibling routes are mounted
+ * unconditionally regardless of either (`frontend/e2e/run-with-agent.spec.ts`'s
+ * own header note: "an always-on operator surface, NOT gated behind
+ * TACK_ORCH_ENABLE"), so this function still uses the more general,
+ * directly-observable signal: zero active runners (local or remote) reads
+ * as "execution is off," since no runner ever enrolls until one is started.
  */
 export function isExecutionOff(activeRunnerCount: number): boolean {
   return activeRunnerCount === 0;
 }
 
-// ─── Project-default model (VI-C3's `Project` model-policy tier) ───────────
+// ─── Project-default model (the `Project` model-policy tier) ───────────────
 
 /** Human label for a project's configured model default — the "Project
  *  default — …" mode text the Model fieldset shows verbatim. `null` means
- *  the project has no opinion (VI-C3: `default_model` absent), which is
+ *  the project has no opinion (`default_model` absent), which is
  *  distinct from an explicit `Auto` choice. */
 export function describeProjectModelDefault(defaultModel: ProjectModelDefault | null | undefined): string | null {
   if (!defaultModel) return null;

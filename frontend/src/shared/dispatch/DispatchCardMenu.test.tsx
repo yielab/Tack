@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe('DispatchCardMenu', () => {
-  it('renders no trigger at all when unavailable — no dispatch controls when orchestration is off (TODO.md §0 rule 8)', () => {
+  it('renders no trigger at all when unavailable — no dispatch controls when orchestration is off', () => {
     const c = mount({ available: false });
     expect(c.querySelector('button')).toBeNull();
   });

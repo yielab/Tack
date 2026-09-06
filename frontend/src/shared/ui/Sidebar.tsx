@@ -17,7 +17,7 @@ import KbdHint from './KbdHint';
 import { useVocab } from '../vocab/useVocab';
 
 /** Just the one field the sidebar needs from `GET /api/settings/orchestration`
- *  (TODO.md Phase 39, card E2) — reachable even when orchestration is OFF, by
+ *  — reachable even when orchestration is OFF, by
  *  contract. A dedicated minimal shape rather than importing
  *  `features/settings/orchestrationSettings/api.ts`'s full `OrchestrationSettings`
  *  type: `shared/ui/**` is infrastructure every feature depends on, so it

@@ -34,13 +34,13 @@ type Step = 1 | 2 | 3 | 4;
  * outcome (`pod_created_link_failed`) this component renders as a warning
  * with a concrete next step, never as a red error.
  *
- * **Gating (TODO.md §0 rule 8 / rule 8's UI half).** `GET /api/control-planes`
+ * **Gating.** `GET /api/control-planes`
  * doubles as the "is orchestration even on" probe — see `api.ts`'s doc
  * comment on `listControlPlanes`. `orchAvailable()` is `false` while
  * loading and on *any* error, not just a 404 — the same conservative "if we
  * can't positively confirm it's on, don't show a privileged control"
  * posture `useAgentActivityMap.orchAvailable`/`ItemDetailDrawer`'s
- * `orchAvailable()` already use (card C4's precedent). Nothing below this
+ * `orchAvailable()` already use. Nothing below this
  * gate ever renders while it's `false`.
  *
  * **Confirmation, not a credential (see the Rust module doc for the full
@@ -70,9 +70,9 @@ const ProvisioningWizard: Component = () => {
   // component: an unguarded `controlPlanes.latest ?? []` inside this memo
   // silently stopped the whole resource's reactive graph from updating on
   // a 404/500, wedging the page on the loading skeleton forever with no
-  // console error — the exact failure shape card C4 already documented for
-  // a resource accessor called directly from a memo/JSX expression, see
-  // TODO.md §6 "C4"). These two memos are the only place either resource's
+  // console error — the same failure shape as any other
+  // resource accessor called directly from a memo/JSX expression). These
+  // two memos are the only place either resource's
   // value is read outside `.loading`/`.error`, so guarding here is enough.
   const controlPlaneList = createMemo(() =>
     controlPlanes.error !== undefined ? [] : (controlPlanes.latest ?? [])
@@ -117,7 +117,7 @@ const ProvisioningWizard: Component = () => {
   // Seed step 2/3 from the chosen template's `orchestration` defaults, if
   // it has one — a template that already declares a blueprint/budget/
   // verify command is exactly the "pipeline library" this wizard is meant
-  // to draw on (TODO.md task 37.3/37.4), not something the operator should
+  // to draw on, not something the operator should
   // have to re-type. Only applied on template *change*, so re-selecting
   // the same template never clobbers an edit the operator already made.
   createEffect(() => {

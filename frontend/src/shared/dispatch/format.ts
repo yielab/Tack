@@ -1,10 +1,9 @@
 // Pure interpretation helpers for dispatch outcomes. Isolated and
-// unit-tested because the whole point of this card (TODO.md Wave 3, C4) is
-// that "queued" / "policy-blocked" / "waiting-approval" are three distinct,
-// never-conflated outcomes — this is the one place that distinction is
-// decided, so every call site (item detail, the board card menu, the sprint
-// dispatch modal) renders it identically rather than each inventing its own
-// wording.
+// unit-tested because "queued" / "policy-blocked" / "waiting-approval" are
+// three distinct, never-conflated outcomes — this is the one place that
+// distinction is decided, so every call site (item detail, the board card
+// menu, the sprint dispatch modal) renders it identically rather than each
+// inventing its own wording.
 
 import type { BadgeTone } from '../ui/Badge';
 import type { DispatchItemResponse, SprintDispatchItemResponse, SprintDispatchSummary } from './api';
@@ -17,16 +16,15 @@ export interface DispatchOutcomeDescription {
 /**
  * Every known `outcome` (single-item, `DispatchItemResponse`) / `decision`
  * (sprint, `SprintDispatchItemResponse`) value, each with a tone that is
- * visually and semantically distinct — the headline correctness requirement
- * for this card. `waiting_approval` is deliberately `warning`, never
- * `success`: "rendering waiting-approval as success is a correctness bug,
- * not a wording nit" (this card's own brief). `already_in_flight` gets its
+ * visually and semantically distinct. `waiting_approval` is deliberately
+ * `warning`, never `success`: rendering waiting-approval as success is a
+ * correctness bug, not a wording nit. `already_in_flight` gets its
  * own `info` tone rather than folding into `dispatched` — the task WAS
  * already running before this click, a meaningfully different fact from
  * "this click just started it."
  *
- * The last three exist only on `SprintDispatchItemResponse.decision` (card
- * C3, reconciled 2026-08-05 — see `./api.ts`'s header comment):
+ * The last three exist only on `SprintDispatchItemResponse.decision` —
+ * see `./api.ts`'s header comment:
  * `waiting_on_dependencies` (a DAG blocker, not a policy/eligibility gate —
  * `neutral`, the same calm tone as the other "not yet, nothing wrong" states,
  * since most items in a sprint plan legitimately start here), `would_dispatch`
@@ -50,7 +48,7 @@ const OUTCOME: Record<string, DispatchOutcomeDescription> = {
 
 /** Title-cases an unrecognised raw value rather than dropping it — the same
  *  "shown as-is, never a hard failure" discipline the Rust side applies to
- *  every wire enum (TODO.md §1.2), extended to this frontend's own outcome
+ *  every wire enum, extended to this frontend's own outcome
  *  taxonomy in case a future backend version adds another value. */
 function titleCase(raw: string): string {
   return raw
@@ -66,7 +64,7 @@ export function describeDispatchOutcome(outcome: string): DispatchOutcomeDescrip
 /**
  * The "why" behind a single-item dispatch outcome — the specific thing that
  * makes "dispatch failed" useless and 'blocked by guardrail policy
- * "prompt-injection"' useful (this card's brief, verbatim). Returns `null`
+ * "prompt-injection"' useful. Returns `null`
  * when there's nothing more informative to say than the outcome label itself
  * already conveys.
  */
@@ -149,8 +147,7 @@ const SUMMARY_ORDER: { key: keyof SprintDispatchSummary; decision: string }[] = 
  * omitted so the summary row only shows what's actually present. Every
  * bucket stays separate — never merged into a single total — so a sentence
  * like "8 dispatched" can never be shown when three of those are actually
- * waiting on a human or a dependency (the exact misrepresentation this
- * card's brief calls out by name).
+ * waiting on a human or a dependency.
  */
 export function summarizeSprintDispatchCounts(
   summary: SprintDispatchSummary,

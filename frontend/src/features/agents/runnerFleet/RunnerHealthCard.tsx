@@ -5,23 +5,20 @@ import type { RunnerCapabilities } from '../../../shared/execution';
 import { formatCapacity, formatLabelChips } from './format';
 
 /**
- * A runner's connection state, as far as this build of Tack can actually
- * know it — deliberately NOT the richer `ControlPlaneHealth` union `../
- * format.ts`'s Docket-fleet sibling uses (`healthy | degraded | unreachable
- * | unknown | unconfigured`). There is no `GET /runners` (or any other
- * read-back) endpoint today (see `docs/agent-handoffs/part-iii/III-E2.md`
- * gap 1, confirmed again against `crates/tack-api/src/handlers/
- * runner_admin.rs::routes()` for this card — it registers only
- * enrollment/revocation POSTs), so Tack has no live heartbeat, capability
- * snapshot, or capacity reading for any runner to grade against. The only
- * two states this card can honestly produce today are `unconfirmed`
- * (enrolled this browser session; connection status unknown) and
- * `unconfigured` (used for a runner that was revoked, or a form filled in
- * without ever calling enroll — a placeholder identity). `stale` and
- * `healthy` are kept in the type — and fully exercised by this card's own
- * tests — purely so this component needs no further design work the moment
- * a real read endpoint exists to drive them; nothing in the current UI ever
- * constructs a `healthy` value.
+ * A runner's connection state, as far as this component is ever fed it —
+ * deliberately NOT the richer `ControlPlaneHealth` union `../format.ts`'s
+ * Docket-fleet sibling uses (`healthy | degraded | unreachable | unknown |
+ * unconfigured`). `GET /runners` exists and reports a live heartbeat,
+ * capability snapshot, and capacity for every runner (`AgentsPage.tsx`,
+ * `RunWithAgentModal.tsx` both read it), but this component is only ever
+ * mounted from `EnrollmentPanel.tsx`'s session-local roster, which does not
+ * call it. So the only two states this component actually produces today are
+ * `unconfirmed` (enrolled this browser session; connection status unknown)
+ * and `unconfigured` (used for a runner that was revoked, or a form filled
+ * in without ever calling enroll — a placeholder identity). `stale` and
+ * `healthy` are kept in the type — and fully exercised by this file's own
+ * tests — so this component needs no further design work if a caller ever
+ * feeds it real capability data; nothing does today.
  */
 export type RunnerConnectionStatus = 'unconfirmed' | 'stale' | 'healthy' | 'unconfigured';
 
@@ -51,20 +48,20 @@ const FEATURE_LABEL: Record<FeatureName, string> = {
 export interface RunnerHealthCardProps {
   name: string;
   runnerId: string;
-  /** The ONLY input this card's health badge reads. Capability/capacity data
+  /** The ONLY input this component's health badge reads. Capability/capacity data
    *  below is display-only and must never upgrade the badge — see this
    *  file's `RunnerHealthCard.test.tsx` for the adversarial proof (a runner
    *  reporting full capability support while `unconfirmed` still shows no
    *  "Healthy" badge). */
   connectionStatus: RunnerConnectionStatus;
   /** Why `connectionStatus` is what it is — always populated, never blank,
-   *  so an operator is never left guessing (TODO.md III.2 rule 7). */
+   *  so an operator is never left guessing. */
   connectionReason: string;
   /** `null` when no capacity was ever recorded for this identity (e.g. a
    *  revoked runner this session never captured capacity for). */
   capacity: { total: number; available: number } | null;
   labels: unknown;
-  /** `null` in every case this card can produce today — see this type's
+  /** `null` in every case this component can produce today — see this type's
    *  own doc comment. Wired so a future data source needs no further
    *  design work here. */
   capabilities: RunnerCapabilities | null;
@@ -73,9 +70,9 @@ export interface RunnerHealthCardProps {
 /**
  * Read-only summary card for one runner identity: health/capacity/protocol/
  * harness display plus per-feature support values, each with a visible
- * reason (III-E3's acceptance bar). Reused by both the session-local
- * enrolled-runners list and (once a `capabilities` value has somewhere real
- * to come from) `RunnerFleetSection.tsx`'s eventual live roster.
+ * reason. Used by the session-local enrolled-runners list; a caller that
+ * gets a real `capabilities` value from somewhere (e.g. `GET /runners`)
+ * needs no further design work here to show it.
  */
 const RunnerHealthCard: Component<RunnerHealthCardProps> = (props) => {
   const labelChips = () => formatLabelChips(props.labels);

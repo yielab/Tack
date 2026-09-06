@@ -19,10 +19,10 @@ export const AGENT_STATE_LABEL: Record<AgentChipState, string> = {
   failed: 'Failed',
 };
 
-/** Reuses `Badge`'s existing, already-AA-audited tones (TODO.md §6 "A10 —
- *  2026-08-04" fixed every tone's contrast across all six palette×mode
- *  combinations) — this chip introduces no new color pairing, so no fresh
- *  contrast audit is needed for it specifically. */
+/** Reuses `Badge`'s existing, already-AA-audited tones — every tone's
+ *  contrast is verified across all six palette×mode combinations — this
+ *  chip introduces no new color pairing, so no fresh contrast audit is
+ *  needed for it specifically. */
 export const AGENT_STATE_TONE: Record<AgentChipState, BadgeTone> = {
   queued: 'neutral',
   running: 'info',
@@ -51,8 +51,8 @@ export interface AgentStateChipProps {
 
 /**
  * The single shared "this item has agent activity" indicator — used by the
- * item-detail Agent Activity tab, and the Board/List/Table badges (TODO.md
- * card B5: "one shared AgentStateChip ... no per-view reimplementation").
+ * item-detail Agent Activity tab, and the Board/List/Table badges, so there
+ * is one implementation and never a per-view reimplementation.
  * 5 visually distinct states, each a token-driven color plus a text label so
  * the distinction never relies on color alone (WCAG 1.4.1), following the
  * same pattern as `frontend/src/features/fleet/HealthChip.tsx`.

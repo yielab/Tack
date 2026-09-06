@@ -15,17 +15,16 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 
 /**
- * Part III's runner-fleet management surface (TODO.md III-E3): enrollment/
- * revocation, fleets, agent profiles, model profiles — everything
- * `frontend/src/shared/execution`'s `runnersApi`/`fleetsApi`/
- * `agentProfilesApi`/`modelProfilesApi` (card E2) expose a real, wired
- * endpoint for today. Deliberately does NOT include a live runner health/
- * capacity roster — no `GET /runners` endpoint exists to back one (see
- * `EnrollmentPanel.tsx`'s header comment and this card's handoff, gap 1).
+ * Runner-fleet management surface: enrollment/revocation, fleets, agent
+ * profiles, model profiles — everything `frontend/src/shared/execution`'s
+ * `runnersApi`/`fleetsApi`/`agentProfilesApi`/`modelProfilesApi` expose a
+ * real, wired endpoint for. `GET /runners` exists and is used elsewhere
+ * (`AgentsPage.tsx`, `RunWithAgentModal.tsx`), but the `EnrollmentPanel`
+ * tab mounted below does not call it — see that file's header comment.
  *
- * Mounted as the PRIMARY content of `FleetPage.tsx`, with the pre-existing
- * Part II Docket control-plane view moved into a clearly labeled legacy
- * section beneath it — see `FleetPage.tsx`'s own header comment for why.
+ * Mounted under the Agents page's Advanced section (`AdvancedSection.tsx`)
+ * — moved there from `FleetPage.tsx`, which now shows only the legacy
+ * Docket control-plane view; see that file's own header comment for why.
  */
 const RunnerFleetSection: Component = () => {
   const [active, setActive] = createSignal<TabId>('runners');

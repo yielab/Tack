@@ -9,7 +9,7 @@ import Avatar, {
   contrastRatio,
 } from './Avatar';
 
-// TODO.md §6 "A12": Avatar's per-name background is `hsl(hue, 45%, 50%)` — a
+// Avatar's per-name background is `hsl(hue, 45%, 50%)` — a
 // color generated outside the design-token system, independent of the
 // active palette/mode. Fixed white initials text used to fail WCAG AA
 // (4.5:1, this is small bold text, not "large text") against ~56% of the

@@ -105,8 +105,7 @@ const DecisionRow: Component<{
       <div class="flex flex-wrap items-center gap-2">
         {/* Pending / expired / resolved are visually AND semantically
             distinct — three different tones, three different labels, never
-            merged into one generic "decision" badge (this card's acceptance
-            bar names this explicitly). */}
+            merged into one generic "decision" badge. */}
         <Show when={isPending()}>
           <Badge tone="warning">Pending</Badge>
         </Show>
@@ -200,13 +199,12 @@ const DecisionRow: Component<{
 };
 
 /**
- * The decision inbox for one attempt (TODO.md III-F4: "decision inbox";
- * VI-C4: discovered, never typed). Fetches `GET
+ * The decision inbox for one attempt. Fetches `GET
  * /executions/{request_id}/attempts/{attempt_number}/decisions` and renders
  * every row with pending/expired/resolved kept visually and semantically
- * distinct (this card's acceptance bar, verbatim). A successful resolve
- * refetches the list so the resolved row's badge updates immediately,
- * without the caller managing any state of its own.
+ * distinct. A successful resolve refetches the list so the resolved row's
+ * badge updates immediately, without the caller managing any state of its
+ * own.
  *
  * The decision token field mirrors `features/approvals/ApprovalsPage.tsx`'s
  * own `TACK_ORCH_APPROVAL_TOKEN` entry exactly, including its reasoning:

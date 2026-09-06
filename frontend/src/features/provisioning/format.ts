@@ -4,9 +4,9 @@
 
 /** `null`/`undefined` cap means "no budget cap set" — distinct from a `0`
  *  cap. This is an operator-set ceiling, not a derived spend figure, so it
- *  does **not** carry the "estimated" qualifier TODO.md §0 rule 6 requires
- *  for `cost_usd_estimated` — same scoping `features/fleet/format.ts`'s
- *  `formatBudget` and card A4's handoff note both already establish
+ *  does **not** carry the "estimated" qualifier `cost_usd_estimated`
+ *  requires — same scoping `features/fleet/format.ts`'s
+ *  `formatBudget` already establishes
  *  (duplicated here rather than imported, per this codebase's established
  *  per-feature-file convention for small formatters). */
 export function formatBudgetCap(budgetUsd: number | null | undefined): string {

@@ -41,8 +41,8 @@ describe('approvalsApi.list', () => {
     // regression this guards against is that read creeping back in, not an
     // extra JSON key's mere presence on the wire (which never fails
     // `res.json()`). Uses a stand-in field name rather than the real
-    // retired one, so this file carries zero occurrences of it (the exact
-    // acceptance bar this card's retirement is checked against).
+    // retired one, so this file carries zero occurrences of the real field
+    // name that was removed.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ rows: [], approval_token_set: false }), { status: 200 })
     );

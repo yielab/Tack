@@ -1,9 +1,8 @@
-// Pure formatting/parsing helpers for the Part III runner-fleet UI
-// (TODO.md III-E3). Kept isolated and unit-tested, separate from
-// `../format.ts` (the pre-existing Part II Docket-fleet formatters) —
-// deliberately not shared, per III.0's vocabulary rule: `Runner`/`Fleet`
-// (this file) and Docket's `FleetAgent`/control-plane roster (`../format.ts`)
-// are different domain concepts that happen to reuse the word "fleet."
+// Pure formatting/parsing helpers for the runner-fleet UI. Kept isolated
+// and unit-tested, separate from `../format.ts` (the older Docket-fleet
+// formatters) — deliberately not shared: `Runner`/`Fleet` (this file) and
+// Docket's `FleetAgent`/control-plane roster (`../format.ts`) are different
+// domain concepts that happen to reuse the word "fleet."
 
 /** Optional JSON object field (`tool_policy`, `limits`, `default_policy`,
  *  `labels`, `capability_snapshot`) typed by the wire as `unknown`. Every

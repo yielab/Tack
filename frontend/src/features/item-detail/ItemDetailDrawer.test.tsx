@@ -42,7 +42,7 @@ function jsonOf(url: string): unknown {
   // (crates/tack-api/src/handlers/items.rs) that api.items.get() unwraps.
   if (url.endsWith('/api/items/item-1')) return { item: ITEM, roles: [], dependencies: [] };
   if (url.includes('/sprints')) return [];
-  // `ExecutionStoreProvider` (TODO.md III-E4) loads this once on mount —
+  // `ExecutionStoreProvider` loads this once on mount —
   // an empty, well-formed list so `store.ts#loadList` has real data to
   // iterate over rather than tripping on an undefined `data.data`.
   if (url.includes('/executions')) return { protocol_version: 1, data: [] };

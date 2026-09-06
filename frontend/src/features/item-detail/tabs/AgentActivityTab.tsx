@@ -13,9 +13,9 @@ import {
 export interface AgentActivityTabProps {
   /** Pre-fetched by `ItemDetailDrawer` (not self-fetched, unlike the other
    *  tabs) because the drawer must already know whether this item has any
-   *  agent activity *before* deciding whether to show the tab at all
-   *  (TODO.md card B5: "an item with no agent activity shows no chip and no
-   *  empty tab") — fetching once at the drawer and passing down here avoids
+   *  agent activity *before* deciding whether to show the tab at all: an
+   *  item with no agent activity shows no chip and no
+   *  empty tab — fetching once at the drawer and passing down here avoids
    *  a second, redundant request for the same data. */
   activity: ItemAgentActivity | null | undefined;
   loading: boolean;
@@ -31,8 +31,7 @@ function pendingApprovals(approvals: ItemAgentApproval[]): ItemAgentApproval[] {
 }
 
 /** Timeline of hops/tool-calls/verdicts/rework/approvals/tokens/estimated
- *  cost for the item's `orch_tasks` rows, grouped by attempt, newest first
- *  (roadmap.md Task 34.8 / TODO.md card B5). */
+ *  cost for the item's `orch_tasks` rows, grouped by attempt, newest first. */
 const AgentActivityTab: Component<AgentActivityTabProps> = (props) => {
   // Sorted defensively (highest `attempt` number first) rather than trusting
   // the wire order — `attempt` is a monotonically increasing per-item counter
@@ -54,7 +53,7 @@ const AgentActivityTab: Component<AgentActivityTabProps> = (props) => {
       // Sum only known costs; an attempt still queued (never costed) has
       // `cost_usd_estimated: null` and must not be treated as a real $0 —
       // same "never a confident-looking zero" discipline the Fleet view
-      // applies (TODO.md §6 "A5 — 2026-08-04").
+      // applies.
       costKnown: list.some((a) => a.cost_usd_estimated != null),
       costUsd: list.reduce((n, a) => n + (a.cost_usd_estimated ?? 0), 0),
       // A pricing-snapshot date only means something once one exists; today
@@ -124,7 +123,7 @@ const AgentActivityTab: Component<AgentActivityTabProps> = (props) => {
             </span>
           </section>
 
-          {/* Honesty notice for B3's retention sweep (TODO.md card B6/B7):
+          {/* Honesty notice for the retention sweep:
               `events_truncated` means "this item has an attempt old enough
               that some event history may have been aged out," not "N events
               were deleted" — that count is unknowable from the daily

@@ -40,7 +40,7 @@ describe('FleetsPanel', () => {
     await flush();
     expect(container.textContent).toContain('backend-fleet');
     expect(container.textContent).toContain('cap 3');
-    expect(container.textContent).toMatch(/Membership isn't readable/);
+    expect(container.textContent).toMatch(/can't show or edit which runners belong/);
   });
 
   it('shows "no concurrency cap" rather than a bare 0 or blank for a null limit', async () => {

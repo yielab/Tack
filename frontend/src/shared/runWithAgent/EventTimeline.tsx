@@ -46,14 +46,11 @@ const EventRow: Component<{ event: EventSummary }> = (props) => (
 );
 
 /**
- * The normalized event timeline for one attempt (TODO.md III-F4: "normalized
- * timeline"), reading `GET /executions/{id}/attempts/{n}/events` — real,
- * mounted, added by card III-E6 and left unwired for the frontend (that
- * card's own handoff, "Schema/API/contract change requested" item 5). Oldest
- * first, matching the handler's own documented ordering; renders every
- * fetch outcome (loading/empty/error) explicitly rather than papering over
- * a gap the way the pre-III-F4 `ExecutionTimeline.tsx` had to for the whole
- * attempts surface.
+ * The normalized event timeline for one attempt, reading
+ * `GET /executions/{id}/attempts/{n}/events`. Oldest first, matching the
+ * handler's own documented ordering; renders every fetch outcome
+ * (loading/empty/error) explicitly rather than papering over a gap the way
+ * `ExecutionTimeline.tsx` once had to for the whole attempts surface.
  */
 const EventTimeline: Component<EventTimelineProps> = (props) => {
   const [events] = createResource(

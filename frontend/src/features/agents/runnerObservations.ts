@@ -35,8 +35,8 @@ export function findThisMachineRunner(runners: readonly RunnerSummary[]): Runner
 /** Active runners that are not this machine's own — "on, other machines" in
  *  step 1. Counts every `state === 'active'` row regardless of how recent
  *  its heartbeat is: staleness has no agreed threshold anywhere else in
- *  this tree, and inventing one here would be exactly the kind of
- *  hard-coded status the card's own stop rule forbids. A caller that wants
+ *  this tree, and inventing one here would be a hard-coded status this
+ *  codebase's rules forbid. A caller that wants
  *  to show staleness can read `last_heartbeat_at` directly. */
 export function countOtherActiveRunners(runners: readonly RunnerSummary[]): number {
   return runners.filter((r) => r.state === 'active' && !isThisMachineRunner(r)).length;

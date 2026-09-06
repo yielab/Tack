@@ -177,7 +177,7 @@ describe('createBoardSocket', () => {
     sock.close();
   });
 
-  it('acceptance bar: an unrecognised event type on the wire is forwarded, not thrown', () => {
+  it('an unrecognised event type on the wire is forwarded, not thrown', () => {
     const sock = createBoardSocket('p1', { WebSocketImpl: WS });
     latest().open();
     const seen: unknown[] = [];

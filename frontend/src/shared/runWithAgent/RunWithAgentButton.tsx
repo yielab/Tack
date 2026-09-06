@@ -14,14 +14,14 @@ export interface RunWithAgentButtonProps {
   projectId: string;
   /** Icon-only trigger for tight spaces (Board card header, Sprint lane
    *  row) — visually and structurally distinct from `shared/dispatch/
-   *  DispatchCardMenu.tsx`'s "⋮" kebab menu, per III.0's vocabulary rule:
-   *  this is a single, explicit "run" action, not a menu that happens to
-   *  contain one. `false` renders a labeled button (item-detail). */
+   *  DispatchCardMenu.tsx`'s "⋮" kebab menu: this is a single, explicit
+   *  "run" action, not a menu that happens to contain one. `false` renders
+   *  a labeled button (item-detail). */
   compact?: boolean;
   /** Shows a small badge, next to the trigger, for the item's most recent
    *  execution request state — fed by the shared execution store, never a
-   *  second fetch. Off by default; only the Board card mounts it, since
-   *  that is the one host this card's brief names. Clicking it opens the
+   *  second fetch. Off by default; only the Board card mounts it today.
+   *  Clicking it opens the
    *  item to its Execution tab (`?item=<id>&tab=execution`), the same tab
    *  a successful create switches item-detail to via `onCreated`. */
   showStateChip?: boolean;
@@ -34,8 +34,7 @@ export interface RunWithAgentButtonProps {
  * item-detail, Sprint) mounts to open `RunWithAgentModal` — kept separate
  * from the modal itself so each host only needs one import and one prop set,
  * and so the open/close signal never leaks into a host component's own
- * state (TODO.md III-E4's "bounded edits" instruction: hosts get an entry
- * point and a slot, not a redesign).
+ * state: a host gets an entry point and a slot, not a redesign.
  */
 const RunWithAgentButton: Component<RunWithAgentButtonProps> = (props) => {
   const [open, setOpen] = createSignal(false);

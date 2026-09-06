@@ -11,22 +11,17 @@ export interface ExecutionTimelineProps {
 }
 
 /**
- * The "request/attempt timeline" + "cancel/reconcile controls" this card's
- * task list asks for (TODO.md III-E4). Reads exclusively through E2's shared
- * `useExecutionStore()` — no second fetch, no local cache — so this
- * component's view of a request is always the same one the "Run with agent"
- * modal and every other mounted consumer see (III-E2's "one consistent
- * state" acceptance bar).
+ * The request/attempt timeline plus cancel/reconcile controls. Reads
+ * exclusively through the shared `useExecutionStore()` — no second fetch,
+ * no local cache — so this component's view of a request is always the
+ * same one the "Run with agent" modal and every other mounted consumer see.
  *
  * Renders every gap in the underlying data HONESTLY rather than papering
  * over it: `attemptsFor()` is an explicit state machine (idle / loading /
  * ready / error — see `store.ts`'s own header comment), so a genuinely
  * empty attempt list is never conflated with "still loading" or "the fetch
- * failed". `GET /executions/{id}/attempts` (card III-E6) is now wired in
- * (card III-F4) — this component used to show a typed `not_available`
- * placeholder here (see `docs/agent-handoffs/part-iii/III-E2.md`, Gap 2,
- * and `III-E6.md`'s "mechanical follow-up" note); that placeholder is gone
- * now that the route is real.
+ * failed". `GET /executions/{id}/attempts` is wired in, so this component
+ * shows real attempt data rather than a typed `not_available` placeholder.
  */
 const ExecutionTimeline: Component<ExecutionTimelineProps> = (props) => {
   const store = useExecutionStore();
@@ -111,11 +106,10 @@ const RequestRow: Component<{ record: ExecutionRequestRecord }> = (props) => {
     }
   };
 
-  // "An ambiguous (needs_operator) state requires explicit operator action,
-  // never an automatic silent retry" (this card's own acceptance bar): the
-  // recovery key and reason are always typed in by hand, never pre-filled or
-  // defaulted — there is no "reconcile" button that fires with zero
-  // arguments.
+  // An ambiguous (needs_operator) state requires explicit operator action,
+  // never an automatic silent retry: the recovery key and reason are always
+  // typed in by hand, never pre-filled or defaulted — there is no
+  // "reconcile" button that fires with zero arguments.
   const reconcile = async (e: Event) => {
     e.preventDefault();
     const s = summary();
@@ -178,8 +172,8 @@ const RequestRow: Component<{ record: ExecutionRequestRecord }> = (props) => {
         )}
       </Show>
 
-      {/* Attempt timeline — real data now (card III-F4 wired the endpoint
-          card III-E6 added). Every fetch state is rendered explicitly. */}
+      {/* Attempt timeline — real data, from a wired endpoint.
+          Every fetch state is rendered explicitly. */}
       <Show when={attempts().status === 'loading'}>
         <p class="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
           Loading attempts…

@@ -60,11 +60,11 @@ describe('useAgentActivityMap', () => {
     dispose();
   });
 
-  // Card G1: `orchAvailable()`'s own behavior is unchanged by this card —
-  // only its doc comment's claim about what it's safe to gate on moved (see
-  // the doc comment above `orchAvailable` in `useAgentActivityMap.ts`). This
-  // locks in the one thing every remaining caller (e.g. `Sprints.tsx`,
-  // gating "is there bulk activity data to show at all") still needs true.
+  // `orchAvailable()`'s own behavior does not change based on what it's
+  // safe to gate on (see the doc comment above `orchAvailable` in
+  // `useAgentActivityMap.ts`). This locks in the one thing every remaining
+  // caller (e.g. `Sprints.tsx`, gating "is there bulk activity data to show
+  // at all") still needs true.
   it('orchAvailable reflects only "did the bulk fetch resolve without error" — false while loading, true once it succeeds', async () => {
     let orchAvailableNow: () => boolean = () => false;
     function HostWithAvailability() {

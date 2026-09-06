@@ -6,12 +6,10 @@ import { ExecutionStoreProvider } from '../shared/state/executionContext';
 // `ExecutionStoreProvider` wraps the whole router so Board (under
 // `WorkLayout`), Sprints (also under `WorkLayout`), and `ItemDetailDrawer`
 // (mounted at the `Layout` root, a WorkLayout *sibling*) all share one
-// `createExecutionStore()` instance — TODO.md III-E2's own handoff flagged
-// this Provider as a deliberate omission for "whichever card first needs it
-// in a component tree" (III-E4). `Layout` itself is the app shell shared by
-// every unrelated feature (Projects, Templates, Fleet, Settings, ...), so
+// `createExecutionStore()` instance. `Layout` itself is the app shell shared
+// by every unrelated feature (Projects, Templates, Fleet, Settings, ...), so
 // wrapping here — the smallest common ancestor that is NOT that shared
-// internals file — keeps this card's footprint to a two-line, purely
+// internals file — keeps the footprint to a two-line, purely
 // additive wrap instead of editing `Layout.tsx`'s body.
 function App() {
   return (

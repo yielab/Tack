@@ -49,9 +49,9 @@ const tdStyle = {
 };
 
 /** Shown when orchestration is off — the default state for every existing
- *  install, since orchestration is off unless an operator opts in (TODO.md
- *  §0 rule 8). Links to the guided setup (card E2, Phase 39) instead of
- *  naming an environment variable to set by hand. */
+ *  install, since orchestration is off unless an operator opts in. Links
+ *  to the guided setup instead of naming an environment variable to set
+ *  by hand. */
 const OrchDisabledEmptyState: Component = () => {
   const navigate = useNavigate();
   return (
@@ -103,12 +103,12 @@ const LoadingRows: Component = () => (
 
 /**
  * Fleet-wide approvals inbox — the surface where a human resolves the
- * approvals currently blocking an agent fleet (TODO.md Wave 4, card D1,
- * tasks 36.1/36.2). Oldest-requested-first: docket approvals fail closed on
- * timeout, so the longest-waiting one has a real cost to leaving it
- * unresolved. Uncorrelated approvals (docket raised one but Tack couldn't
- * attribute it to an item) are shown alongside correlated ones, never
- * filtered out — see `api.ts`'s header comment.
+ * approvals currently blocking an agent fleet. Oldest-requested-first:
+ * docket approvals fail closed on timeout, so the longest-waiting one has
+ * a real cost to leaving it unresolved. Uncorrelated approvals (docket
+ * raised one but Tack couldn't attribute it to an item) are shown
+ * alongside correlated ones, never filtered out — see `api.ts`'s header
+ * comment.
  *
  * **Why this page polls instead of relying only on the realtime
  * `ApprovalPending` WebSocket event (card B4).** That event is delivered

@@ -1,13 +1,11 @@
-// Wire-format boundary for the app-level Settings → Orchestration page
-// (TODO.md Phase 39, card E2 — "make the agent-factory control center
-// discoverable"). Every assumption about `GET/PUT /api/settings/orchestration`
+// Wire-format boundary for the app-level Settings → Orchestration page —
+// makes the agent-factory control center discoverable. Every assumption
+// about `GET/PUT /api/settings/orchestration`
 // and the `/control-planes` admin CRUD lives in this one file —
 // `OrchestrationSettingsSection.tsx`, `ControlPlanesManager.tsx`, and
 // `ProjectLinker.tsx` only ever import types and functions from here, never
-// construct a request body or read a raw wire field themselves. Mirrors the
-// pattern A5 set for `features/fleet/api.ts` and every later feature
-// directory repeated (D1's `features/approvals/api.ts`, D2's
-// `features/settings/orchestration/api.ts`, D5's `features/economics/api.ts`).
+// construct a request body or read a raw wire field themselves, the same
+// pattern every other feature's `api.ts` in this tree follows.
 //
 // ── The `GET/PUT /api/settings/orchestration` contract ──────────────────────
 //
@@ -34,25 +32,25 @@
 // would then read `"database"` and `enabled` would be `false`, with
 // `env_default: true` still telling the operator what the environment alone
 // would have produced. `OrchestrationSettingsSection.tsx` surfaces both,
-// per the card's explicit instruction ("an operator whose deployment sets
-// TACK_ORCH_ENABLE should understand where the value came from").
+// so an operator whose deployment sets
+// TACK_ORCH_ENABLE understands where the value came from.
 //
 // This endpoint's own fetch failing is NOT treated as "orchestration is
 // disabled" the way every other orchestration route is (see
 // `shared/api/client.ts#isOrchestrationDisabledError`) — by contract it
-// always answers 200. A failure here means either the request genuinely
-// couldn't reach the server, or (transiently, while E1's card is still
-// landing in the same session) the route doesn't exist yet. Either way the
-// section renders a distinct "couldn't load" retry state, never the
+// always answers 200. A failure here means the request genuinely
+// couldn't reach the server, so the section renders a distinct
+// "couldn't load" retry state, never the
 // "disabled" empty state the rest of the app uses.
 //
 // ── Control-plane admin (`/control-planes`) ──────────────────────────────
 //
 // `POST/GET/PATCH/DELETE /api/control-planes(/{id})` already exist —
-// card A4 (Wave 1) built them, `crates/tack-api/src/handlers/orch.rs`'s
+// `crates/tack-api/src/handlers/orch.rs`'s
 // `create_control_plane`/`list_control_planes`/`get_control_plane`/
-// `update_control_plane`/`delete_control_plane` — but until this card no page
-// ever called anything past `GET /control-planes` (D2's `LinkForm.tsx` reads
+// `update_control_plane`/`delete_control_plane` — but before this file no
+// page ever called anything past `GET /control-planes` (`LinkForm.tsx`
+// reads
 // the list to populate a picker; its own header note says registering one is
 // still a `curl POST /api/control-planes` away). `ControlPlaneDetail` below
 // is copied field-for-field from `ControlPlaneResponse`
@@ -130,7 +128,7 @@ export interface ControlPlaneDetail {
   /** What this plane can actually do — `null` only in the `'unconfigured'`
    *  health case: this build of Tack has no adapter for `kind` at all, so
    *  there was nothing to ask. `ControlPlanesManager.tsx` reads this,
-   *  never `kind`, to decide what to show (TODO.md §II.0 rule 6). */
+   *  never `kind`, to decide what to show. */
   capabilities: Capabilities | null;
   created_at: string;
   updated_at: string;

@@ -16,15 +16,13 @@ function formatSize(bytes: number): string {
 }
 
 /**
- * One manifested artifact, with its own real download action (TODO.md
- * III-F4: "one generated-artifact integration"; VI-C4: discovered, never
- * typed). Calls the real, mounted `GET .../artifacts/{artifact_id}/content`
- * (III-F2, wired by III-F6/F6a) via `fetch` + `Blob` rather than a plain
- * `<a href download>` (the pattern `FilesTab.tsx` uses for ordinary
- * attachments) — an anchor tag cannot attach the `Authorization` bearer
- * header this operator route requires, and more importantly cannot report
- * *why* a download failed, and this card's acceptance bar is explicit:
- * "artifact failure visible".
+ * One manifested artifact, with its own real download action. Calls the
+ * real, mounted `GET .../artifacts/{artifact_id}/content` via `fetch` +
+ * `Blob` rather than a plain `<a href download>` (the pattern
+ * `FilesTab.tsx` uses for ordinary attachments) — an anchor tag cannot
+ * attach the `Authorization` bearer header this operator route requires,
+ * and more importantly cannot report *why* a download failed: artifact
+ * failure must stay visible.
  *
  * Two failure states are kept visually AND semantically distinct, matching
  * `artifact_download.rs`'s own documented distinction: a 404 (no manifest
@@ -91,7 +89,7 @@ const ArtifactRow: Component<{ requestId: string; attemptNumber: number; artifac
       </div>
 
       {/* Every outcome — success and each distinct failure — is a visible,
-          named state (acceptance bar: "artifact failure visible"). */}
+          named state: artifact failure stays visible. */}
       <Show when={status() === 'done'}>
         <p class="text-xs" style={{ color: 'var(--color-success-700)' }}>
           Downloaded.
@@ -118,8 +116,8 @@ const ArtifactRow: Component<{ requestId: string; attemptNumber: number; artifac
 };
 
 /**
- * Every artifact manifested for one attempt (TODO.md III-F4), reading real
- * data from `GET /executions/{request_id}/attempts/{attempt_number}/artifacts`
+ * Every artifact manifested for one attempt, reading real data from
+ * `GET /executions/{request_id}/attempts/{attempt_number}/artifacts`
  * — no artifact id is ever typed by an operator.
  */
 const ArtifactDownloadPanel: Component<ArtifactDownloadPanelProps> = (props) => {

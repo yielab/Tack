@@ -1,45 +1,41 @@
 // Wire-format boundary for the Fleet view.
 //
-// `GET /api/fleet` does not exist yet — agent A4 is building it concurrently
-// (TODO.md Wave 1, card A4: "Config + control-plane API"). Every assumption
+// `GET /api/fleet` (`crates/tack-api/src/router.rs`'s `orch::get_fleet`) is
+// real and confirmed field-for-field against the handler. Every assumption
 // about the response shape is isolated to this one file: the types below plus
-// the single `fleetApi.list()` fetch function. When A4's endpoint lands,
-// reconciling the frontend means editing THIS FILE ONLY — never
+// the single `fleetApi.list()` fetch function. If the endpoint's shape ever
+// changes, reconciling the frontend means editing THIS FILE ONLY — never
 // `FleetRow.tsx`, `FleetPage.tsx`, `HealthChip.tsx`, or `format.ts`, which all
 // consume the `FleetRow` type, not the wire response directly.
 //
-// Derived from the two frozen sources named in the A5 card (TODO.md §Wave 1):
+// Derived from two sources:
 //
-//  1. `crates/tack-orch/src/lib.rs` (frozen by W0-A) — `FleetStatus`,
-//     `FleetAgent`, `Health`, mirroring docket's own `/status.json`. See
-//     TODO.md §6 "W0-A — 2026-08-04" for the exact frozen field list: a
+//  1. `crates/tack-orch/src/lib.rs` — `FleetStatus`,
+//     `FleetAgent`, `Health`, mirroring docket's own `/status.json`. A
 //     `FleetAgent` carries `id, name, kind, scope, model, registered,
 //     bindings, last_activity, cost_usd_estimated ("costUsd" on the wire),
 //     budget_usd`.
 //  2. `crates/tack-db/src/migrations.rs` migrations 019 (`control_planes`:
 //     name, kind, base_url, health, last_seen_at, consecutive_failures,
 //     api_version) and 020 (`orch_links`: project_id, control_plane_id,
-//     blueprint, auto_dispatch, budget_usd, status_map) — see TODO.md §6
-//     "W0-B — 2026-08-04" for final column names.
+//     blueprint, auto_dispatch, budget_usd, status_map).
 //
-// TODO.md §2 describes `GET /api/fleet` as "the Fleet view's aggregate" — my
-// reading is one row per Tack project that has an `orch_links` row, merging:
-// the link, its linked `control_planes` row (health, last_seen_at, ...), and
-// a snapshot of that plane's live `FleetStatus` (roster, cost, budget). No
-// real endpoint exists to verify this against, so `FleetRow` below is a
-// best-guess snake_case projection — A4 should treat it as the reconciliation
-// target, not a spec to match blindly.
+// `GET /api/fleet` is the Fleet view's aggregate: one row per Tack project
+// that has an `orch_links` row, merging the link, its linked
+// `control_planes` row (health, last_seen_at, ...), and a snapshot of that
+// plane's live `FleetStatus` (roster, cost, budget). `FleetRow` below is
+// the confirmed snake_case projection of that response.
 
 import { request, isOrchestrationDisabledError } from '../../shared/api/client';
 import type { Capabilities } from '../../shared/orch/capabilities';
 
-/** Mirrors the reconciler's health state machine (TODO.md card A2):
+/** Mirrors the reconciler's health state machine:
  *  `healthy` → `degraded` (3 consecutive poll failures) → `unreachable` (10).
  *  Recovery is immediate on a single success. `unknown` covers a plane that
  *  has been registered but has not completed a first poll yet — it is
  *  visually treated the same as `unreachable` (no trustworthy data), just
  *  with different copy ("not yet connected" vs "last seen …"). `unconfigured`
- *  (card G1) is the fifth state: this build of Tack could not build a live
+ *  is the fifth state: this build of Tack could not build a live
  *  adapter for the plane's `kind` at all — most commonly a restored backup,
  *  whose `secrets` column comes back `NULL` — so the reconciler never even
  *  attempted a poll. Distinct from `unknown` (registered, poll pending) and
@@ -80,7 +76,7 @@ export interface FleetRow {
    *  `'unconfigured'` health case (`ControlPlaneResponse.capabilities` /
    *  `FleetEntry.capabilities` on the wire): this build of Tack has no
    *  adapter for the plane's `kind` at all, so there was nothing to ask.
-   *  Card G1's whole point — every gated control in this row reads THIS
+   *  Every gated control in this row reads THIS
    *  field, never the `control_plane_kind` string above it. */
   capabilities: Capabilities | null;
   gateway: FleetGatewayState;
@@ -88,7 +84,7 @@ export interface FleetRow {
   /** Most recent `FleetAgent.last_activity` across the roster, RFC3339, or
    *  `null` if no agent has ever run. */
   last_activity_at: string | null;
-  /** Token counts are the primary measure (TODO.md §0 rule 6) — always a
+  /** Token counts are the primary measure — always a
    *  number, never absent. A `0` is only meaningful when `health ===
    *  'healthy'`; the row component must not render it as fact otherwise. */
   tokens_in: number;
@@ -101,8 +97,8 @@ export interface FleetRow {
    *  reports one. RFC3339 or a plain date string. */
   pricing_snapshot_at: string | null;
   /** `orch_links.budget_usd` — a user-set cap, deliberately NOT suffixed
-   *  `_estimated` (see TODO.md §6 "W0-B" handoff: it's a config value, not a
-   *  derived spend figure). */
+   *  `_estimated`: it's a config value, not a
+   *  derived spend figure. */
   budget_usd: number | null;
   pending_approval_count: number;
 }
@@ -116,7 +112,7 @@ export interface FleetResponse {
  *  nothing registered yet) and from any other failure (network error, 500,
  *  ...). The Fleet page renders a different empty state for each case.
  *  Delegates to `shared/api/client.ts#isOrchestrationDisabledError`, the one
- *  place this check is actually defined (TODO.md card E2) — this export
+ *  place this check is actually defined — this export
  *  stays so every existing caller (`FleetPage.tsx`) keeps working unchanged. */
 export function isOrchDisabled(err: unknown): boolean {
   return isOrchestrationDisabledError(err);

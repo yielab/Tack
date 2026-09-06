@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render } from 'solid-js/web';
+import { MemoryRouter, Route } from '@solidjs/router';
 import { ExecutionStoreProvider } from '../../shared/state/executionContext';
 import AgentsPage from './AgentsPage';
 
@@ -40,9 +41,16 @@ function mount() {
   document.body.appendChild(container);
   const dispose = render(
     () => (
-      <ExecutionStoreProvider>
-        <AgentsPage />
-      </ExecutionStoreProvider>
+      <MemoryRouter>
+        <Route
+          path="/"
+          component={() => (
+            <ExecutionStoreProvider>
+              <AgentsPage />
+            </ExecutionStoreProvider>
+          )}
+        />
+      </MemoryRouter>
     ),
     container,
   );

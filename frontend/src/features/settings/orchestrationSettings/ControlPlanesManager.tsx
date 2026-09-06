@@ -17,16 +17,16 @@ export interface ControlPlanesManagerProps {
 }
 
 /**
- * Step 2 of the guided setup: register and manage control planes
- * (TODO.md Phase 39, card E2). `POST/GET/PATCH/DELETE /api/control-planes`
- * have been reachable since card A4 (Wave 1), but before this card the only
- * UI that ever called past a plain `GET` was D2's `LinkForm.tsx` picker —
+ * Step 2 of the guided setup: register and manage control planes.
+ * `POST/GET/PATCH/DELETE /api/control-planes`
+ * have been reachable, but before this the only
+ * UI that ever called past a plain `GET` was `LinkForm.tsx`'s picker —
  * registering one meant a `curl POST /api/control-planes` (Fleet's own
  * pre-existing empty state literally said so). This is the first real form
  * for it.
  *
  * **No synchronous "test connection" endpoint exists.** docket's HTTP
- * surface (confirmed by card D2's read of `serve.py`, TODO.md §6) has
+ * surface (confirmed by reading `serve.py` directly) has
  * nothing that lets Tack probe a URL+token pair on demand — the only real
  * connectivity signal is the reconciler's own poll, which starts on the
  * very next tick after registration. So "testing" here means something
@@ -194,9 +194,9 @@ const ControlPlanesManager: Component<ControlPlanesManagerProps> = (props) => {
                         {cp.last_seen_at ? ` Last seen ${elapsedSince(cp.last_seen_at)} ago.` : ''}
                       </Show>
                     </p>
-                    {/* Capability negotiation (card G1): read straight from
-                        the wire payload, never from `cp.kind` — TODO.md
-                        §II.0 rule 6. `capabilities` is only `null` in the
+                    {/* Capability negotiation: read straight from
+                        the wire payload, never from `cp.kind`.
+                        `capabilities` is only `null` in the
                         `unconfigured` health case above, where there's
                         nothing to ask. Pause and model selection are the two
                         an operator configuring a plane most needs to know

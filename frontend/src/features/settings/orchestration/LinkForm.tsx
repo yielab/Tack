@@ -12,14 +12,13 @@ export interface LinkFormProps {
 }
 
 /**
- * Minimal "link this project to a control plane" form — the one piece of UI
- * that didn't exist anywhere before card D2: `PUT /api/projects/{id}/orch-link`
- * has been reachable since card A4 (Wave 1), but no page ever called it, so a
- * fresh project had no way to get budget/policy data populated at all short
- * of `curl`. Deliberately minimal: control plane + remote project name +
- * optional budget cap. `status_map`/`auto_dispatch`/`blueprint` are left at
- * their defaults (no dispatch policy configured) — that's the Wave 3 dispatch
- * UI's territory, not this card's.
+ * Minimal "link this project to a control plane" form —
+ * `PUT /api/projects/{id}/orch-link` was reachable but no page ever called
+ * it, so a fresh project had no way to get budget/policy data populated at
+ * all short of `curl`. Deliberately minimal: control plane + remote project
+ * name + optional budget cap. `status_map`/`auto_dispatch`/`blueprint` are
+ * left at their defaults (no dispatch policy configured) — that's the
+ * dispatch UI's territory, not this form's.
  */
 const LinkForm: Component<LinkFormProps> = (props) => {
   const navigate = useNavigate();

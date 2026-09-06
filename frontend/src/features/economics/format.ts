@@ -1,7 +1,7 @@
 // Formatting + interpretation helpers for the unit-economics dashboard. Every money
 // figure goes through `formatEstimatedCost` from `shared/agentActivity/format.ts` —
-// reused verbatim, per TODO.md card D5's explicit instruction ("D2 reused it
-// verbatim rather than writing a second; do the same") — not reimplemented here.
+// reused verbatim, matching the Fleet view's own precedent for the identical
+// field, not reimplemented here.
 
 import { formatEstimatedCost, formatTokens } from '../../shared/agentActivity/format';
 import type { LeadTimeStat, ReworkStat } from './api';
@@ -24,9 +24,8 @@ export function formatRate(rate: number | null): string {
 /**
  * The lead-time summary line for one population ("agent" or "human"), honoring the
  * min-sample rule: below `MIN_SAMPLE_SIZE` this shows the raw durations instead of
- * an average that would overstate precision from a handful of items (TODO.md card
- * D5: "Decide a minimum below which you show the raw counts instead of a derived
- * ratio"). Never returns a bare number with no sample-size context.
+ * an average that would overstate precision from a handful of items. Never
+ * returns a bare number with no sample-size context.
  */
 export function describeLeadTime(stat: LeadTimeStat): string {
   if (stat.sample_count === 0) return 'no completed items yet';
@@ -54,9 +53,8 @@ export function describeRework(stat: ReworkStat): string {
 }
 
 /**
- * "Estimated cost per shipped item" — the cycle's headline number
- * (TODO.md: "Cost-per-completed-item by product line is the headline number of the
- * whole cycle") — withheld below the minimum sample size rather than shown as a
+ * "Estimated cost per shipped item" — the headline number: cost-per-completed-item
+ * by product line — withheld below the minimum sample size rather than shown as a
  * precise-looking figure from a handful of items. Always routes through
  * `formatEstimatedCost` so the "estimated" qualifier and pricing-snapshot caveat
  * survive even in this per-item form.

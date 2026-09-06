@@ -28,11 +28,11 @@ const tdStyle = {
 };
 
 /**
- * One breakdown table — reused for both `by_project_type` and `by_item_type`
- * (TODO.md task 38.2: "Slice every metric by project_type and item_type"). Tokens
- * render first and more prominently than the cost column (TODO.md §0 rule 6).
- * `cost_usd_estimated_per_item` — "the headline number of the whole cycle" per the
- * card — always goes through `describeCostPerItem`, which withholds it below the
+ * One breakdown table — reused for both `by_project_type` and `by_item_type`,
+ * slicing every metric by that dimension. Tokens
+ * render first and more prominently than the cost column.
+ * `cost_usd_estimated_per_item` — the headline number — always goes through
+ * `describeCostPerItem`, which withholds it below the
  * stated minimum sample size rather than showing a number a handful of items can't
  * support.
  */

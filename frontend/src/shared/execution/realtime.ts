@@ -1,31 +1,29 @@
-// The execution domain's "one realtime subscription/invalidation path"
-// (TODO.md III-E2 task). Mirrors `shared/realtime/boardSocket.ts`'s public
-// shape (a status accessor, an `onEvent`-style subscribe returning an
-// unsubscribe function, and an idempotent teardown) so it reads as the same
-// kind of thing to a consumer — but see the honesty note below on why the
-// transport underneath is different.
+// The execution domain's one realtime subscription/invalidation path.
+// Mirrors `shared/realtime/boardSocket.ts`'s public shape (a status
+// accessor, an `onEvent`-style subscribe returning an unsubscribe function,
+// and an idempotent teardown) so it reads as the same kind of thing to a
+// consumer — but see the honesty note below on why the transport underneath
+// is different.
 //
 // **Why this is polling, not a WebSocket/SSE push channel.** `BoardEvent`
 // (`shared/types/index.ts`, backed by
 // `crates/tack-api/src/handlers/websocket.rs`) is the only realtime channel
 // that exists in this codebase today, and it is scoped to PM board changes
-// plus Part II's docket-orchestration mirror
+// plus an older docket-orchestration mirror
 // (`agent_run_updated`/`approval_pending` — see `boardSocket.test.ts`, and
-// `shared/agentActivity/api.ts`'s header comment on that same domain). Part
-// III's `execution_requests`/`execution_attempts` tables are a distinct
-// vocabulary (III.0: "`Item` != `ExecutionRequest` != `ExecutionAttempt`")
-// with **no push channel of their own anywhere in the backend** — reusing
-// `agent_run_updated` for this domain would be exactly the kind of
-// vocabulary collision III.0 warns against, since that event is specifically
-// about `orch_runs` rows, not `execution_attempts` rows. Rather than block
-// this card on a backend feature no other Wave-4 card owns, this module
-// implements the same subscribe/invalidate/dispose *contract* backed by a
-// bounded poll, so every acceptance bullet ("disposed exactly once",
-// consumers never re-invent invalidation) is met today, and a future
+// `shared/agentActivity/api.ts`'s header comment on that same domain). The
+// `execution_requests`/`execution_attempts` tables are a distinct
+// vocabulary — `Item` != `ExecutionRequest` != `ExecutionAttempt` — with
+// **no push channel of their own anywhere in the backend**: reusing
+// `agent_run_updated` for this domain would collide two unrelated
+// vocabularies, since that event is specifically about `orch_runs` rows,
+// not `execution_attempts` rows. Rather than block on a backend feature
+// this module doesn't own, it implements the same subscribe/invalidate/
+// dispose *contract* backed by a bounded poll, so a caller gets "disposed
+// exactly once" and never has to re-invent invalidation, and a future
 // `execution_updated`-style `BoardEvent` variant (or a dedicated execution
 // WebSocket) can replace the interior of {@link createExecutionRealtime}
-// with zero change to `store.ts#connectRealtime`'s call site. Flagged in
-// `docs/agent-handoffs/part-iii/III-E2.md`.
+// with zero change to `store.ts#connectRealtime`'s call site.
 
 export type ExecutionInvalidationEvent =
   | { scope: 'list' }
@@ -39,8 +37,8 @@ export interface ExecutionRealtimeOptions {
    *  hammer the list endpoint. */
   intervalMs?: number;
   /** Injectable timer functions — tests use `vi.useFakeTimers()` and never
-   *  a real wall-clock sleep (TODO.md III.2 rule 9). Defaults to the
-   *  global `setInterval`/`clearInterval`. */
+   *  a real wall-clock sleep. Defaults to the global
+   *  `setInterval`/`clearInterval`. */
   setIntervalImpl?: (handler: () => void, timeoutMs: number) => ReturnType<typeof setInterval>;
   clearIntervalImpl?: (handle: ReturnType<typeof setInterval>) => void;
   /**
@@ -60,9 +58,8 @@ export interface ExecutionRealtime {
   /**
    * Tears down the poll timer and clears all listeners. **Idempotent**: a
    * second call is a no-op rather than a double `clearInterval` or a
-   * double listener-teardown — this is what TODO.md's "disposed exactly
-   * once (no leak, no double-dispose)" acceptance bar means in practice,
-   * and `realtime.test.ts` calls this twice to prove it.
+   * double listener-teardown — disposed exactly once, no leak, no
+   * double-dispose — and `realtime.test.ts` calls this twice to prove it.
    */
   dispose: () => void;
 }

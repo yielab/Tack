@@ -7,8 +7,8 @@ import LinkForm from '../orchestration/LinkForm';
 
 /**
  * Step 3 of the guided setup: pick a Tack project and link it to a control
- * plane (TODO.md Phase 39, card E2). Deliberately reuses card D2's
- * `LinkForm.tsx` — the operator's brief was explicit that a second link form
+ * plane. Deliberately reuses
+ * `LinkForm.tsx` — a second link form
  * must not be built — rather than re-implementing `PUT /api/projects/{id}/
  * orch-link` here. `LinkForm` already handles "no control planes yet" on its
  * own, so this component's only job is the piece that didn't exist before:

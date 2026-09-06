@@ -1,12 +1,11 @@
-// Wire-format boundary for scoped decision resolution (TODO.md III-F4):
-// `POST /attempts/{attempt_id}/decisions/{decision_id}/resolve` — III-F1's
-// card, mounted in production by the Wave 5 integrator (III-F6) at
-// `crates/tack-api/src/handlers/decisions.rs`. Every shape below is copied
-// field-for-field from that handler's `ResolveDecisionResponse` and its
-// `validate_answer`'s accepted request-body shape (`{"answer": {"option_id",
-// "text"?}}`).
+// Wire-format boundary for scoped decision resolution:
+// `POST /attempts/{attempt_id}/decisions/{decision_id}/resolve`, mounted in
+// production at `crates/tack-api/src/handlers/decisions.rs`. Every shape
+// below is copied field-for-field from that handler's
+// `ResolveDecisionResponse` and its `validate_answer`'s accepted
+// request-body shape (`{"answer": {"option_id", "text"?}}`).
 //
-// `decisionsApi.list` calls the discovery route this card adds — `GET
+// `decisionsApi.list` calls the discovery route — `GET
 // /executions/{request_id}/attempts/{attempt_number}/decisions`
 // (`crates/tack-api/src/handlers/attempt_lists.rs`), returning every
 // `execution_decisions` row for that attempt, `pending`/`resolved`/`expired`
