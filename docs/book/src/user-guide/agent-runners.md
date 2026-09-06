@@ -49,11 +49,17 @@ see `docs/contracts/runner-v1/protocol.json`.
 
 There are four ways to turn a board item into an execution request. All four produce
 the identical `POST /api/executions` record underneath — none is more "real" than
-another.
+another. For a UI-only user the fastest path to a working setup is the **Agents**
+page (`/agents`) first — turn execution on, confirm a harness is detected, paste a
+provider key if you're using one, and choose a project default model — then the
+**"Run with agent"** modal on any item, which reads that configuration back and needs
+no hand-typed identifiers once it's done. The worked example below still uses the CLI,
+because every field it sends is visible on the command line; see
+[Quick Start](quick-start.md#run-an-item-with-an-agent) for the UI-first walkthrough.
 
 | Entry point | Where | Notes |
 |---|---|---|
-| The **"Run with agent"** modal | Item detail drawer, web UI (`RunWithAgentModal.tsx`) | Five hand-typed fields today (runner/fleet, harness, model or Auto, timeout) and no memory between runs — see [Known gaps](#known-gaps). |
+| The **"Run with agent"** modal | Item detail drawer, web UI (`RunWithAgentModal.tsx`) | Auto-selects the runner when exactly one is active, offers the target's own declared models plus "Project default", and blocks with a named reason (and, where one exists, a link to fix it) instead of submitting a request that would queue forever. |
 | `tack execution create` | CLI | Scriptable; every field the API accepts is a flag. Used for the worked example below. |
 | `POST /api/executions` | Raw HTTP | Same JSON body the CLI sends. See [API Reference](../../../API-REFERENCE.md#runner-fleet--execution) for a worked request/response pair. |
 | MCP `create_execution` | `tack mcp`, for an agent driving Tack itself | Same required fields as the REST call. See the [MCP guide](../../../MCP.md). |
@@ -176,15 +182,22 @@ read instead; see [What actually runs today](#what-actually-runs-today).
 ## Choosing a model and a provider
 
 Two rules sit next to each other, on purpose, because keeping them apart is what caused
-the confusion this section replaces: **Tack never holds a provider credential** — no
-`TACK_*` variable configures an API key, an endpoint, or a gateway, ever
-(`crates/tack-orch/src/scheduler/select.rs`; see [Non-loopback and security
-posture](#non-loopback-and-security-posture) and, for the embedded runner specifically,
-`docs/CONFIG.md`'s "Embedded runner" section) — and **Tack does route the model
+the confusion this section used to cause: **the board never holds a provider
+credential** — no `TACK_*` variable configures a vendor API key, and the API server
+itself never proxies a model call (ADR 0050, ADR 0058) — and **the runner can hold
+one**, on its own machine, in its own secret store, and use it to reach a model
+provider on the board's behalf. The two statements are about different halves of the
+product: see [Local credential handling](#local-credential-handling) below and
+`docs/CONFIG.md`'s "Embedded runner" section, "Vendor/provider credentials" bullet, for
+exactly where a credential may and may not live (ADR 0061 draws that line and bounds it).
+
+Separately, and independently of where a credential lives, **Tack routes the model
 choice**: which `(provider, model_id)` pair reaches the harness for a given request is
 resolved server-side, deterministically, before the request is ever offered to a
-runner. Neither rule contradicts the other: routing a choice and holding a secret are
-different things, and Tack does the first without ever needing to do the second.
+runner. Routing a choice and holding a secret are different things — this section's
+four-tier precedence below is the routing rule; the runner-side gateway path (the
+fastest UI-only route to a working key) is in
+[Local credential handling](#local-credential-handling).
 
 ### The four-tier precedence
 
@@ -208,11 +221,13 @@ specific first, stopping at the first tier that has a value:
    ```
    the resulting attempt's `actual_execution.model_provider` came back `"anthropic"` —
    resolved server-side from the profile, never supplied on the request.
-3. **Project default** — *no storage exists for this today.* `projects` has
-   `vocabulary`/`workflow` JSON columns and no general-purpose settings column;
-   `resolve_request_model_policy` always passes `None` for this tier
-   (`crates/tack-orch/src/model_policy/wiring.rs`). A project-level default is not a
-   partially-wired feature — it is a column that has not been added yet.
+3. **Project default** — `projects.default_model` (migration 062), the same
+   `{"default_model": {"provider": ..., "model_id": ...}}` (or literal `"auto"`)
+   convention as the other tiers, set from the **Agents** page's "Default model" step
+   or `PATCH /api/projects/{id}`. `resolve_request_model_policy` reads it as this
+   tier — the only one with a settings UI at all, which is why the "Run with agent"
+   modal's own submit gate points its "set a default model" fix link here
+   (`crates/tack-orch/src/model_policy/wiring.rs`).
 4. **Fleet default** — the same `{"default_model": {...}}` convention, inside
    `agent_fleets.default_policy` (`tack fleet create --policy '...'`). Applies only to a
    request that targets the fleet itself (`selector_kind: "fleet"`) — an
@@ -402,9 +417,18 @@ difference.
   print `[REDACTED]` — this is structural, not a logging convention that a future
   `println!` could bypass by accident (`crates/tack-runner/src/config.rs`).
 - The runner's on-disk state directory (`TACK_RUNNER_STATE_DIR`, default
-  `.tack-runner`) holds the attempt journal (below) and nothing else network-facing.
-  Vendor/harness credentials (an OpenAI key, an Anthropic key, etc.) are the runner
-  operator's own local environment — Tack's API never sees, stores, or forwards them.
+  `.tack-runner`) holds the attempt journal (below) and, since ADR 0061, a
+  **runner-local secret store** for a configured provider's key — the platform
+  keychain where one answers, an owner-only file otherwise, never `app_meta` or any
+  other server-visible table. Set a value with `tack runner secret set <name>`
+  (reads `TACK_RUNNER_SECRET_VALUE` or, failing that, stdin — never a CLI argument,
+  which `/proc` would make world-readable), or, when the runner is embedded in the
+  same process as the board (`tack serve --with-runner`), from the **Agents** page's
+  own key field. A harness's own vendor login (Claude Max, `codex login`, ...) needs
+  none of this — it is still the runner operator's own local environment, unmanaged by
+  Tack either way. In every case, **Tack's API and database never see, store, or
+  forward a credential value** — only the runner's own store resolves one, at spawn
+  time, into the one subprocess that needs it.
 - Logs never carry the credential value. Redaction is tested with a positive control:
   the redaction tests capture real `tracing` output and assert the secret marker
   never appears **and** that an id does appear, ruling out "the capture rig just
@@ -432,9 +456,9 @@ item attachments (`<TACK_STORAGE_DIR>` itself) so the retention sweep documented
 can never touch the wrong directory
 (`crates/tack-api/src/router.rs`, `with_artifact_storage_root`). Download is
 `GET /api/executions/{request_id}/attempts/{n}/artifacts/{artifact_id}/content`, under
-ordinary operator auth. There is currently **no list/discovery endpoint** for either
-artifacts or decisions — see [known gaps](#known-gaps) below; an id has to already be
-known (from the event timeline) to fetch it.
+ordinary operator auth. `GET .../attempts/{n}/artifacts` and `GET .../attempts/{n}/decisions`
+list what an attempt produced without a caller already knowing an id — the UI's
+artifact panel and decision inbox both read these lists directly now.
 
 Content integrity is checksum-verified end to end:
 `execution-attempt-detail.spec.ts` (III-F4) uploads real content through a real runner
@@ -599,32 +623,22 @@ Token usage, when the harness reports it, is `measured`. When it doesn't, it is
 ## Known gaps
 
 These are documented rather than papered over, per this project's
-"unsupported is typed, unknown is explicit" rule. Two of the bullets that used to sit
-here (`model_profiles` and `agent_fleet_members`, below) were re-checked against the
-running code while writing this page and turned out to already be false — corrected
-rather than silently dropped, since a reader who remembered the old claim deserves to
-see it was wrong and why:
+"unsupported is typed, unknown is explicit" rule. Several bullets that used to sit
+here (a decision/artifact list route, `model_profiles`'s copy mechanism, and
+project-level model storage) were re-checked against the running code and turned out
+to already be false, closed by later work — corrected rather than silently dropped,
+since a reader who remembered the old claim deserves to see it was wrong and why:
 
-- **No decision- or artifact-discovery/list endpoint exists.** `resolve_decision` and
-  the artifact-content download route both require an already-known id; there is no
-  `GET .../decisions` or `GET .../artifacts` list route anywhere in the codebase
-  (confirmed by reading every handler touching `execution_decisions` and
-  `execution_artifacts`). `DecisionInbox.tsx` and `ArtifactDownloadPanel.tsx` in the
-  frontend are built and tested against this reality — they accept a manually-entered
-  id today. See `docs/agent-handoffs/part-iii/III-F4.md` for the concrete route shape
-  requested to close this.
-- **`model_profiles` (migration 043) is a saved label, not a scheduling input.**
+- **`model_profiles` (migration 043) is a saved label, consulted by nothing.**
   `POST`/`GET /api/model-profiles` store and list named `(provider, model_id)` pairs
-  for operator convenience; `resolve_request_model_policy` never reads that table — it
-  is not one of the four tiers in [Choosing a model and a
+  for operator convenience; `resolve_request_model_policy` never reads that table —
+  it is not one of the four tiers in [Choosing a model and a
   provider](#choosing-a-model-and-a-provider) (`crates/tack-orch/src/model_policy/wiring.rs`).
-  The "Run with agent" modal reads the list to populate its model picker, then copies
-  the chosen pair into the request's own `requested_model_provider`/`requested_model_id`
-  — the *highest*-precedence tier — before the request is created
-  (`frontend/src/shared/runWithAgent/RunWithAgentModal.tsx`). A model profile has real
-  effect through that copy, never by being consulted as a default itself.
-- **`projects` has no default-model-policy storage.** `ModelPolicySources.
-  project_default` is modeled in the response shape but is always `None`.
+  The "Run with agent" modal's own model picker does not read it either — its options
+  are the *target's own* declared `model_combinations` plus "Project default", keyed
+  by array index (`frontend/src/shared/runWithAgent/RunWithAgentModal.tsx`). Nothing
+  in this tree calls `POST /api/model-profiles` from the UI today; the table exists
+  and answers, with no caller.
 - **`agent_fleet_members` has a write route; nothing in the UI calls it yet.**
   `POST /api/runner-fleets/{fleet_id}/members` and `DELETE
   .../members/{runner_id}` exist and work (`crates/tack-api/src/handlers/runner_admin.rs`)

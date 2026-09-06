@@ -11,6 +11,50 @@ use crate::secrets::SecretValue;
 
 const CATALOG_URL: &str = "https://ai-gateway.vercel.sh/v1/models";
 
+/// Test-only escape hatch: `scripts/smoke.sh` step 13 is this variable's
+/// only intended setter, documented as such in `docs/CONFIG.md`. **What it
+/// actually does, stated plainly rather than left implicit:** when present,
+/// every URL this provider would otherwise send a request to — including
+/// [`fetch_catalog`]'s `bearer_auth(secret.expose())` call, which carries
+/// whatever credential this runner has stored for this provider — is
+/// rebased under it instead of the real gateway host. This is not a
+/// harmless flag: setting it to an attacker-controlled host redirects a
+/// real stored credential there. It is not a new privilege, though —
+/// whoever can set an environment variable on this process can already
+/// read the same credential straight out of the secret store this process
+/// already has open, so this adds no attack surface beyond "control this
+/// process's environment," which is already full compromise. The loopback
+/// restriction below exists anyway, cheaply, to catch a *mistake* (a
+/// non-loopback value reached this process by accident — a copied env
+/// file, a misconfigured deployment) rather than a deliberate attacker, who
+/// gains nothing from this check that they didn't already have. Unset in
+/// every other path — including every other test in this module — so this
+/// costs one environment lookup and changes nothing for the real gateway.
+const TEST_BASE_URL_OVERRIDE_VAR: &str = "TACK_RUNNER_VERCEL_AI_GATEWAY_TEST_BASE_URL";
+
+/// Accepts only a loopback base — see the credential-exposure note above.
+/// A non-loopback value is treated exactly like the variable being unset,
+/// never as a hard error: this is a smoke-test convenience, not a
+/// configuration surface with its own validation contract, and refusing to
+/// start would be a worse failure mode for a test harness than silently
+/// falling back to the real gateway (which then fails loudly on a fake key,
+/// rather than this process failing to start at all).
+fn test_base_url_override() -> Option<String> {
+    let raw = std::env::var(TEST_BASE_URL_OVERRIDE_VAR).ok()?;
+    let base = raw.trim_end_matches('/');
+    let is_loopback = base.starts_with("http://127.")
+        || base.starts_with("http://localhost")
+        || base.starts_with("http://[::1]");
+    is_loopback.then(|| base.to_owned())
+}
+
+fn catalog_url() -> String {
+    match test_base_url_override() {
+        Some(base) => format!("{base}/v1/models"),
+        None => CATALOG_URL.to_owned(),
+    }
+}
+
 pub(crate) struct VercelAiGateway;
 
 #[async_trait]
@@ -28,6 +72,20 @@ impl Provider for VercelAiGateway {
     }
 
     fn endpoint(&self, wire: Wire) -> Option<KnownEndpoint> {
+        if let Some(base) = test_base_url_override() {
+            let (suffix, credential_env_var) = match wire {
+                Wire::AnthropicMessages => ("/claude-code", "ANTHROPIC_AUTH_TOKEN"),
+                Wire::OpenAiResponses => ("/codex/v1", "AI_GATEWAY_API_KEY"),
+            };
+            // Leaked deliberately: this arm only ever runs under the smoke
+            // test's own opt-in env var, at most twice per process (one
+            // leak per `Wire`), never in a production runner.
+            let base_url: &'static str = Box::leak(format!("{base}{suffix}").into_boxed_str());
+            return Some(KnownEndpoint {
+                base_url,
+                credential_env_var,
+            });
+        }
         match wire {
             // No `/v1` suffix: the CLI appends `/v1/messages` itself, and a
             // double suffix 404s.
@@ -62,7 +120,7 @@ impl Provider for VercelAiGateway {
             .build()
             .map_err(|_| CatalogFetchError::Transport)?;
         let response = client
-            .get(CATALOG_URL)
+            .get(catalog_url())
             .bearer_auth(secret.expose())
             .send()
             .await
@@ -133,6 +191,67 @@ fn parse_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Proves the smoke-only override actually rebases every URL this
+    /// provider would otherwise hit, and that its absence changes nothing —
+    /// the property `scripts/smoke.sh` step 13 depends on. Mutates a
+    /// process-wide env var, safe under `cargo nextest` (one process per
+    /// test); do not run this test under a bare `cargo test` alongside
+    /// others in this module in the same process.
+    #[test]
+    fn the_test_only_base_url_override_rebases_catalog_and_both_wires_and_is_a_no_op_when_unset() {
+        assert_eq!(
+            catalog_url(),
+            CATALOG_URL,
+            "unset: the real host, unchanged"
+        );
+        let claude = VercelAiGateway
+            .endpoint(Wire::AnthropicMessages)
+            .expect("endpoint present");
+        assert_eq!(claude.base_url, "https://ai-gateway.vercel.sh/claude-code");
+
+        unsafe {
+            std::env::set_var(TEST_BASE_URL_OVERRIDE_VAR, "http://127.0.0.1:9/smoke-gw");
+        }
+        assert_eq!(catalog_url(), "http://127.0.0.1:9/smoke-gw/v1/models");
+        let claude = VercelAiGateway
+            .endpoint(Wire::AnthropicMessages)
+            .expect("endpoint present");
+        assert_eq!(claude.base_url, "http://127.0.0.1:9/smoke-gw/claude-code");
+        assert_eq!(claude.credential_env_var, "ANTHROPIC_AUTH_TOKEN");
+        let codex = VercelAiGateway
+            .endpoint(Wire::OpenAiResponses)
+            .expect("endpoint present");
+        assert_eq!(codex.base_url, "http://127.0.0.1:9/smoke-gw/codex/v1");
+        assert_eq!(codex.credential_env_var, "AI_GATEWAY_API_KEY");
+        unsafe {
+            std::env::remove_var(TEST_BASE_URL_OVERRIDE_VAR);
+        }
+        assert_eq!(catalog_url(), CATALOG_URL, "removed: back to the real host");
+
+        // A non-loopback value is a mistake, not a valid override target —
+        // treated exactly like unset, never honored, so a credential can
+        // never be silently redirected to a non-loopback host through this
+        // variable.
+        unsafe {
+            std::env::set_var(TEST_BASE_URL_OVERRIDE_VAR, "http://example.invalid");
+        }
+        assert_eq!(
+            catalog_url(),
+            CATALOG_URL,
+            "a non-loopback override is ignored, not honored"
+        );
+        let claude = VercelAiGateway
+            .endpoint(Wire::AnthropicMessages)
+            .expect("endpoint present");
+        assert_eq!(
+            claude.base_url, "https://ai-gateway.vercel.sh/claude-code",
+            "a non-loopback override must never reach the endpoint either"
+        );
+        unsafe {
+            std::env::remove_var(TEST_BASE_URL_OVERRIDE_VAR);
+        }
+    }
 
     /// Three real entries captured from a live
     /// `https://ai-gateway.vercel.sh/v1/models` fetch, chosen to cover the

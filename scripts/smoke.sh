@@ -14,6 +14,11 @@
 #   11 default `tack serve` (no flag) starts no runner, checked against the
 #      live fleet endpoint rather than inferred from a log line
 #   12 a non-loopback bind refuses `--with-runner` before any listener opens
+#   13 the gateway path: a local fake Vercel-shaped HTTP shim proves key ->
+#      catalog -> spawn environment -> actual model, and that a wrong key
+#      is rejected end to end (catalog check and live dispatch both)
+#   14 GET /api/local-runner/secrets is a genuine 404 on a non-loopback
+#      bind — never merely refused, never present on any other bind mode
 #
 #   ./scripts/smoke.sh            # fake mode: shim harness binaries (free, deterministic)
 #   ./scripts/smoke.sh --live     # real harness binaries — a real model run happens
@@ -32,10 +37,16 @@ set -uo pipefail
 
 LIVE=0; [ "${1:-}" = "--live" ] && LIVE=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Honors CARGO_TARGET_DIR so this script builds and runs the same binaries
+# `cargo build` itself would produce under that setting — required to keep
+# a parallel agent's own build isolated to its own target directory rather
+# than colliding with `$ROOT/target`, which every other worktree shares.
+BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/debug"
 WORK="$(mktemp -d)"; PORT=${SMOKE_PORT:-3399}
 API="http://127.0.0.1:$PORT"
 PRINCIPAL='x-tack-principal: smoke-operator'
 SERVER_PID=""; RUNNER_A_PID=""; RUNNER_B_PID=""; STANDALONE_PID=""; NORUNNER_PID=""; FAILED=0
+GATEWAY_PID=""; RUNNER_GW_PID=""; NL2_PID=""
 UNMET=()   # observed §III.6 shortfalls, printed in the release verdict
 
 cleanup() {
@@ -43,6 +54,9 @@ cleanup() {
   [ -n "$RUNNER_B_PID" ] && kill "$RUNNER_B_PID" 2>/dev/null
   [ -n "$STANDALONE_PID" ] && kill "$STANDALONE_PID" 2>/dev/null
   [ -n "$NORUNNER_PID" ] && kill "$NORUNNER_PID" 2>/dev/null
+  [ -n "$RUNNER_GW_PID" ] && kill "$RUNNER_GW_PID" 2>/dev/null
+  [ -n "$GATEWAY_PID" ] && kill "$GATEWAY_PID" 2>/dev/null
+  [ -n "$NL2_PID" ] && kill "$NL2_PID" 2>/dev/null
   # Shim harness processes record their pid in their marker file; a hung shim
   # is in the harness's own session (the documented process-group ceiling), so
   # kill it by recorded pid, not by group.
@@ -114,8 +128,8 @@ else note "mode: fake (shim binaries stand in for both harnesses; the rest of th
 
 step 2 "Build tack + tack-runner"
 cargo build -p tack-cli -p tack-runner 2>&1 | tail -3
-[ -x "$ROOT/target/debug/tack" ] && ok "tack built" || { bad "tack missing"; exit 1; }
-[ -x "$ROOT/target/debug/tack-runner" ] && ok "tack-runner built" || { bad "tack-runner missing"; exit 1; }
+[ -x "$BIN_DIR/tack" ] && ok "tack built" || { bad "tack missing"; exit 1; }
+[ -x "$BIN_DIR/tack-runner" ] && ok "tack-runner built" || { bad "tack-runner missing"; exit 1; }
 
 # Shim harness binaries. Used by the main runner in fake mode, and by step 9's
 # dedicated runner in BOTH modes. A shim answers the adapter's real probe
@@ -153,7 +167,7 @@ step 3 "Start the API server (no Docket configured — its absence must not disa
 # tack PID. Without it, cleanup kills the subshell and leaves an orphan holding $PORT —
 # a later run then silently talks to the previous run's database (found by III-H1).
 ( cd "$WORK" && exec env TACK_DATABASE_URL="sqlite:$WORK/smoke.db?mode=rwc" TACK_PORT="$PORT" \
-  TACK_STORAGE_DIR="$WORK/storage" "$ROOT/target/debug/tack" serve >"$WORK/server.log" 2>&1 ) &
+  TACK_STORAGE_DIR="$WORK/storage" "$BIN_DIR/tack" serve >"$WORK/server.log" 2>&1 ) &
 SERVER_PID=$!
 for _ in $(seq 1 40); do curl -sf "$API/api/health" >/dev/null 2>&1 && break; sleep 0.25; done
 curl -sf "$API/api/health" >/dev/null && ok "server healthy on $PORT, TACK_ORCH_ENABLE unset (Docket absent)" \
@@ -185,7 +199,7 @@ mkdir -p "$WORK/runner-state"; chmod 700 "$WORK/runner-state"
 # taken from it, and a duplicate name is answered 500 by the server today
 # (escalated by III-H2), which would otherwise abort the second runner here.
 ( exec env PATH="$RUNNER_A_PATH" TACK_RUNNER_ID="smoke-runner-a" TACK_RUNNER_ENROLLMENT_TOKEN="$ENROLL" \
-    "$ROOT/target/debug/tack-runner" --api-url "$API" --state-dir "$WORK/runner-state" \
+    "$BIN_DIR/tack-runner" --api-url "$API" --state-dir "$WORK/runner-state" \
     >"$WORK/runner.log" 2>&1 ) &
 RUNNER_A_PID=$!; disown "$RUNNER_A_PID"
 HEARTBEAT=$(wait_for "curl -sf '$API/api/runners' | jq -r '.data[] | select(.runner_id==\"$RUNNER_ID\") | select(.state==\"active\" and .last_heartbeat_at!=null) | .last_heartbeat_at'" 30 || true)
@@ -336,7 +350,7 @@ RUNNER_B=$(jq -r '.runner_id // empty' <<<"$ENROLL_B_JSON")
 mkdir -p "$WORK/runner-b-state"; chmod 700 "$WORK/runner-b-state"
 start_runner_b() {
   ( exec env PATH="$SHIMS:$PATH" TACK_RUNNER_ID="smoke-runner-b" TACK_RUNNER_ENROLLMENT_TOKEN="$ENROLL_B" \
-      "$ROOT/target/debug/tack-runner" --api-url "$API" --state-dir "$WORK/runner-b-state" \
+      "$BIN_DIR/tack-runner" --api-url "$API" --state-dir "$WORK/runner-b-state" \
       >>"$WORK/runner-b.log" 2>&1 ) &
   RUNNER_B_PID=$!; disown "$RUNNER_B_PID"
 }
@@ -427,7 +441,7 @@ SA_DB_URL="sqlite:$SA_WORK/tack.db?mode=rwc"
 ( cd "$SA_WORK" && exec env PATH="$SA_PATH" \
     TACK_DATABASE_URL="$SA_DB_URL" TACK_PORT="$STANDALONE_PORT" \
     TACK_STORAGE_DIR="$SA_WORK/storage" TACK_RUNNER_STATE_DIR="$SA_WORK/state" \
-    "$ROOT/target/debug/tack" serve --with-runner >"$SA_WORK/server.log" 2>&1 ) &
+    "$BIN_DIR/tack" serve --with-runner >"$SA_WORK/server.log" 2>&1 ) &
 STANDALONE_PID=$!
 for _ in $(seq 1 40); do curl -sf "$STANDALONE_API/api/health" >/dev/null 2>&1 && break; sleep 0.25; done
 if curl -sf "$STANDALONE_API/api/health" >/dev/null; then
@@ -495,7 +509,7 @@ NORUNNER_API="http://127.0.0.1:$NORUNNER_PORT"
 NR_WORK="$WORK/norunner"; mkdir -p "$NR_WORK"
 ( cd "$NR_WORK" && exec env TACK_DATABASE_URL="sqlite:$NR_WORK/tack.db?mode=rwc" TACK_PORT="$NORUNNER_PORT" \
     TACK_STORAGE_DIR="$NR_WORK/storage" \
-    "$ROOT/target/debug/tack" serve >"$NR_WORK/server.log" 2>&1 ) &
+    "$BIN_DIR/tack" serve >"$NR_WORK/server.log" 2>&1 ) &
 NORUNNER_PID=$!
 for _ in $(seq 1 40); do curl -sf "$NORUNNER_API/api/health" >/dev/null 2>&1 && break; sleep 0.25; done
 if curl -sf "$NORUNNER_API/api/health" >/dev/null; then ok "default server up on $NORUNNER_PORT"
@@ -518,7 +532,7 @@ NL_PORT=$((PORT + 3))
 NL_WORK="$WORK/nonloopback"; mkdir -p "$NL_WORK"
 NL_OUT=$(cd "$NL_WORK" && env TACK_HOST=0.0.0.0 TACK_PORT="$NL_PORT" TACK_API_TOKEN=smoke-nonloopback-token \
   TACK_DATABASE_URL="sqlite:$NL_WORK/tack.db?mode=rwc" TACK_STORAGE_DIR="$NL_WORK/storage" \
-  timeout 5 "$ROOT/target/debug/tack" serve --with-runner 2>&1)
+  timeout 5 "$BIN_DIR/tack" serve --with-runner 2>&1)
 NL_EXIT=$?
 if [ "$NL_EXIT" != 0 ] && grep -qi "loopback" <<<"$NL_OUT"; then
   ok "refused to start (exit $NL_EXIT): $(grep -i loopback <<<"$NL_OUT" | head -1)"
@@ -529,6 +543,265 @@ if curl -sf -m 1 "http://127.0.0.1:$NL_PORT/api/health" >/dev/null 2>&1; then
   bad "a listener was opened on the refused non-loopback bind"
 else
   ok "no listener was ever opened on the refused bind"
+fi
+
+step 13 "The gateway path: key -> catalog -> spawn environment -> actual model, against a local fake shim"
+# A local, disposable HTTP shim standing in for the Vercel AI Gateway — never
+# the real vendor host, never a real key (see this card's own secrets rule).
+# It serves the one endpoint this runner's catalog fetch actually calls
+# (/v1/models) and answers everything else once the bearer token matches,
+# 401 otherwise — enough to prove the whole chain and to prove it can fail.
+if ! command -v python3 >/dev/null 2>&1; then
+  unmet "python3 is not installed on this machine — step 13 (the gateway path) needs it to run the local fake gateway shim and cannot be demonstrated here"
+else
+  GW_PORT=$((PORT + 4))
+  GW_KEY="smoke-gw-key-$$"
+  GW_MODEL="smoke-test/fake-model"
+  GW_SCRIPT="$WORK/fake-gateway.py"
+  cat > "$GW_SCRIPT" <<'PYEOF'
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+EXPECTED = "Bearer " + os.environ["SMOKE_GW_KEY"]
+MODEL_ID = os.environ["SMOKE_GW_MODEL_ID"]
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass  # keep smoke output clean; no credential is logged either way
+
+    def _respond(self, code, body):
+        payload = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self):
+        if self.headers.get("Authorization") != EXPECTED:
+            self._respond(401, {"error": "unauthorized"})
+            return
+        if self.path == "/v1/models":
+            self._respond(200, {"object": "list", "data": [
+                {"id": MODEL_ID, "context_window": 32000,
+                 "pricing": {"input": "0.000001", "output": "0.000002"}},
+            ]})
+        else:
+            self._respond(200, {"ok": True})
+
+
+if __name__ == "__main__":
+    HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PYEOF
+  ( exec env SMOKE_GW_KEY="$GW_KEY" SMOKE_GW_MODEL_ID="$GW_MODEL" \
+      python3 "$GW_SCRIPT" "$GW_PORT" >"$WORK/fake-gateway.log" 2>&1 ) &
+  GATEWAY_PID=$!; disown "$GATEWAY_PID"
+  # curl's own connection-refused exit (7) is the only honest "not up yet"
+  # signal here — `-w '%{http_code}'` prints a non-empty "000" even when
+  # the port refuses the connection, which would make `wait_for`'s generic
+  # non-empty check return on the very first try.
+  for _ in $(seq 1 20); do
+    curl -s -o /dev/null "http://127.0.0.1:$GW_PORT/v1/models"; [ $? -ne 7 ] && break
+    sleep 0.25
+  done
+  GW_UP=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$GW_PORT/v1/models")
+  if [ "$GW_UP" = "401" ]; then
+    ok "fake gateway shim up on $GW_PORT, rejects an unauthenticated request the way a real gateway would"
+  else
+    bad "fake gateway shim never came up (last status: ${GW_UP:-none})"
+  fi
+
+  GW_STATE="$WORK/gw-runner-state"; mkdir -p "$GW_STATE"; chmod 700 "$GW_STATE"
+  if TACK_RUNNER_SECRET_VALUE="$GW_KEY" "$BIN_DIR/tack" runner secret set vercel-ai-gateway/default --state-dir "$GW_STATE" >/dev/null 2>&1; then
+    ok "the fake key is stored in the runner's own secret store — never on argv, never in a request body"
+  else
+    bad "could not store the fake gateway key"
+  fi
+
+  GW_TEST_ENV=(TACK_RUNNER_STATE_DIR="$GW_STATE" TACK_RUNNER_PROVIDER_VERCEL_AI_GATEWAY_ENABLED=1
+    TACK_RUNNER_PROVIDER_VERCEL_AI_GATEWAY_SECRET=vercel-ai-gateway/default
+    TACK_RUNNER_VERCEL_AI_GATEWAY_TEST_BASE_URL="http://127.0.0.1:$GW_PORT")
+
+  DOCTOR_JSON_GOOD=$(env "${GW_TEST_ENV[@]}" "$BIN_DIR/tack" runner doctor --json 2>&1)
+  GOT_MODEL=$(jq -r --arg m "$GW_MODEL" \
+    '.harnesses[]? | select(.harness_kind=="claude-code") | .model_combinations[]? | select(.model_provider=="vercel-ai-gateway") | .model_ids[]? | select(.==$m)' \
+    <<<"$DOCTOR_JSON_GOOD" 2>/dev/null | head -1)
+  if [ "$GOT_MODEL" = "$GW_MODEL" ]; then
+    ok "key -> catalog: the correct fake key reaches the fake gateway's /v1/models, and $GW_MODEL is recorded as a vercel-ai-gateway model_combination for claude-code"
+  else
+    bad "catalog fetch with the correct key never surfaced $GW_MODEL in claude-code's model_combinations: $(head -c 300 <<<"$DOCTOR_JSON_GOOD")"
+  fi
+
+  DOCTOR_GOOD=$(env "${GW_TEST_ENV[@]}" "$BIN_DIR/tack" runner doctor 2>&1)
+  if grep -q "status:  configured" <<<"$DOCTOR_GOOD"; then
+    ok "doctor's own provider report reads 'configured' for the correct key"
+  else
+    bad "doctor's provider report did not read 'configured' for the correct key: $(grep -A1 'Provider endpoint (vercel_ai_gateway)' <<<"$DOCTOR_GOOD")"
+  fi
+
+  # The FAIL case: the same check, with a wrong key. Proves the catalog
+  # check is a real test and not one that always reports success.
+  if TACK_RUNNER_SECRET_VALUE="wrong-$GW_KEY" "$BIN_DIR/tack" runner secret set vercel-ai-gateway/default --state-dir "$GW_STATE" >/dev/null 2>&1; then
+    DOCTOR_BAD=$(env "${GW_TEST_ENV[@]}" "$BIN_DIR/tack" runner doctor 2>&1)
+    if grep -q "status:  catalog error (HTTP 401)" <<<"$DOCTOR_BAD"; then
+      ok "the catalog check CAN fail: a wrong key against the fake gateway is reported as 'catalog error (HTTP 401)', not silently accepted"
+    else
+      bad "a wrong key was not rejected by the catalog check, which proves the check tests nothing: $(grep -A1 'Provider endpoint (vercel_ai_gateway)' <<<"$DOCTOR_BAD")"
+    fi
+  else
+    bad "could not overwrite the fake gateway key with a wrong one"
+  fi
+  TACK_RUNNER_SECRET_VALUE="$GW_KEY" "$BIN_DIR/tack" runner secret set vercel-ai-gateway/default --state-dir "$GW_STATE" >/dev/null 2>&1 \
+    || bad "could not restore the correct fake gateway key before the live dispatch"
+
+  ENROLL_GW_JSON=$(curl -sf -X POST "$API/api/runners/enrollment" -H 'content-type: application/json' \
+    -d '{"name":"smoke-runner-gateway","total_capacity":1,"available_capacity":1}')
+  ENROLL_GW=$(jq -r '.enrollment_token // empty' <<<"$ENROLL_GW_JSON")
+  RUNNER_GW=$(jq -r '.runner_id // empty' <<<"$ENROLL_GW_JSON")
+  [ -n "$ENROLL_GW" ] && ok "pending gateway runner $RUNNER_GW enrolled" || bad "gateway runner enrollment failed"
+
+  # A dedicated shim, on its own PATH entry ahead of the shared one, only
+  # for this runner. The model id and gateway port are baked in as literal
+  # script text (known here, at file-creation time) rather than threaded
+  # through the execution's own `environment` field: every literal value in
+  # that field is registered for redaction from captured harness output by
+  # design (`harness/mod.rs::resolve_environment`, "logs carry ids only"),
+  # so a model id passed that way would come back as "[REDACTED]" in the
+  # harness's own stdout — this shim never needs that field at all. It
+  # always verifies the injected credential against the fake gateway for
+  # real, then emits a real Claude Code init+result pair so the actual
+  # adapter's own JSON parser runs, not the generic exit-code fallback
+  # every other step's shim takes.
+  GW_SHIMS="$WORK/gw-shims"; mkdir -p "$GW_SHIMS"
+  cat > "$GW_SHIMS/claude" <<SHIM
+#!/bin/sh
+PATH=/usr/bin:/bin
+case "\${1:-}" in
+  --version|-v) echo "1.0.0"; exit 0 ;;
+esac
+cat >/dev/null
+env > "$MARKERS/gw-env-\$\$"
+if ! curl -sf -H "Authorization: Bearer \${ANTHROPIC_AUTH_TOKEN:-}" "\${ANTHROPIC_BASE_URL:-http://127.0.0.1:0}/verify" >/dev/null; then
+  echo "smoke-fake-harness-gateway-auth-rejected" >&2
+  exit 1
+fi
+printf '{"type":"system","subtype":"init","model":"$GW_MODEL","claude_code_version":"1.0.0"}\n'
+printf '{"type":"result","is_error":false,"subtype":"success","result":"ok","duration_ms":1}\n'
+exit 0
+SHIM
+  chmod +x "$GW_SHIMS/claude"
+
+  ( exec env PATH="$GW_SHIMS:$SHIMS:$PATH" TACK_RUNNER_ID="smoke-runner-gateway" TACK_RUNNER_ENROLLMENT_TOKEN="$ENROLL_GW" \
+      "${GW_TEST_ENV[@]}" \
+      "$BIN_DIR/tack-runner" --api-url "$API" --state-dir "$GW_STATE" \
+      >"$WORK/runner-gateway.log" 2>&1 ) &
+  RUNNER_GW_PID=$!; disown "$RUNNER_GW_PID"
+  if wait_for "curl -sf '$API/api/runners' | jq -r '.data[] | select(.runner_id==\"$RUNNER_GW\") | select(.state==\"active\" and .last_heartbeat_at!=null) | .runner_id'" 30 >/dev/null; then
+    ok "gateway runner active"
+  else
+    bad "gateway runner never became active"
+    tail -8 "$WORK/runner-gateway.log" | sed 's/^/   | /'
+  fi
+
+  GW_CAPS=$(curl -sf "$API/api/runners" | jq -c ".data[] | select(.runner_id==\"$RUNNER_GW\") | .capability_snapshot")
+  GW_GOT_MODEL=$(jq -r --arg m "$GW_MODEL" \
+    '.harnesses[]? | select(.harness_kind=="claude-code") | .model_combinations[]? | select(.model_provider=="vercel-ai-gateway") | .model_ids[]? | select(.==$m)' \
+    <<<"$GW_CAPS" 2>/dev/null | head -1)
+  [ "$GW_GOT_MODEL" = "$GW_MODEL" ] && ok "the live runner's own enrollment snapshot carries the same catalog-derived model" \
+    || bad "the live runner never attached the catalog model to its own capability snapshot"
+
+  REQ13=$(create_execution "$ITEM" "$RUNNER_GW" claude-code vercel-ai-gateway "$GW_MODEL" 60 '{}' "smoke-s13-good-$$")
+  [ -n "$REQ13" ] && ok "gateway execution request $REQ13 queued" || bad "gateway execution request refused"
+  STATE13=$(wait_for "attempts_json '$REQ13' | jq -r '.data[0] | select(.state==\"succeeded\" or .state==\"failed\" or .state==\"needs_operator\") | .state'" 60 || true)
+  ATT13=$(attempts_json "$REQ13" | jq -c '.data[0] // {}')
+  if [ "$STATE13" = "succeeded" ]; then
+    ok "spawn environment -> actual model: the attempt succeeded through the real gateway-configured spawn path"
+  else
+    bad "gateway attempt ended '$STATE13' (expected succeeded with the correct key) — terminal_reason: $(jq -c '.terminal_reason' <<<"$ATT13" | head -c 300)"
+  fi
+  ACTUAL_PROVIDER=$(jq -r '.actual_execution.model_provider // empty' <<<"$ATT13")
+  ACTUAL_MODEL=$(jq -r '.actual_execution.model_id // empty' <<<"$ATT13")
+  ACTUAL_SOURCE=$(jq -r '.actual_execution.model_observation_source // empty' <<<"$ATT13")
+  if [ "$ACTUAL_PROVIDER" = "vercel-ai-gateway" ] && [ "$ACTUAL_MODEL" = "$GW_MODEL" ] && [ "$ACTUAL_SOURCE" = "requested_not_confirmed" ]; then
+    ok "actual_execution reports the requested pairing ($ACTUAL_PROVIDER/$ACTUAL_MODEL) as the actual model used, correctly unconfirmed (a gateway can route/alias)"
+  else
+    bad "actual_execution does not match the requested pairing: provider=$ACTUAL_PROVIDER model=$ACTUAL_MODEL source=$ACTUAL_SOURCE"
+  fi
+
+  GW_ENV_MARKER=$(ls -t "$MARKERS"/gw-env-* 2>/dev/null | head -1)
+  if [ -n "$GW_ENV_MARKER" ] \
+    && grep -q "^ANTHROPIC_BASE_URL=http://127.0.0.1:$GW_PORT/claude-code$" "$GW_ENV_MARKER" \
+    && grep -q "^ANTHROPIC_AUTH_TOKEN=$GW_KEY$" "$GW_ENV_MARKER"; then
+    ok "spawn environment carried the resolved endpoint and the resolved secret's real value into the harness subprocess"
+  else
+    bad "the harness subprocess never received the expected ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN"
+  fi
+
+  # The FAIL case, end to end: the same live dispatch path, wrong key.
+  if TACK_RUNNER_SECRET_VALUE="wrong-$GW_KEY" "$BIN_DIR/tack" runner secret set vercel-ai-gateway/default --state-dir "$GW_STATE" >/dev/null 2>&1; then
+    REQ13B=$(create_execution "$ITEM" "$RUNNER_GW" claude-code vercel-ai-gateway "$GW_MODEL" 60 '{}' "smoke-s13-bad-$$")
+    [ -n "$REQ13B" ] && ok "second gateway execution request $REQ13B queued (wrong key in place)" || bad "second gateway execution request refused"
+    STATE13B=$(wait_for "attempts_json '$REQ13B' | jq -r '.data[0] | select(.state==\"succeeded\" or .state==\"failed\" or .state==\"needs_operator\") | .state'" 60 || true)
+    ATT13B=$(attempts_json "$REQ13B" | jq -c '.data[0] // {}')
+    if [ "$STATE13B" = "failed" ]; then
+      ok "the whole chain CAN fail: the fake gateway rejects the wrong key and the dispatched attempt fails end to end, not silently"
+    else
+      bad "a wrong key did not cause the dispatched attempt to fail (state: '$STATE13B') — terminal_reason: $(jq -c '.terminal_reason' <<<"$ATT13B" | head -c 300)"
+    fi
+  else
+    bad "could not inject the wrong key before the negative live dispatch"
+  fi
+  TACK_RUNNER_SECRET_VALUE="$GW_KEY" "$BIN_DIR/tack" runner secret set vercel-ai-gateway/default --state-dir "$GW_STATE" >/dev/null 2>&1
+
+  kill "$RUNNER_GW_PID" 2>/dev/null; wait "$RUNNER_GW_PID" 2>/dev/null; RUNNER_GW_PID=""
+  kill "$GATEWAY_PID" 2>/dev/null; GATEWAY_PID=""
+fi
+
+step 14 "GET /api/local-runner/secrets is a genuine 404 on a non-loopback bind"
+# The card that carried this step assumed plain 'tack serve' (no
+# --with-runner) leaves this route unmounted. Measured directly against
+# this build and found false: ADR 0061 decision 6 (crates/tack-cli/src/
+# local_runner.rs::serve's own doc comment) wires an EmbeddedRunnerControl
+# into every 'tack serve', with or without --with-runner, so the UI toggle
+# can turn the runner on later with no restart — router.rs only gates these
+# routes on `state.local_runner.is_some() && state.config.binds_loopback()`.
+# The real, current 404 boundary is bind mode, confirmed live below and
+# already unit-tested server-side (VI-B3's
+# routes_are_absent_on_a_non_loopback_bind/routes_are_absent_on_a_loopback_
+# bind_with_no_control). This step proves the boundary end to end against
+# the real binary instead of repeating the stale premise.
+NL2_PORT=$((PORT + 5))
+NL2_TOKEN="smoke-nl2-token-$$"
+NL2_WORK="$WORK/nonloopback-localrunner"; mkdir -p "$NL2_WORK"
+( cd "$NL2_WORK" && exec env TACK_HOST=0.0.0.0 TACK_PORT="$NL2_PORT" TACK_API_TOKEN="$NL2_TOKEN" \
+    TACK_DATABASE_URL="sqlite:$NL2_WORK/tack.db?mode=rwc" TACK_STORAGE_DIR="$NL2_WORK/storage" \
+    "$BIN_DIR/tack" serve >"$NL2_WORK/server.log" 2>&1 ) &
+NL2_PID=$!
+for _ in $(seq 1 40); do
+  curl -sf -H "Authorization: Bearer $NL2_TOKEN" "http://127.0.0.1:$NL2_PORT/api/health" >/dev/null 2>&1 && break
+  sleep 0.25
+done
+NL2_HEALTH=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $NL2_TOKEN" "http://127.0.0.1:$NL2_PORT/api/health")
+if [ "$NL2_HEALTH" = "200" ]; then
+  ok "plain 'tack serve' on a non-loopback bind starts fine — no --with-runner needed to reach this route's absence"
+else
+  bad "server on the non-loopback bind never came up (health status: $NL2_HEALTH)"
+  tail -20 "$NL2_WORK/server.log" | sed 's/^/   | /'
+fi
+NL2_SECRETS=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $NL2_TOKEN" "http://127.0.0.1:$NL2_PORT/api/local-runner/secrets")
+if [ "$NL2_SECRETS" = "404" ]; then
+  ok "GET /api/local-runner/secrets is 404 on this non-loopback bind — the route is never mounted, not merely refused (router.rs's local_runner_available gate)"
+else
+  bad "GET /api/local-runner/secrets answered $NL2_SECRETS on a non-loopback bind — the embedded-runner control surface must never be reachable off loopback"
+fi
+kill "$NL2_PID" 2>/dev/null; wait "$NL2_PID" 2>/dev/null; NL2_PID=""
+
+LOOPBACK_SECRETS=$(curl -s -o /dev/null -w '%{http_code}' "$API/api/local-runner/secrets")
+if [ "$LOOPBACK_SECRETS" = "200" ]; then
+  ok "the identical route is a real 200 on this run's own loopback server — confirms the boundary this step tests is bind mode, not --with-runner"
+else
+  bad "this run's own loopback server answered $LOOPBACK_SECRETS for GET /api/local-runner/secrets, not 200 — the contrast this step depends on no longer holds"
 fi
 
 printf '\n\033[1m== RESULT ==\033[0m\n'
