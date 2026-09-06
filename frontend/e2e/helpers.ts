@@ -200,8 +200,8 @@ export async function createItemWithAssignee(
 /**
  * Create a fresh sprint with one item assigned to it — the minimum the
  * Sprints view's "Run sprint" dispatch control needs to render at all
- * (`Sprints.tsx` only shows the button for a sprint with `itemsForSprint(id).
- * length > 0`, TODO.md Wave 3, card C4). Returns both ids since the caller
+ * (`Sprints.tsx` only shows the button for a sprint with
+ * `itemsForSprint(id).length > 0`). Returns both ids since the caller
  * typically needs the sprint id (to mock its dry-run route) and doesn't
  * otherwise have one.
  */
@@ -276,10 +276,10 @@ export async function createFreshItem(
 
 /**
  * Create a runner fleet via the operator execution surface
- * (`POST /api/runner-fleets`, TODO.md III-E4's "Run with agent" modal target
- * picker). Unlike the Docket dispatch helpers above, this route is NOT
- * gated behind `TACK_ORCH_ENABLE` — see `crates/tack-api/src/router.rs`'s
- * own comment distinguishing `orch_routes` from card C1's always-on
+ * (`POST /api/runner-fleets`) — the "Run with agent" modal's target picker
+ * lists these fleets. Unlike the Docket dispatch helpers above, this route
+ * is NOT gated behind `TACK_ORCH_ENABLE` — see `crates/tack-api/src/
+ * router.rs`'s own comment distinguishing `orch_routes` from the always-on
  * operator execution/fleet routes. Returns the new fleet's id.
  */
 export async function createFleet(request: APIRequestContext, name: string): Promise<string> {
@@ -320,11 +320,11 @@ export async function createModelProfile(
 /**
  * A minimal, valid runner-v1 capability report declaring `codex`/`openai`/
  * `modelId` — for the direct runner-protocol HTTP calls
- * {@link enrollRunner}/{@link claimOnce} make (TODO.md III-E6). There is no
- * CLI/UI surface for the runner side of the protocol (enroll/refresh/claim
- * are `tack-runner`'s job, a different binary/actor than the operator UI
- * these specs otherwise drive) — these two helpers speak it directly, as a
- * real runner would.
+ * {@link enrollRunner}/{@link claimOnce} make. There is no CLI/UI surface
+ * for the runner side of the protocol (enroll/refresh/claim are
+ * `tack-runner`'s job, a different binary/actor than the operator UI these
+ * specs otherwise drive) — these two helpers speak it directly, as a real
+ * runner would.
  */
 function capabilities(modelId: string) {
   const now = new Date().toISOString();
@@ -404,7 +404,7 @@ export async function claimOnce(
   return body?.request?.request_id ?? null;
 }
 
-// ─── III-F4: attempt-detail additions (decisions/artifacts/events) ─────────
+// ─── Attempt-detail additions (decisions/artifacts/events) ─────────────────
 //
 // The four helpers below extend the runner-protocol simulation `claimOnce`
 // already established, far enough to get a real attempt into `running`
@@ -507,9 +507,9 @@ export async function createRunnerDecision(
 }
 
 /** Manifests + uploads a real, verified artifact on a running attempt —
- *  `submit_artifacts` (manifest) then `PUT .../content` (III-F2), computing
- *  the real sha256 the streaming verifier checks against. Returns the
- *  `artifact_id` the test supplied. */
+ *  `submit_artifacts` (manifest) then `PUT .../content`, computing the real
+ *  sha256 the streaming verifier checks against. Returns the `artifact_id`
+ *  the test supplied. */
 export async function submitRunnerArtifact(
   request: APIRequestContext,
   runnerId: string,
@@ -564,11 +564,11 @@ export async function submitRunnerArtifact(
  *  sends.
  *
  *  Uses an `exact_runner` selector, not `fleet` — `agent_fleet_members`
- *  still has no write route on any API surface (E6's own flagged gap,
- *  still open as of this card), so a `fleet`-selector request can never be
- *  claimed in an E2E environment; `scheduler-e2e.spec.ts` hit the same
- *  constraint and made the identical choice. Callers must enroll the
- *  target runner (`enrollRunner`) BEFORE calling this, so its id is known. */
+ *  still has no write route on any API surface, so a `fleet`-selector
+ *  request can never be claimed in an E2E environment; `scheduler-e2e.spec.ts`
+ *  hit the same constraint and made the identical choice. Callers must
+ *  enroll the target runner (`enrollRunner`) BEFORE calling this, so its id
+ *  is known. */
 export async function createExecution(
   request: APIRequestContext,
   itemId: string,

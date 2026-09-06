@@ -10,29 +10,24 @@ import {
   waitForApp,
 } from './helpers';
 
-// Cross-surface E2E for the wave's acceptance bar (TODO.md III-E6): "healthy
-// fleet selection, saturation, exact runner, unsupported model, and realtime
-// updates all pass through production routes — not mocks — in ... the UI."
+// Cross-surface E2E proving healthy fleet selection, saturation, exact
+// runner, unsupported model, and realtime updates all pass through
+// production routes — not mocks — end to end through the UI.
 //
 // Every request in this file is created through the real, unmocked
 // `RunWithAgentModal` form (`shared/runWithAgent/`) against the real
 // production router; runner-side actions (enroll/claim) use direct HTTP —
 // the CLI/UI operator surface has no runner-protocol commands, since that
-// is `tack-runner`'s job, a different actor than the operator UI/CLI this
-// wave's acceptance bar is about (see `helpers.ts#enrollRunner`'s own
-// comment).
+// is `tack-runner`'s job, a different actor than the operator UI/CLI these
+// scenarios exercise (see `helpers.ts#enrollRunner`'s own comment).
 //
 // **Why "exact runner," not "fleet," selects the runner in every scenario
 // below:** `agent_fleet_members` (the fleet-membership join table) has no
-// write route through any API surface — a pre-existing, already-documented
-// gap (III-E3's own handoff: "agent_fleet_members exists in the schema with
-// no route") that this integration card deliberately left as a read-only
-// gap rather than widen scope with a write route nobody asked for. Without
-// a way to place a runner into a fleet via HTTP, a `fleet`-selector request
-// would have zero eligible members forever, through no API surface. Fleet
-// membership eligibility (including the previously-unenforced
-// `concurrency_limit`) is proven directly against the database in
-// `crates/tack-orch/tests/scheduler_wiring_test.rs`
+// write route through any API surface, so a `fleet`-selector request would
+// have zero eligible members forever — there is no way to place a runner
+// into a fleet via HTTP. Fleet membership eligibility (including the
+// previously-unenforced `concurrency_limit`) is proven directly against the
+// database in `crates/tack-orch/tests/scheduling/wiring.rs`
 // (`an_unsaturated_fleet_still_allows_a_member_to_claim`/
 // `a_saturated_fleet_concurrency_limit_blocks_a_fleet_selector_request`);
 // exact-runner selection exercises the identical downstream scheduler
@@ -120,10 +115,10 @@ test('healthy exact-runner selection is claimed, and the UI reflects it without 
 
   // The store's bounded poll (default 4s, `shared/execution/realtime.ts`)
   // must pick up the state change on its own — no reload, no manual
-  // refetch trigger from this test. Card III-F4 wired the real attempts
-  // endpoint into this same tab, so the request's own state badge AND the
-  // now-visible attempt row's state badge both read "Leased" — `.first()`
-  // targets the request-level one this test's own name is about.
+  // refetch trigger from this test. The real attempts endpoint feeds this
+  // same tab, so the request's own state badge AND the now-visible attempt
+  // row's state badge both read "Leased" — `.first()` targets the
+  // request-level one this test's own name is about.
   await expect(drawer.getByText('Leased', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
 });
 

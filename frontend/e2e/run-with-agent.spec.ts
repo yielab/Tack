@@ -14,31 +14,31 @@ import {
   waitForApp,
 } from './helpers';
 
-// "Run with agent" — item/sprint execution UI (TODO.md III-E4, Wave 4 /
-// Phase 54; reworked by VI-C2 for zero hand-typed identifiers). Distinct
-// from the older Docket "Dispatch to agents"/"Run sprint" features covered
-// by `journey.spec.ts`/`a11y.spec.ts`'s dispatch tests: this feature targets
+// "Run with agent" — item/sprint execution UI, built for zero hand-typed
+// identifiers wherever the API can supply a real one instead. Distinct from
+// the older Docket "Dispatch to agents"/"Run sprint" features covered by
+// `journey.spec.ts`/`a11y.spec.ts`'s dispatch tests: this feature targets
 // `/api/executions`, `/api/runner-fleets`, `/api/agent-profiles`,
 // `/api/projects/{id}` (the model default) — an always-on operator surface,
 // NOT gated behind `TACK_ORCH_ENABLE` (unlike every Docket dispatch route),
 // so no orchestration-enable setup is needed for these specs. See
-// `crates/tack-api/src/router.rs`'s own comment on `orch_routes` vs. card
-// C1's operator execution/fleet routes.
+// `crates/tack-api/src/router.rs`'s own comment on `orch_routes` vs. the
+// always-on operator execution/fleet routes.
 //
 // Every test enrolls at least one runner: with none, the modal shows its
-// "agent execution is off" state instead of the form (VI-C2's own honest
-// signal — see `shared.ts#isExecutionOff`'s doc comment for what it reads
-// once VI-B3 lands a real on/off flag).
+// "agent execution is off" state instead of the form. That reads zero
+// active runners as "off" — a heuristic, not a real on/off flag; see
+// `shared.ts#isExecutionOff`'s doc comment for exactly what it reads and why.
 //
-// `GET /api/runners` is global, not project-scoped (measured while writing
-// this card — no route or handler filters it), and `e2e.db` is a persistent
-// database every spec run adds enrolled runners to. So "exactly one active
-// runner" (this card's "hidden when exactly one machine is active" case) is
-// real and unit-tested (`RunWithAgentModal.test.tsx`), but not something an
-// E2E test can assume here — the picker may legitimately show because some
-// *other* spec's runner is also active. These tests select their own
-// runner, by its unique name, only when the picker is showing; they never
-// assert whether it is hidden or shown.
+// `GET /api/runners` is global, not project-scoped (measured directly — no
+// route or handler filters it), and `e2e.db` is a persistent database every
+// spec run adds enrolled runners to. So "exactly one active runner" (the
+// case where the target picker hides and auto-selects) is real and
+// unit-tested (`RunWithAgentModal.test.tsx`), but not something an E2E test
+// can assume here — the picker may legitimately show because some *other*
+// spec's runner is also active. These tests select their own runner, by its
+// unique name, only when the picker is showing; they never assert whether
+// it is hidden or shown.
 async function selectTargetIfPickerShows(modal: Locator, runnerName: string) {
   const picker = modal.getByRole('combobox', { name: 'Machine or group' });
   // The picker either settles hidden (exactly one active runner, auto-selected —
@@ -78,10 +78,10 @@ test('Board: "Run with agent" opens the shared modal, and required-field reasons
   await expect(dialog).toBeVisible();
 
   // Nothing is filled in yet — the submit control must be disabled with
-  // visible, specific reasons (this card's acceptance bar: "disabled +
-  // reasoned, not merely rejected server-side").
-  // `exact: true` — an inexact match also catches this card's new
-  // "Change for this run" button, which contains "run" as a substring.
+  // visible, specific reasons, not merely rejected server-side after a
+  // click.
+  // `exact: true` — an inexact match also catches the "Change for this run"
+  // button, which contains "run" as a substring.
   const runButton = dialog.getByRole('button', { name: 'Run', exact: true });
   await expect(runButton).toBeDisabled();
   await expect(dialog.getByText('Select where this runs.')).toBeVisible();
@@ -89,8 +89,8 @@ test('Board: "Run with agent" opens the shared modal, and required-field reasons
   await expect(dialog.getByText('Enter a repository remote.')).toBeVisible();
 
   // Escape closes it — the same keyboard path every other modal in this app
-  // supports (`shared/ui/Modal.tsx`), exercised here for this card's own
-  // acceptance bar ("keyboard/focus path passes").
+  // supports (`shared/ui/Modal.tsx`), proving the focus/keyboard path works
+  // on this modal too, not just the shared component in isolation.
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   void itemId;
@@ -124,7 +124,7 @@ test('item-detail: submitting a run creates the request and it appears in the Ex
 
   await modal.getByRole('combobox', { name: 'Agent profile' }).selectOption(profileId);
   // Repository is a read-only summary by default — no free-text field
-  // visible until "Change for this run" (this card's acceptance bar).
+  // visible until "Change for this run" is clicked.
   await modal.getByRole('button', { name: 'Change for this run' }).click();
   await modal.getByLabel('Remote').fill('git@example.com:org/repo.git');
 
@@ -155,9 +155,9 @@ test('item-detail: submitting a run creates the request and it appears in the Ex
   const executionTab = drawer.getByRole('tab', { name: 'Execution' });
   await executionTab.click();
   await expect(drawer.getByText('Queued')).toBeVisible();
-  // III-F4 wired the real attempts endpoint (card III-E6 added it; this was
-  // a typed "not available yet" placeholder before) — a freshly-created,
-  // unclaimed request honestly shows zero attempts, not the old placeholder.
+  // The real attempts endpoint is wired here, not a typed "not available
+  // yet" placeholder — a freshly-created, unclaimed request honestly shows
+  // zero attempts.
   await expect(drawer.getByText('No attempts yet.')).toBeVisible();
 
   // Confirm the request is real, not just an optimistic client-side fake —
@@ -181,8 +181,8 @@ test('the run form submits the project\'s configured model default, byte for byt
   const itemId = await createFreshItem(request, projectId, `RWA project-default item ${Date.now()}`);
   const profileId = await createAgentProfile(request, `RWA project-default profile ${Date.now()}`);
   // The one runner reports the exact combination the project will default
-  // to — required for the submit gate (`shared.ts#gateHarnessModelSelection`,
-  // unchanged by this card) to allow it through.
+  // to — required for the submit gate (`shared.ts#gateHarnessModelSelection`)
+  // to allow it through.
   const runnerName = `RWA project-default runner ${Date.now()}`;
   const { runnerId } = await enrollRunner(request, runnerName, 'opaque/model-alpha');
 
@@ -215,9 +215,9 @@ test('the run form submits the project\'s configured model default, byte for byt
   await selectTargetIfPickerShows(modal, runnerName);
 
   await modal.getByRole('combobox', { name: 'Agent profile' }).selectOption(profileId);
-  // Repository has no project-level default in this branch's base (VI-C3
-  // landed only the model tier — see this card's handoff) — the remote is
-  // the one field that is genuinely still typed by hand here.
+  // Repository has no project-level default — only the model tier does —
+  // so the remote is the one field that is genuinely still typed by hand
+  // here.
   await modal.getByRole('button', { name: 'Change for this run' }).click();
   await modal.getByLabel('Remote').fill('git@example.com:org/repo.git');
 
@@ -248,9 +248,9 @@ test('Sprint: the per-item "Run with agent" trigger is present and opens the sam
 
   const dialog = page.getByRole('dialog', { name: /^Run with agent:/ });
   await expect(dialog).toBeVisible();
-  // Opening the per-item trigger must not also open the item-detail drawer
-  // (the card's own click handler stops propagation) — the sprint board
-  // itself, not a drawer, should still be what's behind the modal.
+  // Opening the per-item trigger must not also open the item-detail drawer —
+  // its click handler stops propagation — so the sprint board itself, not a
+  // drawer, should still be what's behind the modal.
   await expect(page.getByRole('dialog', { name: 'Item details' })).toBeHidden();
 
   void sprintId;

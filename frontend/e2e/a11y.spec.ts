@@ -109,8 +109,7 @@ for (const [palette, mode] of OTHER_MODES_AND_PALETTES) {
 // becoming light (matching how teal/clay already pair a dark primary-600
 // with a white on-accent) — which changes graphite's primary from "bright
 // lime, dark text on it" to "dark olive, white text on it": a different
-// palette identity, not a contrast correction, so it isn't made here. See
-// the handoff for the measurements and the options left for that decision.
+// palette identity, not a contrast correction, so it isn't made here.
 // Tracking this one rule, scoped to only this one scan, keeps every other
 // combination above (5 of 6) an unsuppressed, real gate.
 const GRAPHITE_LIGHT_KNOWN_ISSUES = ['color-contrast'];
@@ -127,13 +126,13 @@ test('board view (graphite/light) has no accessibility violations other than the
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// TODO.md §6 "A12": no fixture here ever set an `assignee`, so `<Avatar>`
-// (shared/ui/Avatar.tsx) — white initials over a per-name `hsl()` chip — never
-// actually rendered during a scan. ~56% of the generated hues failed AA
-// against fixed white text; this went undetected for months. "Avery Green"
-// (hue 58) sits right in that failing band (old white-on-bg contrast ~2.1:1),
-// so this fixture actually exercises the fix rather than getting lucky with a
-// hue that happened to pass even under the bug.
+// No other fixture in this file sets an `assignee`, so `<Avatar>`
+// (`shared/ui/Avatar.tsx`) — initials over a per-name `hsl()` chip, with
+// `textColorForHue` choosing black or white text per hue's own contrast
+// against that background — never actually renders during any other scan.
+// "Avery Green" gives a real, deterministic hue rather than a hand-picked
+// one, so the scan below exercises whichever text color that hue resolves
+// to, not just the component's presence.
 test('board view with an assigned item (populated avatar) has no accessibility violations', async ({
   page,
   request,
@@ -154,18 +153,16 @@ test('global settings has no accessibility violations', async ({ page }) => {
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Settings → Orchestration (frontend/src/features/settings/orchestrationSettings/**,
-// TODO.md §6 "E2", Phase 39: "make the agent-factory control center
-// discoverable"). `GET /api/settings/orchestration` is reachable even when
-// orchestration is off (by contract — this route sits outside the
-// `TACK_ORCH_ENABLE` gate every other orchestration route uses), so the
-// disabled-state scan below hits the real, unmodified dev server exactly
-// like the "global settings" scan above — no route interception needed for
-// that one. The populated scan intercepts `GET /api/control-planes` and
-// `GET /api/projects` the same way the Fleet "populated" scan above
-// intercepts `GET /api/fleet`, so axe scans the real guided-setup UI
-// (control-plane list with every health state, the project picker) rather
-// than just its absence.
+// Settings → Orchestration (`frontend/src/features/settings/orchestrationSettings/**`).
+// `GET /api/settings/orchestration` is reachable even when orchestration is
+// off — by contract, this route sits outside the `TACK_ORCH_ENABLE` gate
+// every other orchestration route uses — so the disabled-state scan below
+// hits the real, unmodified dev server exactly like the "global settings"
+// scan above; no route interception needed for that one. The populated scan
+// intercepts `GET /api/control-planes` and `GET /api/projects` the same way
+// the Fleet "populated" scan below intercepts `GET /api/fleet`, so axe scans
+// the real guided-setup UI (control-plane list with every health state, the
+// project picker) rather than just its absence.
 
 test('settings orchestration section (disabled, env default) has no accessibility violations', async ({
   page,
@@ -275,23 +272,21 @@ test('item detail drawer has no accessibility violations', async ({ page, reques
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Fleet view (frontend/src/features/fleet/**, TODO.md §6 "A5"). `GET
-// /api/fleet` 404s unless the server is started with TACK_ORCH_ENABLE=true —
-// this e2e harness's webServer (playwright.config.ts) does not set it, and
-// that file isn't owned by this spec, so the disabled state below is the
-// real, unmodified default a fresh install sees. There is also no
-// control-plane-registration UI yet (A5's handoff, TODO.md §6) to seed a
-// populated row through the API even if orchestration were on. So the
-// populated scan below intercepts the browser's `GET /api/fleet` request
-// directly (`page.route`) and fulfills it with a payload shaped exactly like
-// `frontend/src/features/fleet/api.ts`'s `FleetResponse`/`FleetRow` — the
-// file A5's card designates as the single source of truth for the wire
-// shape. This still renders and scans the real `FleetPage`/`FleetRow`/
-// `HealthChip` components against real (mocked-network) data, covering all
-// four `ControlPlaneHealth` states — including the stale/dashed-field
-// treatment for `unreachable`/`unknown` rows, which is the card's central
-// accessibility-relevant decision (no opacity-dimming, no confident-looking
-// zero). It does not exercise the real `tack-orch` reconciler or `GET
+// Fleet view (`frontend/src/features/fleet/**`). `GET /api/fleet` 404s
+// unless the server is started with `TACK_ORCH_ENABLE=true` — this e2e
+// harness's webServer (`playwright.config.ts`) does not set it, so the
+// disabled state below is the real, unmodified default a fresh install
+// sees. There is also no control-plane-registration UI to seed a populated
+// row through the API even if orchestration were on. So the populated scan
+// below intercepts the browser's `GET /api/fleet` request directly
+// (`page.route`) and fulfills it with a payload shaped exactly like
+// `frontend/src/features/fleet/api.ts`'s `FleetResponse`/`FleetRow` — that
+// file is the single source of truth for the wire shape. This still renders
+// and scans the real `FleetPage`/`FleetRow`/`HealthChip` components against
+// real (mocked-network) data, covering all four `ControlPlaneHealth`
+// states — including the stale/dashed-field treatment for
+// `unreachable`/`unknown` rows: no opacity-dimming, no confident-looking
+// zero. It does not exercise the real `tack-orch` reconciler or `GET
 // /api/fleet` handler themselves — only the frontend's rendering of their
 // documented contract.
 
@@ -502,16 +497,15 @@ test('agents page — creating a fleet via the form has no accessibility violati
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Dispatch UI (frontend/src/shared/dispatch/**, TODO.md §6 "C4", tasks
-// 35.8/35.9). Same technique as the Fleet scans above: `TACK_ORCH_ENABLE`
-// isn't set for this harness's webServer, so every dispatch route 404s by
-// default — exactly the "no dispatch controls" state every other scan in
-// this file already covers incidentally (none of them ever see a dispatch
-// button, since it only renders once its own orchestration probe succeeds).
-// These tests intercept the specific orch routes each surface depends on to
-// render its *enabled* state, so axe actually scans the dispatch button, the
-// per-outcome note, and the sprint dry-run/results modal — not just their
-// absence.
+// Dispatch UI (`frontend/src/shared/dispatch/**`). Same technique as the
+// Fleet scans above: `TACK_ORCH_ENABLE` isn't set for this harness's
+// webServer, so every dispatch route 404s by default — exactly the "no
+// dispatch controls" state every other scan in this file already covers
+// incidentally (none of them ever see a dispatch button, since it only
+// renders once its own orchestration probe succeeds). These tests intercept
+// the specific orch routes each surface depends on to render its *enabled*
+// state, so axe actually scans the dispatch button, the per-outcome note,
+// and the sprint dry-run/results modal — not just their absence.
 
 test('item detail drawer with the dispatch control visible has no accessibility violations', async ({
   page,
@@ -567,11 +561,11 @@ test('item detail drawer after a blocked dispatch outcome has no accessibility v
   await page.goto(`/projects/${projectId}/board?item=${itemId}`);
   await waitForApp(page);
   await page.getByRole('button', { name: 'Dispatch to agents' }).click();
-  // The blocked outcome names the policy — the card's own correctness bar
-  // ("show WHICH policy blocked it"), and a visible marker the note actually
-  // rendered in the item-details surface before scanning. The same policy is
-  // also repeated in a transient notification, so keep this locator scoped to
-  // the dialog rather than relying on a globally unique text match.
+  // The blocked outcome must name the policy, not just say "blocked" — this
+  // is a visible marker the note actually rendered in the item-details
+  // surface before scanning. The same policy is also repeated in a transient
+  // notification, so keep this locator scoped to the dialog rather than
+  // relying on a globally unique text match.
   await expect(
     page.getByRole('dialog', { name: 'Item details' }).getByText('prompt-injection'),
   ).toBeVisible();
@@ -587,11 +581,11 @@ test('sprint "Run sprint" dry-run preview has no accessibility violations', asyn
   // `createSprintWithItem` always creates a fresh sprint rather than
   // reusing one — so a sprint left over from another test can still be
   // "active" (non-closed) with items assigned, and would render its own,
-  // equally legitimate "Run sprint" button (Sprints.tsx renders one button
-  // per eligible sprint, by design — see TODO.md §6 "F1"). A unique sprint
-  // name plus an accessible name that includes it (`Run sprint: <name>`,
-  // also added by F1) is what disambiguates the two real buttons instead of
-  // relying on there being exactly one sprint in the project.
+  // equally legitimate "Run sprint" button (`Sprints.tsx` renders one button
+  // per eligible sprint, by design). A unique sprint name plus an accessible
+  // name that includes it (`Run sprint: <name>`) is what disambiguates the
+  // two real buttons instead of relying on there being exactly one sprint in
+  // the project.
   const sprintName = 'E2E Sprint (dry-run preview)';
   const { sprintId, sprintName: uniqueSprintName } = await createSprintWithItem(
     request,
@@ -599,9 +593,9 @@ test('sprint "Run sprint" dry-run preview has no accessibility violations', asyn
     sprintName,
   );
 
-  // `useAgentActivityMap`'s bulk fetch is Sprints.tsx's own "is orchestration
-  // enabled" gate for the "Run sprint" button (reusing the same probe Board.tsx
-  // uses — see `TODO.md` §6 "C4").
+  // `useAgentActivityMap`'s bulk fetch is `Sprints.tsx`'s own "is
+  // orchestration enabled" gate for the "Run sprint" button — the same probe
+  // `Board.tsx` uses.
   await page.route(`**/api/projects/${projectId}/agent-activity`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
   );
@@ -736,12 +730,11 @@ test('sprint dispatch results (mixed outcomes) has no accessibility violations',
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Approvals inbox (frontend/src/features/approvals/**, TODO.md §6 "D1",
-// tasks 36.1/36.2). Same `page.route()` interception technique as the Fleet
-// and dispatch scans above — this harness's webServer doesn't set
-// `TACK_ORCH_ENABLE`, so the disabled state below is the real default, and
-// there's no seeding UI for `orch_approvals` rows to populate the page
-// through the real API either.
+// Approvals inbox (`frontend/src/features/approvals/**`). Same
+// `page.route()` interception technique as the Fleet and dispatch scans
+// above — this harness's webServer doesn't set `TACK_ORCH_ENABLE`, so the
+// disabled state below is the real default, and there's no seeding UI for
+// `orch_approvals` rows to populate the page through the real API either.
 
 test('approvals inbox (orchestration disabled) has no accessibility violations', async ({ page }) => {
   await page.goto('/approvals');
@@ -850,11 +843,11 @@ test('approvals inbox without a saved browser decision credential has no accessi
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Project Settings → Orchestration tab (frontend/src/features/settings/
-// orchestration/**, TODO.md §6 "D2", tasks 36.3/36.4: budget + policy
-// panels). Same `page.route()` interception technique as the Fleet/
-// Approvals scans above — `GET /api/projects/{id}/orch-link`,
-// `GET /api/control-planes`, `GET /api/projects/{id}/orch-budget`, and
+// Project Settings → Orchestration tab (budget + policy panels,
+// `frontend/src/features/settings/orchestration/**`). Same `page.route()`
+// interception technique as the Fleet/Approvals scans above —
+// `GET /api/projects/{id}/orch-link`, `GET /api/control-planes`,
+// `GET /api/projects/{id}/orch-budget`, and
 // `GET /api/projects/{id}/orch-policy` are all mocked; the real project (via
 // `getOrCreateProject`) and the real `ProjectSettings`/`OrchestrationPanel`/
 // `LinkForm`/`BudgetPanel`/`PolicyPanel` components render and are scanned
@@ -980,17 +973,17 @@ test('project settings — orchestration tab (linked, budget + policy populated)
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Unit economics dashboard (frontend/src/features/economics/**, TODO.md §6
-// "D5", tasks 38.1-38.4). Same `page.route()` interception technique as the
-// Fleet/Approvals/Orchestration-tab scans above — this harness's webServer
-// doesn't set `TACK_ORCH_ENABLE`, so the disabled state below is the real,
-// unmodified default. The populated scan mocks `GET /api/economics/summary`
-// with a shape matching `frontend/src/features/economics/api.ts`'s
-// `EconomicsSummaryResponse` — including a below-min-sample slice (raw hours,
-// not an average) and a slice with excluded-stale rework attempts, since
-// those are the two states most likely to introduce an a11y issue (extra
-// badges/caveat text next to a number) that an all-populated fixture would
-// never exercise.
+// Unit economics dashboard (`frontend/src/features/economics/**`). Same
+// `page.route()` interception technique as the Fleet/Approvals/
+// Orchestration-tab scans above — this harness's webServer doesn't set
+// `TACK_ORCH_ENABLE`, so the disabled state below is the real, unmodified
+// default. The populated scan mocks `GET /api/economics/summary` with a
+// shape matching `frontend/src/features/economics/api.ts`'s
+// `EconomicsSummaryResponse` — including a below-min-sample slice (raw
+// hours, not an average) and a slice with excluded-stale rework attempts,
+// since those are the two states most likely to introduce an a11y issue
+// (extra badges/caveat text next to a number) that an all-populated fixture
+// would never exercise.
 
 test('economics page (orchestration disabled) has no accessibility violations', async ({ page }) => {
   await page.goto('/economics');
@@ -1098,16 +1091,15 @@ test('economics page (populated, below-min-sample and stale-rework states) has n
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// Provisioning wizard (frontend/src/features/provisioning/**, TODO.md §6
-// "D4", tasks 37.2/37.4). Same orchestration-disabled-by-default reality as
-// the Fleet/dispatch scans above: this harness's webServer does not set
-// TACK_ORCH_ENABLE, so the disabled scan below is the real default. The
-// populated scan intercepts `GET /api/control-planes` and `GET /api/templates`
-// (the two reads the wizard's gate + step 1/2 pickers need) and walks all the
-// way to the confirmation `Modal` — the highest-risk state for focus
-// trapping/labelling, and the one state C4's dispatch-confirmation precedent
-// and D1's approval-decision precedent both flagged as worth scanning
-// explicitly rather than assuming a generic `Modal` pass elsewhere covers it.
+// Provisioning wizard (`frontend/src/features/provisioning/**`). Same
+// orchestration-disabled-by-default reality as the Fleet/dispatch scans
+// above: this harness's webServer does not set `TACK_ORCH_ENABLE`, so the
+// disabled scan below is the real default. The populated scan intercepts
+// `GET /api/control-planes` and `GET /api/templates` (the two reads the
+// wizard's gate + step 1/2 pickers need) and walks all the way to the
+// confirmation `Modal` — the highest-risk state for focus trapping/labelling,
+// matching the confirmation-modal scans for dispatch and approval decisions
+// above rather than assuming a generic `Modal` pass elsewhere covers it.
 
 test('provisioning wizard (orchestration disabled) has no accessibility violations', async ({ page }) => {
   await page.goto('/provision');
@@ -1154,14 +1146,13 @@ test('provisioning wizard (confirmation modal open) has no accessibility violati
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// "Run with agent" (frontend/src/shared/runWithAgent/**, TODO.md III-E4,
-// Wave 4 / Phase 54). Unlike every Docket dispatch scan above, these routes
-// are NOT gated behind `TACK_ORCH_ENABLE` (see `run-with-agent.spec.ts`'s
-// own header comment) — no orchestration setup needed to reach this
-// surface's populated state. The two states scanned are the highest-risk
-// ones for focus/labelling per this file's own established precedent (a
-// modal with several distinct field groups, and a tab panel rendering a
-// list with inline action controls).
+// "Run with agent" (`frontend/src/shared/runWithAgent/**`). Unlike every
+// Docket dispatch scan above, these routes are NOT gated behind
+// `TACK_ORCH_ENABLE` — no orchestration setup needed to reach this surface's
+// populated state. The two states scanned are the highest-risk ones for
+// focus/labelling per this file's own established precedent (a modal with
+// several distinct field groups, and a tab panel rendering a list with
+// inline action controls).
 
 test('Board card "Run with agent" modal has no accessibility violations', async ({ page, request }) => {
   const projectId = await getOrCreateProject(request);
@@ -1178,15 +1169,16 @@ test('Board card "Run with agent" modal has no accessibility violations', async 
 
 test('item detail Execution tab (with a real request) has no accessibility violations', async ({ page, request }) => {
   const projectId = await getOrCreateProject(request);
-  // A guaranteed-fresh item — see `run-with-agent.spec.ts`'s identical note
-  // on why `getOrCreateItem` would accumulate state across repeated runs.
+  // A guaranteed-fresh item: `getOrCreateItem` reuses one shared item across
+  // a whole spec file, which would accumulate execution requests across
+  // repeated runs instead of giving this test its own clean state.
   const itemId = await createFreshItem(request, projectId, `A11y RWA detail ${Date.now()}`);
   const profileId = await createAgentProfile(request, `A11y Profile ${Date.now()}`);
   // An exact runner, not a fleet: `agent_fleet_members` has no write route
   // on any API surface, so a fleet created here would always have zero
-  // members and the live-capability gate (VI-C2) would refuse to submit
-  // against it forever — the same constraint `scheduler-e2e.spec.ts`
-  // documents at length and works around the same way.
+  // members and the live-capability gate would refuse to submit against it
+  // forever — the same constraint `scheduler-e2e.spec.ts` documents at
+  // length and works around the same way.
   const modelId = `opaque/model-a11y-${Date.now()}`;
   const { runnerId } = await enrollRunner(request, `A11y RWA Runner ${Date.now()}`, modelId);
 
@@ -1199,8 +1191,8 @@ test('item detail Execution tab (with a real request) has no accessibility viola
   // "Where it runs" disappears entirely whenever exactly one runner is
   // active and no fleet exists (`RunWithAgentModal.tsx`'s
   // `hideTargetPicker`) — select this test's own runner explicitly only
-  // when the picker actually renders, matching `scheduler-e2e.spec.ts`'s
-  // `fillExactRunnerTarget`.
+  // when the picker actually renders, matching how `scheduler-e2e.spec.ts`'s
+  // `fillExactRunnerTarget` handles the same picker.
   const picker = modal.getByRole('combobox', { name: 'Machine or group' });
   if ((await picker.count()) > 0) {
     await picker.selectOption(`exact_runner:${runnerId}`);
@@ -1208,15 +1200,15 @@ test('item detail Execution tab (with a real request) has no accessibility viola
   await modal.getByRole('combobox', { name: 'Agent profile' }).selectOption(profileId);
   // The repository fieldset is a read-only summary until "Change for this
   // run" is clicked — the free-text Remote field doesn't exist in the DOM
-  // before that (VI-C2 collapsed it).
+  // before that.
   await modal.getByRole('button', { name: 'Change for this run' }).click();
   await modal.getByLabel('Remote').fill('git@example.com:org/repo.git');
   await modal.getByLabel('Base revision').fill('a11y-rwa-detail');
   // A specific, matching model choice: with no default model configured
   // anywhere (agent profile / project / fleet), the live-capability gate
-  // (VI-C2) refuses to submit an unresolved "Auto" request — it would
-  // queue forever. The target declares exactly one combination
-  // (`enrollRunner`'s fixed capability shape), so it is always index "0".
+  // refuses to submit an unresolved "Auto" request — it would queue
+  // forever. The target declares exactly one combination (`enrollRunner`'s
+  // fixed capability shape), so it is always index "0".
   await modal.getByLabel('Choose…').check();
   await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
   await modal.getByRole('button', { name: 'Run' }).click();
@@ -1229,12 +1221,11 @@ test('item detail Execution tab (with a real request) has no accessibility viola
   expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
 });
 
-// III-F4: the attempt-detail panel (`AttemptList.tsx` — model provenance,
-// usage economics, and the expanded events/decisions/artifacts sections).
-// Scans with a real claimed attempt so the expanded state (radios, text
-// fields, buttons across `EventTimeline`/`DecisionInbox`/
-// `ArtifactDownloadPanel`) is actually present in the DOM, not just the
-// collapsed row.
+// The attempt-detail panel (`AttemptList.tsx` — model provenance, usage
+// economics, and the expanded events/decisions/artifacts sections). Scans
+// with a real claimed attempt so the expanded state (radios, text fields,
+// buttons across `EventTimeline`/`DecisionInbox`/`ArtifactDownloadPanel`) is
+// actually present in the DOM, not just the collapsed row.
 test('item detail Execution tab — expanded attempt detail (events/decisions/artifacts) has no accessibility violations', async ({
   page,
   request,

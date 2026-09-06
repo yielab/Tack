@@ -61,6 +61,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The comment gate now scans the E2E suite.** `scripts/check-comments.sh` covered only
+  `crates/` and `frontend/src`; `frontend/e2e` is now a third default root. Fixing it
+  required a real bug in the "pointers to files that do not exist" check first: a
+  citation broken across a line wrap produced a short fragment (e.g. `spec.ts`) that
+  wasn't a real filename, and once used to search for matches it silently caught every
+  genuine `*.spec.ts` citation too — 21 of the 22 pointers the gate originally reported
+  in `frontend/e2e` were this, not real staleness. The fix recognizes and drops a "dead"
+  candidate that is itself the tail of some real tracked filename, rather than trying to
+  anchor the search pattern (every real filename ends the same way a fragment does, so
+  no anchor can tell them apart). One pointer was genuinely stale — a Rust test file
+  cited by its pre-rename name — and is now repointed. The 69 remaining flagged lines
+  across six E2E spec files were rewritten to keep the knowledge they wrapped (why a
+  test waits, what a fixture proves, what a real product gap is) without the card ids,
+  wave/phase numbers, and handoff-path citations.
+
 - **Tests run under nextest, and every test runs once.** `cargo nextest run --workspace`
   replaces `cargo test` in CI, `make test`, the `/gate` skill and the docs. A green run
   prints failures and one summary line instead of one line per test; every Rust test runs
