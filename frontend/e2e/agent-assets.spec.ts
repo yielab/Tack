@@ -6,17 +6,16 @@ import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { waitForApp } from './helpers';
 
-// Records VI-D2's real Agents-page screenshots — agents.png, attempt.png,
-// two-machines.png — plus a `hero gif` test that is currently SKIPPED (see
-// its own `test.skip` and docs/agent-handoffs/part-vi/VI-D2.md, "Re-recording
-// hero.gif", before touching it). `docs/screenshots/hero.gif` itself is NOT
-// part of this card's shipped output: the only dispatch path this build's
-// "Run with agent" dialog allows (Auto) is never claimed by the scheduler,
-// and every dispatch path that actually completes is disabled by the
-// dialog's own submit gate — recording the dialog "working" would show a
-// click that did nothing real. The existing hero.gif (PM views, no agent
-// run) stays in its original slot until that gate ships and this test is
-// re-enabled.
+// Records real Agents-page screenshots — agents.png, attempt.png,
+// two-machines.png — plus a `hero gif` test that is currently SKIPPED (read
+// the RE-RECORDING RECIPE comment on its own `test.skip` before touching
+// it). `docs/screenshots/hero.gif` is NOT produced by this file yet: the
+// only dispatch path this build's "Run with agent" dialog allows (Auto) is
+// never claimed by the scheduler, and every dispatch path that actually
+// completes is disabled by the dialog's own submit gate — recording the
+// dialog "working" would show a click that did nothing real. The existing
+// hero.gif (PM views, no agent run) stays in its original slot until that
+// gate ships and this test is re-enabled.
 //
 // Run against an ALREADY-RUNNING release build of `tack serve --with-runner`
 // (built with `--features embed-spa` so the SPA is actually embedded — the
@@ -31,9 +30,8 @@ import { waitForApp } from './helpers';
 //
 // with E2E_API_ORIGIN pointing at that server (e.g. http://127.0.0.1:3311).
 // Every execution this spec creates is a real, live, billed model call
-// against the harness named in the request — that is this card's whole
-// point ("every frame is real"). See docs/agent-handoffs/part-vi/VI-D2.md
-// for exact commands, machine, timing and request ids.
+// against the harness named in the request — every frame this produces is
+// real, not staged.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, '../../docs/screenshots');
@@ -99,9 +97,8 @@ async function screenshotFullContent(page: Page, outPath: string): Promise<void>
 // requests while idle) — often enough that an ordinary operator write can
 // lose the single-writer race and come back `500 database is locked`
 // (`crates/tack-api/src/error.rs`'s own `Database error` log line, itself
-// marked `retryable: true`). A real, measured environmental finding (see
-// the handoff), not a recording bug — retried here exactly like a real
-// client would.
+// marked `retryable: true`). A real, measured environmental condition, not a
+// recording bug — retried here exactly like a real client would.
 async function apiFetch(p: string, init?: RequestInit) {
   let lastErr: unknown;
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -151,14 +148,15 @@ test.beforeAll(async () => {
   scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vi-d2-agent-assets-'));
 
   // A real, disposable git fixture — same shape scripts/smoke.sh's own live
-  // mode uses. Nothing in this recording asks the harness to touch it (see
-  // the handoff's sandbox-tool-access finding); it exists because
+  // mode uses. Nothing in this recording asks the harness to touch it — the
+  // sandbox this harness runs in has no file/Bash tools available to it, only
+  // MCP connectors — but the fixture still has to exist because
   // `repository_snapshot` is a required field on every real execution
   // request regardless.
   repoDir = path.join(scratchRoot, 'repo');
   fs.mkdirSync(repoDir, { recursive: true });
   execSync('git init -q -b main', { cwd: repoDir });
-  fs.writeFileSync(path.join(repoDir, 'README.md'), '# Demo repository for the Tack VI-D2 asset recording\n');
+  fs.writeFileSync(path.join(repoDir, 'README.md'), '# Demo repository for Tack agent-onboarding screenshots\n');
   execSync('git add README.md', { cwd: repoDir });
   execSync('git -c user.email=demo@invalid -c user.name=demo commit -q -m seed', { cwd: repoDir });
   repoRev = execSync('git rev-parse HEAD', { cwd: repoDir }).toString().trim();
@@ -221,15 +219,15 @@ test.afterAll(() => {
 //
 // RE-RECORDING RECIPE — read this whole block before removing the `test.skip`
 // below. Everything from here to the "Flush the video" comment already
-// produces the exact footage this card wants; only the ~15 lines between
+// produces the exact footage this test wants; only the ~15 lines between
 // "Scene: open Run with agent" and "Scene: the board card's state chip" need
-// to change, once the gate this test is blocked on ships:
+// to change, once the dispatch-gate bug below ships a fix:
 //
 //   1. Confirm the fix landed: with the modal open, Harness = Claude Code,
 //      Model mode = "Project default — anthropic / claude-sonnet-4-5", the
 //      badge beneath it must read something other than "Unsupported" and
 //      the "Run" button must NOT be disabled. If it is still disabled or
-//      still says Unsupported, the gate has not shipped — do not record.
+//      still says Unsupported, the fix has not shipped — do not record.
 //   2. Delete the `page.keyboard.press('Escape')` line and the entire
 //      `apiFetch('/executions', …)` block that follows it (through
 //      `const requestId = created.request_id;`).
@@ -248,16 +246,16 @@ test.afterAll(() => {
 //      (`test.use` above), the disposable one-commit git fixture
 //      (`repoDir`/`repoRev`, `beforeAll`), the tool-free agent-profile
 //      instructions (`PROFILE_INSTRUCTIONS` — this sandbox's `claude`
-//      subprocess has no file/Bash tools, only two MCP connectors; a
-//      file-editing instruction will not do real work here, see the
-//      handoff), and the GIF encode settings two lines below
-//      (`fps=6,scale=860:-2` — the first pass at `fps=8,scale=1000:-2` was
-//      4.44 MiB, over this card's own budget; this pass was 2.63 MiB).
+//      subprocess has no file/Bash tools, only two MCP connectors, so a
+//      file-editing instruction will not do real work here), and the GIF
+//      encode settings two lines below (`fps=6,scale=860:-2` — the first
+//      pass at `fps=8,scale=1000:-2` was 4.44 MiB; this pass was 2.63 MiB,
+//      keeping the asset well under a few MiB).
 //   6. Re-enable the test (delete the `test.skip` line), run it, and update
-//      `README.md`'s hero slot + the `## Screenshots` block the same way
-//      this handoff's superseded diff did (see `git log -p` on this file's
-//      commit for the exact markup) — and put the new hero.gif back in the
-//      top hero slot, moving the diagram beneath it again.
+//      `README.md`'s hero slot + the `## Screenshots` block (see `git log -p`
+//      on this file for the markup a prior recording used) — put the new
+//      hero.gif back in the top hero slot, moving the diagram beneath it
+//      again.
 //   7. `make gif` still points at the OLD `hero-gif.spec.ts` (PM-tour,
 //      dev-webServer, fake harness shims) via `playwright.capture.config.ts`
 //      — running it after re-recording would silently put that stale
@@ -273,8 +271,7 @@ test('hero gif', async ({ page }) => {
       '(Auto) and never claimed by the scheduler — recording a click on Run ' +
       'today would show either a disabled button or a live "Unsupported" badge ' +
       'immediately before the run succeeds by a different mechanism. See the ' +
-      "re-recording recipe in the comment above this test, and " +
-      'docs/agent-handoffs/part-vi/VI-D2.md.',
+      're-recording recipe in the comment above this test.',
   );
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -307,11 +304,10 @@ test('hero gif', async ({ page }) => {
   // submit — but the real request then sits `queued` forever: reproduced
   // directly against this exact build (item created, harness claude-code,
   // exact_runner selector) and confirmed stuck at both +11s and +29s with
-  // no attempt ever created — the request id and timestamps are in this
-  // card's handoff. Both are real product gaps, not a recording shortcut;
-  // flagged there for whoever owns RunWithAgentModal/VI-C2 next. Closing
-  // here and dispatching the exact configuration just entered directly
-  // against the real API is what actually reaches a completed attempt.
+  // no attempt ever created. Both are real product gaps, not a recording
+  // shortcut. Closing here and dispatching the exact configuration just
+  // entered directly against the real API is what actually reaches a
+  // completed attempt.
   await page.keyboard.press('Escape');
   await page.waitForTimeout(600);
 
@@ -471,19 +467,20 @@ test('attempt screenshot', async ({ page }) => {
   // event this attempt reports has no short `text`/`message` field, so
   // `EventTimeline`'s fallback renders its FULL raw JSON payload verbatim —
   // which includes the artifact's server-side `staged_path` (this machine's
-  // home directory, this card's own worktree id, and the scratch state
-  // directory) and a model reply that free-associates into "a Trello board"
-  // (an artifact of this sandbox's tool-free instruction, not a Tack
-  // integration). Both are real, unedited — collapsing this panel is the
-  // fix, not blurring or cropping the payload text out from the middle of
-  // an otherwise-expanded screenshot (Timeline/Decisions/Artifacts all live
-  // under the same `<Show>` in AttemptList.tsx, so no partial expand is
+  // home directory, this recording's own scratch-worktree id, and the
+  // scratch state directory) and a model reply that free-associates into "a
+  // Trello board" (an artifact of this sandbox's tool-free instruction, not
+  // a Tack integration). Both are real, unedited — collapsing this panel is
+  // the fix, not blurring or cropping the payload text out from the middle
+  // of an otherwise-expanded screenshot (Timeline/Decisions/Artifacts all
+  // live under the same `<Show>` in AttemptList.tsx, so no partial expand is
   // possible). Requested-vs-actual model ("Matched request — Ran on
   // anthropic / claude-sonnet-4-5, as requested") and usage marked measured
   // (`Model/token cost $0.04 (measured)`, `Runner time cost — Not
   // measured`) are both already visible in this collapsed summary; the
-  // artifact list and the raw event log are not — see the handoff amendment
-  // for why that trade is the one this card is making.
+  // artifact list and the raw event log are not, which is the trade this
+  // screenshot makes: a clean, on-topic frame over full disclosure of every
+  // expanded panel.
   await screenshotFullContent(page, path.join(OUT_DIR, 'attempt.png'));
   console.log('\n✓ attempt.png saved\n');
 });
@@ -553,9 +550,9 @@ test('two-machines screenshot', async ({ page }) => {
   await enrollAndStart('workstation-claude', { host: 'linux-workstation', harness: 'claude-code' }, pathClaudeOnly, runnerAState);
   await enrollAndStart('cibox-codex', { host: 'ci-container', harness: 'codex' }, pathCodexOnly, runnerBState);
 
-  // Real verification (via the API, not this panel — see the handoff: this
-  // panel never reads back connection state, by design/gap, so its own
-  // badge stays "Connection unconfirmed" even once both are truly active).
+  // Real verification via the API, not this panel: the Advanced panel never
+  // reads back connection state, so its own badge stays "Connection
+  // unconfirmed" even once both runners are truly active.
   const deadline = Date.now() + 20_000;
   let bothActive = false;
   while (Date.now() < deadline) {
@@ -576,12 +573,9 @@ test('two-machines screenshot', async ({ page }) => {
 
   // Cropped to exactly this section (`EnrollmentPanel.tsx`'s own heading and
   // the two-runner list beneath it), not the whole Advanced panel: the
-  // panel's intro paragraph literally renders a board handoff path
-  // (`docs/agent-handoffs/part-iii/III-E3.md`, `EnrollmentPanel.tsx:210`) —
-  // real product text, not this card's to change (carded separately) — and
-  // the enroll/revoke-by-id forms above and below it add nothing "one
-  // board, many runners" needs. `locator.screenshot()` captures exactly
-  // this element's own rendered box, not the full page.
+  // enroll/revoke-by-id forms above and below it add nothing "one board,
+  // many runners" needs. `locator.screenshot()` captures exactly this
+  // element's own rendered box, not the full page.
   const sessionHeading = page.getByText('Runners enrolled or revoked this session', { exact: true });
   const sessionSection = sessionHeading.locator('xpath=..');
   await sessionSection.screenshot({ path: path.join(OUT_DIR, 'two-machines.png') });

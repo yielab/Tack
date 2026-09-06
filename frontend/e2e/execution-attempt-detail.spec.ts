@@ -13,12 +13,12 @@ import {
   waitForApp,
 } from './helpers';
 
-// III-F4: the attempts/events/decisions/artifacts UI added to the Execution
-// tab (`shared/runWithAgent/{AttemptList,EventTimeline,DecisionInbox,
+// The attempts/events/decisions/artifacts UI on the Execution tab
+// (`shared/runWithAgent/{AttemptList,EventTimeline,DecisionInbox,
 // ArtifactDownloadPanel}.tsx`), proven through the real production router —
-// not a mock. VI-C4 replaced both panels' manual "enter an id you already
-// know" fallback with real discovery (`GET .../attempts/{n}/decisions`,
-// `GET .../attempts/{n}/artifacts`) — every assertion below finds a
+// not a mock. Both panels discover decisions/artifacts for real
+// (`GET .../attempts/{n}/decisions`, `GET .../attempts/{n}/artifacts`)
+// rather than taking a manually typed id — every assertion below finds a
 // decision/artifact through its listed row, never by typing an id.
 
 test.describe('Execution tab — real attempts/decisions/artifacts against the production router', () => {
@@ -72,9 +72,9 @@ test.describe('Execution tab — real attempts/decisions/artifacts against the p
 
     await drawer2.getByRole('button', { name: /Show events, decisions & artifacts/ }).click();
     await expect(drawer2.getByText('No events reported yet')).toBeVisible();
-    // Discovered honestly through the real list routes this card adds —
-    // nothing raised yet, never a fake empty state conflated with a typed
-    // id that simply hasn't been entered.
+    // Discovered honestly through the real list routes — nothing raised
+    // yet, never a fake empty state conflated with a typed id that simply
+    // hasn't been entered.
     await expect(drawer2.getByText('No decisions raised yet')).toBeVisible();
     await expect(drawer2.getByText('No artifacts yet')).toBeVisible();
 
@@ -97,10 +97,10 @@ test.describe('Execution tab — real attempts/decisions/artifacts against the p
     await expect(drawer3.getByText('Pending')).toBeVisible();
 
     // Resolve with NO decision token entered — the real, fail-closed
-    // default this card's brief names explicitly ("decisions cannot be
-    // resolved on this deployment" is a real, expected operator-facing
-    // state). Toasts render via a `<Portal>` to `document.body`, outside
-    // the dialog subtree — asserted page-wide, not `drawer3`-scoped.
+    // default: "decisions cannot be resolved on this deployment" is a real,
+    // expected operator-facing state, not an error. Toasts render via a
+    // `<Portal>` to `document.body`, outside the dialog subtree — asserted
+    // page-wide, not `drawer3`-scoped.
     await drawer3.getByRole('radio', { name: 'Allow once' }).check();
     await drawer3.getByRole('button', { name: 'Resolve' }).click();
     await expect(
@@ -142,7 +142,7 @@ test.describe('Execution tab — real attempts/decisions/artifacts against the p
     await drawer.getByRole('button', { name: /Show events, decisions & artifacts/ }).click();
 
     // Both discovered through their real list routes — no id typed
-    // anywhere, unlike the pre-VI-C4 manual-entry fallback.
+    // anywhere, never a manual-entry fallback.
     await expect(drawer.getByText('e2e: allow this action?')).toBeVisible();
     await expect(drawer.getByText(`${artifactId}.txt`)).toBeVisible();
 

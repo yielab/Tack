@@ -11,12 +11,12 @@
 # it.
 #
 # Scope: comments, doc comments and human-readable strings under crates/
-# (*.rs) and frontend/src (*.ts, *.tsx).
-# Usage: scripts/check-comments.sh [path ...]   (default: crates/ frontend/src)
+# (*.rs), frontend/src (*.ts, *.tsx) and frontend/e2e (*.ts).
+# Usage: scripts/check-comments.sh [path ...]   (default: crates/ frontend/src frontend/e2e)
 set -uo pipefail
 
 if [ "$#" -eq 0 ]; then
-  ROOTS=(crates/ frontend/src)
+  ROOTS=(crates/ frontend/src frontend/e2e)
 else
   ROOTS=("$@")
 fi
@@ -97,10 +97,22 @@ report "AI attribution" \
 # and a reader who follows two dead pointers stops trusting the third.
 #
 # Matches on basename, so it catches a removed or renamed file rather than a
-# wrong directory. A filename broken across a line wrap hides from this check —
-# which is a reason not to wrap one. Checked against every tracked .rs/.ts/.tsx
-# file in the repo, not just the scanned roots, since a TS comment routinely
-# cites a Rust handler and vice versa.
+# wrong directory (checked against every tracked .rs/.ts/.tsx file in the repo,
+# not just the scanned roots, since a TS comment routinely cites a Rust handler
+# and vice versa) — never a path relative to the comment's own file, so nothing
+# here depends on which root is scanned.
+#
+# A citation broken across a line wrap (a filename ending one line and
+# continuing on the next, e.g. `provider-key-panel` / `.spec.ts`) yields a
+# fragment such as "spec.ts": not a real name, so "dead" by the comm below —
+# and then, once that fragment becomes part of a search pattern, a substring
+# match on every genuine "*.spec.ts" citation in the scanned roots, reporting
+# real, checked-in files as missing. Anchoring the search cannot fix this:
+# every real filename also ends in ".ts"/".tsx"/".rs", so no anchor tells a
+# fragment's tail from a whole name's tail. The fix is catching it earlier —
+# a "dead" candidate that is itself the tail of some real tracked filename is
+# exactly what a split citation produces, and is dropped before it is ever
+# turned into a pattern.
 dead_pointers() {
   local known cited
   known=$(git ls-files '*.rs' '*.ts' '*.tsx' 2>/dev/null | sed 's#.*/##' | sort -u)
@@ -109,10 +121,19 @@ dead_pointers() {
     | grep -oE '[A-Za-z0-9_.-]+\.(rs|tsx?)' | sort -u \
     | grep -vxFf <(printf '%s\n' "$ALLOW_CITED" | grep -v '^$') || true)
   [ -z "$cited" ] && return 0
-  local dead
+  local dead candidate real_dead=""
   dead=$(comm -23 <(printf '%s\n' "$cited") <(printf '%s\n' "$known"))
   [ -z "$dead" ] && return 0
-  grep -rnE "$(printf '%s\n' "$dead" | sed 's/\./\\./g' | paste -sd'|')" \
+  while IFS= read -r candidate; do
+    [ -z "$candidate" ] && continue
+    if printf '%s\n' "$known" | grep -qE -- "$(printf '%s' "$candidate" | sed 's/[.[\*^$]/\\&/g')\$"; then
+      continue  # tail of a real filename: a line-wrapped citation, not a stale one
+    fi
+    real_dead="${real_dead}${candidate}
+"
+  done <<< "$dead"
+  [ -z "$real_dead" ] && return 0
+  grep -rnE "$(printf '%s\n' "$real_dead" | grep -v '^$' | sed 's/\./\\./g' | paste -sd'|')" \
     "${INCLUDES[@]}" "${ROOTS[@]}" 2>/dev/null \
     | grep -E ':[[:space:]]*\{?[[:space:]]*(//|///|//!|/\*|\*)' || true
 }
