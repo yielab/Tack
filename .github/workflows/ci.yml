@@ -431,7 +431,15 @@ jobs:
   e2e:
     name: E2E (Playwright, cross-browser)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Fixed setup (checkout through `playwright install --with-deps`) plus this
+    # suite's own three browser projects, each run to completion serially
+    # (`workers: 1` in CI — SQLite is single-writer): measured real per-project
+    # time, on real per-project content, comfortably exceeds 25 minutes before
+    # any CI-runner variance is added. Margin here is deliberate, not padding:
+    # a suite this test-timeout-bound can lose several minutes to a single
+    # test that exhausts its own timeout across every retry, and that cost
+    # doesn't show up until it's actually measured.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@stable
