@@ -343,7 +343,15 @@ where
             work: work.clone(),
             workspace,
         };
-        self.adapter.validate(&spec).await?;
+        match self.adapter.validate(&spec).await {
+            Ok(()) => {}
+            Err(HarnessError::Rejected { reason }) => {
+                return self
+                    .fail_before_spawn(session, &mut record, &spec, reason)
+                    .await;
+            }
+            Err(error) => return Err(error.into()),
+        }
         let handle = self.adapter.start(&spec).await?;
         record.state = JournalState::ProcessObservedRunning;
         record.process_id = Some(handle.process_id.clone());
@@ -978,6 +986,125 @@ where
         }
     }
 
+    /// Turns a harness rejection that arrived after the attempt was already
+    /// announced as `preparing` into a reported failure, through the same
+    /// durable outbox every other terminal report goes through.
+    ///
+    /// Propagating the rejection as an error instead leaves the server holding
+    /// an attempt in `preparing` under a lease nothing will ever heartbeat or
+    /// complete, and the journal holding a `prepared` record with no process
+    /// behind it — a hang only a later restart's recovery scan would resolve,
+    /// with nothing anywhere saying why. The rejection is settled information:
+    /// the adapter looked at the request and refused it before any process
+    /// existed, so the honest report is `failed` with that refusal as the
+    /// reason. Only [`HarnessError::Rejected`] is settled in this sense; a
+    /// process or recovery failure says nothing about the request itself and
+    /// keeps propagating.
+    ///
+    /// Nothing ran, and the report says so in the contract's own vocabulary:
+    /// no harness version was observed, the model is the requested one marked
+    /// as never confirmed (or `unknown`/`not_observed` when none was
+    /// requested), every feature capability is `unsupported` because none was
+    /// exercised, and every usage figure is `not_measured`.
+    async fn fail_before_spawn(
+        &self,
+        session: &RunnerSession,
+        record: &mut AttemptJournal,
+        spec: &ExecutionSpec,
+        reason: String,
+    ) -> Result<RunCycle, EngineError> {
+        use tack_orch::execution as domain;
+
+        let now = chrono::DateTime::<chrono::Utc>::from(self.clock.now());
+        let request = &spec.work.request;
+        let unexercised = || domain::CapabilityValue {
+            support: domain::CapabilitySupport::Unsupported,
+            reason: Some("the harness rejected this execution before it started".to_owned()),
+            additional: BTreeMap::new(),
+        };
+        fn not_measured<T>() -> domain::Measurement<T> {
+            domain::Measurement {
+                value: None,
+                source: domain::MeasurementSource::NotMeasured,
+                additional: BTreeMap::new(),
+            }
+        }
+        let (model_provider, model_id, model_observation_source) = match (
+            request.requested_model_provider.as_ref(),
+            request.requested_model_id.as_ref(),
+        ) {
+            (Some(provider), Some(model)) => (
+                provider.as_str().to_owned(),
+                model.as_str().to_owned(),
+                crate::harness::ModelObservationSource::RequestedNotConfirmed,
+            ),
+            _ => (
+                "unknown".to_owned(),
+                "unknown".to_owned(),
+                crate::harness::ModelObservationSource::NotObserved,
+            ),
+        };
+
+        let report = CompletionReport {
+            protocol_version: ProtocolVersion::v1(),
+            runner_id: session.runner_id.clone(),
+            completion_id: CompletionId::new(format!(
+                "completion:{}:{}",
+                record.attempt_id.as_str(),
+                record.fencing_token.0
+            )),
+            attempt_id: record.attempt_id.clone(),
+            fencing_token: record.fencing_token,
+            terminal_state: AttemptState::Failed,
+            terminal_reason: serde_json::json!({
+                "code": "harness_rejected",
+                "message": reason,
+            }),
+            final_event_checkpoint: record.last_event_checkpoint.clone(),
+            actual_execution: domain::ActualExecution {
+                harness_kind: request.requested_harness_kind.clone(),
+                harness_version: String::new(),
+                model_provider: domain::ActualModelProvider::new(model_provider),
+                model_id: domain::ActualModelId::new(model_id),
+                model_observation_source: model_observation_source.as_str().to_owned(),
+                capability_snapshot: domain::FeatureCapabilities {
+                    cancel: unexercised(),
+                    resume: unexercised(),
+                    decisions: unexercised(),
+                    artifacts: unexercised(),
+                    usage: unexercised(),
+                    additional: BTreeMap::new(),
+                },
+                workspace_id: domain::WorkspaceId::new(record.workspace.workspace_id.as_str()),
+                base_revision: record.workspace.base_revision.clone(),
+                started_at: now,
+                ended_at: now,
+                additional: BTreeMap::new(),
+            },
+            usage: domain::Usage {
+                tokens_in: not_measured(),
+                tokens_out: not_measured(),
+                duration_ms: not_measured(),
+                cost_usd: not_measured(),
+                additional: BTreeMap::new(),
+            },
+        };
+        tracing::warn!(
+            attempt_id = %record.attempt_id.as_str(),
+            "harness rejected the execution before it started; reporting the attempt as failed"
+        );
+        self.persist_pending_terminal_report(
+            record,
+            PendingTerminalReportKind::Completion,
+            &report,
+        )?;
+        let cycle = self.send_pending_terminal_report(session, record).await?;
+        if matches!(cycle, RunCycle::Completed { .. }) {
+            let _ = self.workspaces.cleanup(&spec.workspace);
+        }
+        Ok(cycle)
+    }
+
     async fn quarantine_after_spawn(
         &self,
         session: &RunnerSession,
@@ -1531,6 +1658,8 @@ mod tests {
     #[derive(Clone)]
     struct FakeAdapter {
         expected_journal: PathBuf,
+        validate_error: Option<HarnessError>,
+        start_calls: Arc<AtomicUsize>,
         start_after_journal: Arc<AtomicBool>,
         cancel_calls: Arc<AtomicUsize>,
         cancellation_evidence: CancellationEvidence,
@@ -1551,10 +1680,14 @@ mod tests {
     #[async_trait]
     impl HarnessAdapter for FakeAdapter {
         async fn validate(&self, _spec: &ExecutionSpec) -> Result<(), HarnessError> {
-            Ok(())
+            match &self.validate_error {
+                Some(error) => Err(error.clone()),
+                None => Ok(()),
+            }
         }
 
         async fn start(&self, _spec: &ExecutionSpec) -> Result<LocalRunHandle, HarnessError> {
+            self.start_calls.fetch_add(1, Ordering::SeqCst);
             self.start_after_journal
                 .store(self.expected_journal.exists(), Ordering::SeqCst);
             Ok(LocalRunHandle {
@@ -1776,6 +1909,8 @@ mod tests {
     fn adapter(expected_journal: PathBuf) -> FakeAdapter {
         FakeAdapter {
             expected_journal,
+            validate_error: None,
+            start_calls: Arc::new(AtomicUsize::new(0)),
             start_after_journal: Arc::new(AtomicBool::new(false)),
             cancel_calls: Arc::new(AtomicUsize::new(0)),
             cancellation_evidence: CancellationEvidence {
@@ -2510,6 +2645,81 @@ mod tests {
             assert!(journal.unresolved().expect("scanned journal").is_empty());
             std::fs::remove_dir_all(root).expect("remove temporary root");
         }
+    }
+
+    /// A request the adapter refuses at `validate` — a disabled provider, a
+    /// binary that vanished, a policy the harness cannot honour — arrives
+    /// after the engine has already journaled the attempt and announced it as
+    /// `preparing`. It must end as a reported `failed` attempt through the
+    /// terminal outbox, with the refusal as its reason, and the record must be
+    /// settled in this same cycle. The absence is asserted directly: no
+    /// process is ever started for it.
+    #[tokio::test]
+    async fn a_rejection_at_validate_is_reported_failed_and_never_spawns() {
+        let root_dir = temporary_root("validate-rejected");
+        let root = root_dir.path();
+        let journal = OwnerOnlyJournal::new(root);
+        let protocol = protocol(work(), false, false);
+        let mut adapter = adapter(journal.journal_path(&AttemptId::new("attempt")));
+        adapter.validate_error = Some(HarnessError::Rejected {
+            reason: "provider endpoint could not be resolved".into(),
+        });
+        let start_calls = Arc::clone(&adapter.start_calls);
+        let engine = RunnerEngine::new(
+            protocol.clone(),
+            adapter,
+            journal.clone(),
+            WorkspaceManager::new(
+                root.join("workspaces"),
+                FakeWorktree {
+                    expected_journal: journal.journal_path(&AttemptId::new("attempt")),
+                    provision_after_journal: Arc::new(AtomicBool::new(false)),
+                },
+            ),
+        );
+
+        let cycle = engine
+            .run_once(&session(), claim_request())
+            .await
+            .expect("a refused request is a settled cycle, not an engine error");
+
+        assert!(matches!(cycle, RunCycle::Completed { .. }));
+        assert_eq!(
+            start_calls.load(Ordering::SeqCst),
+            0,
+            "no process may be started for a request the adapter refused"
+        );
+        let completions = protocol
+            .reported_completions
+            .lock()
+            .expect("fake protocol lock");
+        assert_eq!(completions.len(), 1);
+        let report = &completions[0];
+        assert_eq!(report.terminal_state, AttemptState::Failed);
+        assert_eq!(report.terminal_reason["code"], "harness_rejected");
+        assert_eq!(
+            report.terminal_reason["message"],
+            "provider endpoint could not be resolved"
+        );
+        assert_eq!(report.actual_execution.harness_version, "");
+        assert_eq!(report.actual_execution.model_provider.as_str(), "openai");
+        assert_eq!(
+            report.actual_execution.model_id.as_str(),
+            "opaque/model-alpha"
+        );
+        assert_eq!(
+            report.actual_execution.model_observation_source,
+            "requested_not_confirmed"
+        );
+        assert_eq!(
+            report.actual_execution.workspace_id.as_str(),
+            "ws_617474656d7074"
+        );
+        assert_eq!(report.usage.tokens_in.value, None);
+        assert!(
+            journal.unresolved().expect("scanned journal").is_empty(),
+            "the record must be settled now, not left for a restart's recovery scan"
+        );
     }
 
     #[tokio::test]

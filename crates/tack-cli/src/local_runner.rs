@@ -458,40 +458,7 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
 
     async fn start(&self) -> Result<(), LocalRunnerControlError> {
         let mut state = self.state.lock().await;
-        if state.running.is_some() {
-            // Idempotent, mirroring `OrchRuntime::start` — a second
-            // `PUT {"enabled": true}` (or the boot-time check racing a UI
-            // toggle) must never spawn a duplicate runner task.
-            return Ok(());
-        }
-        let bound_addr = state.bound_addr.ok_or_else(|| {
-            LocalRunnerControlError::StartFailed(
-                "the server's own address is not yet known".to_owned(),
-            )
-        })?;
-
-        let mut runner_config = state.runner_config.clone();
-        runner_config.api_base_url = format!("http://{bound_addr}/api/runner/v1");
-        ensure_runner_credential(&mut runner_config, &self.server_config)
-            .await
-            .map_err(|error| LocalRunnerControlError::StartFailed(error.to_string()))?;
-
-        let (shutdown, shutdown_handle) = Shutdown::channel();
-        let runner_task = tokio::spawn(bootstrap::run(
-            runner_config.clone(),
-            runner_limits(),
-            shutdown,
-        ));
-        // Remembered so a later stop-then-start reuses whatever credential
-        // resolution just produced (a stored session, or the fresh
-        // self-provisioned one) instead of redoing it from scratch.
-        state.runner_config = runner_config;
-        state.running = Some(Running {
-            shutdown_handle,
-            runner_task,
-            since: Utc::now(),
-        });
-        Ok(())
+        self.start_locked(&mut state).await
     }
 
     async fn stop(&self) {
@@ -554,6 +521,9 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
                 state.vercel_ai_gateway_secret_auto_enabled = true;
             }
         }
+        if provider_resolves_secret(&state.runner_config.providers, name) {
+            self.restart_for_provider_change_locked(&mut state).await?;
+        }
         Ok(())
     }
 
@@ -565,6 +535,11 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
             .map_err(|error| LocalRunnerControlError::SecretStore(error.to_string()))?;
         state.secret_meta.remove(name);
         save_secret_meta(&state.runner_config.state_dir, &state.secret_meta);
+
+        // Decided before the flag below may change: a provider whose only
+        // credential was just removed is one the running runner was
+        // configured with, whether or not it stays enabled afterwards.
+        let affects_provider = provider_resolves_secret(&state.runner_config.providers, name);
 
         // The mirror of `set_secret`'s own flip, narrowed the identical
         // way: only the default secret name is ever considered, so a
@@ -586,6 +561,9 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
             provider.enabled = false;
             state.vercel_ai_gateway_secret_auto_enabled = false;
         }
+        if affects_provider {
+            self.restart_for_provider_change_locked(&mut state).await?;
+        }
         Ok(())
     }
 
@@ -606,6 +584,117 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
                 .provider_catalog
                 .get(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY),
         )
+    }
+}
+
+/// How long a stopped runner task is given to actually exit before a
+/// configuration change stops waiting for it and aborts it outright. Shutdown
+/// is observed between protocol calls and terminates every harness child
+/// first, so this is a backstop against a wedged task, not the expected path.
+const RUNNER_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Whether any configured provider resolves its credential from the
+/// secret-store entry `name`. `RunnerConfig`'s `secret` references may carry
+/// the explicit `store:` prefix `SecretStore::resolve` also accepts, so both
+/// spellings name the same entry.
+fn provider_resolves_secret(
+    providers: &std::collections::BTreeMap<String, tack_runner::config::ProviderConfig>,
+    name: &str,
+) -> bool {
+    providers.values().any(|provider| {
+        provider
+            .secret
+            .strip_prefix("store:")
+            .unwrap_or(&provider.secret)
+            == name
+    })
+}
+
+impl EmbeddedRunnerControl {
+    /// The runner receives its configuration by value when it is spawned —
+    /// its adapters hold their own copy of the provider table, and the
+    /// capability snapshot it enrolls with is computed once at boot. That
+    /// is the runner's model: configuration is fixed for the life of one
+    /// runner task. So a change to a configured provider's credential is not
+    /// something a running task can be told about; it is a new task. Without
+    /// this, the key an operator just pasted reaches this control's own copy
+    /// of the configuration (which is what `catalog` reads, so the page
+    /// reports a live catalog) while every dispatch still resolves the
+    /// provider through the spawned task's stale copy and refuses it.
+    ///
+    /// A stopped runner needs nothing: the next `start` reads the current
+    /// configuration. The old task is joined, not merely signalled, before
+    /// the new one is spawned — two runner tasks sharing one state directory
+    /// would share one journal with nothing arbitrating between them.
+    async fn restart_for_provider_change_locked(
+        &self,
+        state: &mut State,
+    ) -> Result<(), LocalRunnerControlError> {
+        if state.running.is_none() {
+            return Ok(());
+        }
+        self.stop_and_join_locked(state).await;
+        self.start_locked(state).await
+    }
+
+    async fn stop_and_join_locked(&self, state: &mut State) {
+        let Some(running) = state.running.take() else {
+            return;
+        };
+        running.shutdown_handle.request();
+        // The `JoinHandle` moves into the timeout future, which drops it on
+        // expiry — and dropping a `JoinHandle` detaches the task rather than
+        // cancelling it. The abort handle taken first is what actually ends
+        // a task that ignored its shutdown signal.
+        let abort = running.runner_task.abort_handle();
+        match tokio::time::timeout(RUNNER_STOP_TIMEOUT, running.runner_task).await {
+            Ok(_) => {
+                tracing::info!("embedded runner stopped for a provider configuration change");
+            }
+            Err(_) => {
+                abort.abort();
+                tracing::warn!(
+                    "embedded runner did not stop within the shutdown budget; its task was aborted"
+                );
+            }
+        }
+    }
+
+    async fn start_locked(&self, state: &mut State) -> Result<(), LocalRunnerControlError> {
+        if state.running.is_some() {
+            // Idempotent, mirroring `OrchRuntime::start` — a second
+            // `PUT {"enabled": true}` (or the boot-time check racing a UI
+            // toggle) must never spawn a duplicate runner task.
+            return Ok(());
+        }
+        let bound_addr = state.bound_addr.ok_or_else(|| {
+            LocalRunnerControlError::StartFailed(
+                "the server's own address is not yet known".to_owned(),
+            )
+        })?;
+
+        let mut runner_config = state.runner_config.clone();
+        runner_config.api_base_url = format!("http://{bound_addr}/api/runner/v1");
+        ensure_runner_credential(&mut runner_config, &self.server_config)
+            .await
+            .map_err(|error| LocalRunnerControlError::StartFailed(error.to_string()))?;
+
+        let (shutdown, shutdown_handle) = Shutdown::channel();
+        let runner_task = tokio::spawn(bootstrap::run(
+            runner_config.clone(),
+            runner_limits(),
+            shutdown,
+        ));
+        // Remembered so a later stop-then-start reuses whatever credential
+        // resolution just produced (a stored session, or the fresh
+        // self-provisioned one) instead of redoing it from scratch.
+        state.runner_config = runner_config;
+        state.running = Some(Running {
+            shutdown_handle,
+            runner_task,
+            since: Utc::now(),
+        });
+        Ok(())
     }
 }
 
@@ -860,6 +949,112 @@ mod tests {
         let catalog = control.catalog().await;
 
         assert!(matches!(catalog, CatalogSnapshot::NotConfigured));
+    }
+
+    /// A stand-in for a spawned runner task: it does exactly what the real one
+    /// does with its `Shutdown` — waits for the request, then exits — and
+    /// records that it observed the request, so a test can tell "joined
+    /// after being told to stop" apart from "still running" without a real
+    /// runner behind it.
+    fn fake_running(stopped: Arc<std::sync::atomic::AtomicBool>) -> Running {
+        let (mut shutdown, shutdown_handle) = Shutdown::channel();
+        let runner_task = tokio::spawn(async move {
+            shutdown.requested().await;
+            stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        });
+        Running {
+            shutdown_handle,
+            runner_task,
+            since: Utc::now(),
+        }
+    }
+
+    /// The running task is joined before anything else happens, and the
+    /// provider it was spawned without is on in the configuration the next
+    /// task will read. The restart's own `start` then fails typed here —
+    /// this control's database is deliberately unreachable, so credential
+    /// resolution stops it before any task is spawned — which is what lets
+    /// the test also pin that a failed restart leaves the control honestly
+    /// `Stopped` rather than pretending the old task still serves.
+    #[tokio::test]
+    async fn setting_a_provider_secret_while_running_stops_the_old_task_before_anything_else() {
+        let dir = unique_temp_dir("restart-on-provider-secret");
+        let control = control_with_state_dir(dir.path());
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let mut state = control.state.lock().await;
+            state.bound_addr = Some("127.0.0.1:1".parse().expect("socket address"));
+            state.running = Some(fake_running(Arc::clone(&stopped)));
+        }
+        assert_eq!(control.status().await.state, RuntimeState::Running);
+
+        let result = control
+            .set_secret(tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET, "key")
+            .await;
+
+        assert!(
+            stopped.load(std::sync::atomic::Ordering::SeqCst),
+            "the task spawned with the old provider table must be stopped and joined"
+        );
+        assert!(
+            matches!(result, Err(LocalRunnerControlError::StartFailed(_))),
+            "the restart's own start must fail typed against an unreachable database"
+        );
+        assert_eq!(control.status().await.state, RuntimeState::Stopped);
+        let state = control.state.lock().await;
+        assert!(
+            state
+                .runner_config
+                .providers
+                .get(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+                .is_some_and(|provider| provider.enabled),
+            "the configuration the next task reads must carry the provider on"
+        );
+    }
+
+    /// A secret no configured provider resolves is read live by whatever
+    /// requests reference it, so the running task keeps serving untouched.
+    #[tokio::test]
+    async fn setting_an_unrelated_secret_while_running_leaves_the_task_alone() {
+        let dir = unique_temp_dir("no-restart-on-unrelated-secret");
+        let control = control_with_state_dir(dir.path());
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let mut state = control.state.lock().await;
+            state.bound_addr = Some("127.0.0.1:1".parse().expect("socket address"));
+            state.running = Some(fake_running(Arc::clone(&stopped)));
+        }
+
+        control
+            .set_secret("unrelated/entry", "value")
+            .await
+            .expect("an unrelated secret stores without touching the runner");
+
+        assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(control.status().await.state, RuntimeState::Running);
+    }
+
+    /// Removing the credential a running provider resolves is the same
+    /// event in the other direction: that task was spawned with the
+    /// provider on, and nothing it holds can learn otherwise.
+    #[tokio::test]
+    async fn removing_a_provider_secret_while_running_stops_the_old_task() {
+        let dir = unique_temp_dir("restart-on-provider-secret-removal");
+        let control = control_with_state_dir(dir.path());
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let mut state = control.state.lock().await;
+            state.bound_addr = Some("127.0.0.1:1".parse().expect("socket address"));
+            state.running = Some(fake_running(Arc::clone(&stopped)));
+        }
+
+        let _ = control
+            .remove_secret(tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET)
+            .await;
+
+        assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(control.status().await.state, RuntimeState::Stopped);
     }
 
     #[tokio::test]

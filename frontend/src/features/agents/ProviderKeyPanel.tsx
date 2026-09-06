@@ -39,8 +39,12 @@ function catalogText(catalog: CatalogSnapshot): string {
  * Setting a key also re-probes the catalog server-side
  * (`put_local_runner_secret`'s own doc comment,
  * `crates/tack-api/src/handlers/local_runner.rs`) — refetching `GET
- * /api/local-runner` right after save is what makes the model count appear
- * with no restart, not a second trigger from this panel.
+ * /api/local-runner` right after save is what makes the model count appear,
+ * not a second trigger from this panel. When agent execution is already on,
+ * the save also restarts the embedded runner with the key before the request
+ * returns: the runner holds its own copy of the provider configuration from
+ * the moment it starts, so a key it did not boot with is one it cannot use.
+ * The next "Run with agent" needs no "Re-check" in between.
  */
 const ProviderKeyPanel: Component = () => {
   const [status, { refetch: refetchStatus }] = createResource(() => localRunnerApi.get());

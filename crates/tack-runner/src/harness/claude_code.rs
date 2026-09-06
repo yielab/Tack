@@ -995,16 +995,18 @@ impl<C: Clock + Send + Sync> HarnessAdapter for ClaudeCodeAdapter<C> {
             return Err(HarnessError::Rejected { reason });
         }
 
-        // Every `secret_reference` entry must resolve before a journal
-        // record or workspace exists. This discards the resolved values —
-        // `start` resolves again for real — so a rejection here can never
-        // leave state behind to clean up.
+        // Every `secret_reference` entry must resolve before the harness
+        // process exists. This discards the resolved values — `start`
+        // resolves again for real — so a rejection here never leaves a
+        // running process behind. The engine has already journaled and
+        // announced the attempt by now, and turns a refusal here into a
+        // reported failure rather than an abandoned lease.
         super::resolve_environment(&self.secrets, request, &mut SecretMaterial::new())?;
 
         // Same discard-and-recheck discipline as above, for a configured
         // provider endpoint: a disabled or misconfigured provider must
-        // reject here, before any workspace or journal entry exists, not
-        // partway through `start`.
+        // reject here, before any process is spawned, not partway through
+        // `start`.
         if let Err(error) = crate::provider::resolve_endpoint(
             &self.providers,
             &self.secrets,

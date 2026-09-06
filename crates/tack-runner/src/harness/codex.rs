@@ -768,9 +768,11 @@ where
             tracing::warn!(reason, "codex validate: binary unresolvable");
             HarnessError::Rejected { reason }
         })?;
-        // Every `secret_reference` entry must resolve before a journal
-        // record or workspace exists. This discards the resolved values —
-        // `start` resolves again for real.
+        // Every `secret_reference` entry must resolve before the harness
+        // process exists. This discards the resolved values — `start`
+        // resolves again for real. The engine has already journaled and
+        // announced the attempt by now, and turns a refusal here into a
+        // reported failure rather than an abandoned lease.
         super::resolve_environment(
             &self.secrets,
             &spec.work.request,

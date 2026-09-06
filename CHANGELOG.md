@@ -77,6 +77,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provider key pasted while agent execution was already on never reached the running
+  runner, and the page said it had.** The embedded runner receives its configuration by
+  value when it starts; storing a key updated only the control's own copy, which is what
+  the Agents page's catalog line reads, so the page reported live models while every
+  dispatch still resolved the provider through the runner's stale copy and refused it.
+  A change to a configured provider's credential now restarts the running runner before
+  the request returns (the old task is joined first), so the very next run uses the key
+  with no "Re-check". Separately, the refusal itself used to vanish: a harness rejection
+  arriving after the attempt was announced as `preparing` propagated as an engine error
+  and left the attempt there silently. Every such rejection is now reported as a `failed`
+  attempt with `harness_rejected` as its reason.
 - **"Run with agent" can dispatch again, for either bundled harness.** Its submit gate
   checked only a target's *declared* model list, never `model_passthrough` — since
   neither `codex` nor `claude-code` declares a model list at all (both rely on

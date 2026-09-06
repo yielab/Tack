@@ -78,7 +78,8 @@ steps, top to bottom, each one a switch or a form field — no terminal, no id t
    store (the platform keychain where one exists, an owner-only file otherwise) —
    never in `tack.db`, never in a log, never echoed back by the API. Saving it
    immediately re-checks the gateway's model catalog; a real key shows real models
-   below.
+   below. If execution is already on, saving also restarts the embedded runner with
+   the key, so the next run uses it — no "Re-check" needed in between.
 4. **"Default model"** — pick a model from that catalog (or from whatever the target
    harness itself declares) and save it as this project's default. This is what lets
    the next step submit with zero hand-typed identifiers.

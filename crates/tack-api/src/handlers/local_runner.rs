@@ -168,13 +168,20 @@ pub trait LocalRunnerControl: Send + Sync {
     /// Names and set-at timestamps of every stored secret. Never values.
     async fn list_secrets(&self) -> Vec<SecretMeta>;
 
-    /// Stores `value` under `name`, overwriting any existing entry, then
-    /// re-probes so a freshly configured provider's catalog is visible on
-    /// the very next [`LocalRunnerControl::catalog`] call — no restart.
+    /// Stores `value` under `name`, overwriting any existing entry. A
+    /// freshly configured provider's catalog is visible on the very next
+    /// [`LocalRunnerControl::catalog`] call. If the runner is running and
+    /// `name` is the entry a configured provider resolves its credential
+    /// from, the runner is restarted before this returns: it received its
+    /// configuration by value when it was spawned, so the only way the
+    /// next dispatch can use this key is a runner that booted with it. A
+    /// restart that fails leaves the runner stopped and returns the error,
+    /// never a runner that still serves the old configuration.
     async fn set_secret(&self, name: &str, value: &str) -> Result<(), LocalRunnerControlError>;
 
     /// Removes the secret named `name`. Not an error if it was already
-    /// absent (matches `rm -f`).
+    /// absent (matches `rm -f`). Restarts a running runner under the same
+    /// rule as [`LocalRunnerControl::set_secret`], in the other direction.
     async fn remove_secret(&self, name: &str) -> Result<(), LocalRunnerControlError>;
 
     /// What the configured provider's catalog looks like right now.
