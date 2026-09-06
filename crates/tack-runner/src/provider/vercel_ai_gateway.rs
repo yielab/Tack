@@ -42,10 +42,42 @@ const TEST_BASE_URL_OVERRIDE_VAR: &str = "TACK_RUNNER_VERCEL_AI_GATEWAY_TEST_BAS
 fn test_base_url_override() -> Option<String> {
     let raw = std::env::var(TEST_BASE_URL_OVERRIDE_VAR).ok()?;
     let base = raw.trim_end_matches('/');
-    let is_loopback = base.starts_with("http://127.")
-        || base.starts_with("http://localhost")
-        || base.starts_with("http://[::1]");
-    is_loopback.then(|| base.to_owned())
+    is_loopback_base(base).then(|| base.to_owned())
+}
+
+/// Whether `base` addresses this machine's own loopback interface.
+///
+/// The host is compared as a whole, never as a prefix: `localhost` and
+/// `localhost.example.com` share the same first nine characters, and a
+/// prefix test would accept the second — handing the stored credential to
+/// whoever owns that domain, which is the exact outcome the check exists to
+/// prevent. `127.` is likewise only loopback when what follows it is the
+/// rest of a dotted-quad address, not an arbitrary label.
+fn is_loopback_base(base: &str) -> bool {
+    let Some(rest) = base.strip_prefix("http://") else {
+        return false;
+    };
+    let host = match rest.strip_prefix("[") {
+        // An IPv6 literal keeps its brackets, and only `::1` is loopback.
+        Some(after) => match after.split_once(']') {
+            Some((inside, _)) => return inside == "::1",
+            None => return false,
+        },
+        None => rest
+            .split_once(|c| c == ':' || c == '/')
+            .map_or(rest, |(host, _)| host),
+    };
+    host == "localhost"
+        || host
+            .strip_prefix("127.")
+            .is_some_and(|octets| !octets.is_empty() && octets.split('.').all(is_octet))
+}
+
+fn is_octet(part: &str) -> bool {
+    !part.is_empty()
+        && part.len() <= 3
+        && part.bytes().all(|b| b.is_ascii_digit())
+        && part.parse::<u16>().is_ok_and(|n| n <= 255)
 }
 
 fn catalog_url() -> String {
@@ -191,6 +223,35 @@ fn parse_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The override's guard compares the whole host, never a prefix. Each
+    /// rejected case below is a host that shares a loopback host's opening
+    /// characters while belonging to somebody else — accepting one would
+    /// send the stored gateway credential to whoever owns that name, which
+    /// is the entire reason the guard exists.
+    #[test]
+    fn only_a_whole_loopback_host_is_accepted_as_a_base() {
+        for accepted in [
+            "http://127.0.0.1:9",
+            "http://127.0.0.1",
+            "http://localhost:3500",
+            "http://localhost",
+            "http://[::1]:8080",
+        ] {
+            assert!(is_loopback_base(accepted), "must accept {accepted}");
+        }
+        for rejected in [
+            "http://localhost.attacker.example",
+            "http://localhostile.example",
+            "http://127.evil.example",
+            "http://127.0.0.1.attacker.example",
+            "http://[::2]:8080",
+            "https://localhost",
+            "http://10.0.0.1",
+        ] {
+            assert!(!is_loopback_base(rejected), "must reject {rejected}");
+        }
+    }
 
     /// Proves the smoke-only override actually rebases every URL this
     /// provider would otherwise hit, and that its absence changes nothing —

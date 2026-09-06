@@ -457,3 +457,25 @@ this card's final report; run once more immediately before the commit below.
 
 *(Appended by later readers, dated. The original text above is never rewritten — the
 history of what was believed and later falsified is the point.)*
+
+## Amendment — integrator, at merge
+
+The loopback guard added for the test-only base URL override compared the
+host by prefix, so three non-loopback hosts passed it:
+`http://localhost.attacker.example`, `http://localhostile.example` and
+`http://127.evil.example`. Each shares an opening substring with a loopback
+host while belonging to somebody else, and each would have received the
+stored gateway credential — the exact outcome the guard was added to
+prevent, so the guard did not hold.
+
+Replaced with a whole-host comparison: the host is taken up to its port or
+path separator and matched exactly against `localhost`, a dotted-quad under
+`127.`, or the bracketed IPv6 literal `::1`. A test pins all three bypasses
+plus `https://localhost`, `http://[::2]` and `http://10.0.0.1` as rejected;
+reverting to the prefix comparison fails it on
+`must reject http://localhost.attacker.example`.
+
+The decision not to make a non-loopback value a hard error is unchanged and
+still right: this is a test convenience, and a harness that refuses to start
+is a worse failure than one that falls back to the real gateway and fails
+loudly on a fake key.
