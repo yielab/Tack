@@ -75,9 +75,16 @@ fn start_server_with_runner(shared_cwd: &Path, root: tempfile::TempDir) -> Serve
     guard
 }
 
+/// Polls `GET /api/health` until the process answers or exits. The claim
+/// this test makes is that a server started this way becomes ready and
+/// reaches its own active runner — not that it does so within any
+/// particular number of seconds — so this deadline is a liveness backstop,
+/// not part of the claim: a stall past it means the process is genuinely
+/// wedged, never that it was merely slow to spawn, run its migrations, and
+/// bind its listener while the rest of this suite runs alongside it.
 fn wait_for_ready(base_url: &str, child: &mut Child) {
     let client = reqwest::blocking::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(response) = client
             .get(format!("{base_url}/api/health"))
@@ -92,21 +99,24 @@ fn wait_for_ready(base_url: &str, child: &mut Child) {
         }
         if Instant::now() > deadline {
             let _ = child.kill();
-            panic!("tack serve --with-runner did not become ready within 15s");
+            panic!("tack serve --with-runner did not become ready within 30s");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
 }
 
 /// Polls `GET /api/runners` until exactly one row reports `state ==
-/// "active"`, returning its `runner_id`. Bounded, not indefinite: a
-/// self-provisioned embedded runner reaching this state is a handful of
-/// local HTTP round trips plus one SQLite write, so a stall past this
-/// budget is a real failure to report, not a slow success worth waiting
-/// out.
+/// "active"`, returning its `runner_id`. The same liveness-backstop
+/// reasoning as `wait_for_ready` applies here: self-provisioning is a
+/// handful of local HTTP round trips plus one SQLite write, cheap enough
+/// that a genuine success is never expected to approach this budget — only
+/// a machine busy enough to starve those round trips for tens of seconds,
+/// or an actual regression, reaches it. Matches
+/// `embedded_runner_orphaned_credential.rs`'s sibling wait, which polls for
+/// the identical transition.
 fn wait_for_active_runner(base_url: &str) -> Option<String> {
     let client = reqwest::blocking::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(response) = client
             .get(format!("{base_url}/api/runners"))
