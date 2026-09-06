@@ -177,8 +177,23 @@ export const executionsApi = {
     const qs = params.toString();
     return requestWithHeaders<ExecutionListResult>(qs ? `/executions?${qs}` : '/executions');
   },
-  get: (requestId: string) =>
-    requestWithHeaders<ExecutionSummary>(`/executions/${encodeURIComponent(requestId)}`),
+  /** `GET /executions/{id}` is its own envelope — it carries `protocol_version`
+   *  beside the summary fields, where the list carries it once around `data`.
+   *  Projected to exactly `ExecutionSummary` here so a row and a single fetch
+   *  of the same request are the same value to everything downstream. */
+  get: async (requestId: string) => {
+    const { data, headers } = await requestWithHeaders<ExecutionSummary & { protocol_version?: number }>(
+      `/executions/${encodeURIComponent(requestId)}`,
+    );
+    const summary: ExecutionSummary = {
+      request_id: data.request_id,
+      item_id: data.item_id,
+      state: data.state,
+      cancellation_requested_at: data.cancellation_requested_at,
+      created_at: data.created_at,
+    };
+    return { data: summary, headers };
+  },
   create: (input: CreateExecutionInput) =>
     request<CreateExecutionResult>('/executions', {
       method: 'POST',

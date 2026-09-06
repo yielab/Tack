@@ -330,24 +330,10 @@ export function createExecutionStore(): ExecutionStore {
    *  Reuses the previously-cached summary object when the freshly
    *  deserialized one is structurally identical to it, rather than storing
    *  the new one — see `recordFor`'s doc comment for why an unchanged row
-   *  needs a stable reference, not just an unchanged value.
-   *
-   *  Normalizes to exactly `ExecutionSummary`'s five documented fields
-   *  first: `GET /executions/{id}` (this store's `loadOne`) serializes an
-   *  extra `protocol_version` alongside them that `GET /executions` (this
-   *  store's `loadList`/`loadForItems`) does not carry per-row — an
-   *  inconsistency between the two handlers, not a real change in the
-   *  request — so comparing the raw payloads treated every first refresh
-   *  from a list-sourced row to a get-sourced one as a change, every time,
-   *  independent of whether anything the type actually documents differed. */
-  function applyFetchedSummary(summaryRaw: ExecutionSummary, version: number): boolean {
-    const summary: ExecutionSummary = {
-      request_id: summaryRaw.request_id,
-      item_id: summaryRaw.item_id,
-      state: summaryRaw.state,
-      cancellation_requested_at: summaryRaw.cancellation_requested_at,
-      created_at: summaryRaw.created_at,
-    };
+   *  needs a stable reference, not just an unchanged value. The comparison
+   *  relies on `executionsApi` handing every source of a summary — a list
+   *  row or a single fetch — the same five fields and nothing else. */
+  function applyFetchedSummary(summary: ExecutionSummary, version: number): boolean {
     const previous = cache.get(summary.request_id);
     const toStore = previous && deepEqual(previous, summary) ? previous : summary;
     const applied = cache.set(summary.request_id, toStore, version);

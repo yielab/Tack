@@ -216,3 +216,11 @@ poll tick silently threw away the selection and the typed text and could leave P
 
 *(Appended by later readers, dated. The original text above is never rewritten — the
 history of what was believed and later falsified is the point.)*
+
+**2026-09-06, integrator, at merge.** The projection of `GET /executions/{id}`'s response to
+`ExecutionSummary`'s five fields moved out of `applyFetchedSummary` into `executionsApi.get`:
+the detail response is its own envelope (it carries `protocol_version` beside the fields,
+where the list carries it once around `data`), so which fields a summary has is the API
+layer's decision, and the store now compares values that already agree by construction.
+Behaviour unchanged; `npx vitest run src/shared/execution` 125 passed, `npm run type-check`
+clean after the move. The `refreshing`-flag finding stands as written.
