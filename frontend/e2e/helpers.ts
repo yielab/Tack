@@ -36,22 +36,52 @@ export async function waitForApp(page: Page): Promise<void> {
 }
 
 /**
- * Ensure at least one project exists and return its id. Shape-agnostic: it
- * creates via POST when empty, then re-reads the list so it never depends on the
- * create response body.
+ * The one name `global-setup.ts` ensures exists before any worker starts,
+ * and the name `getOrCreateProject`'s own fallback below matches on when
+ * that hasn't run. A fixed name — rather than "whichever project sorts
+ * first" — is what makes the shared project's identity independent of
+ * which other, unrelated project a concurrently-running test most recently
+ * created or patched.
+ */
+export const SHARED_PROJECT_NAME = 'E2E Shared Project';
+
+/**
+ * Return the suite-wide shared project's id. `global-setup.ts` creates (or,
+ * on a reused `e2e.db`, finds) this project once, before any worker process
+ * exists, and publishes its id on `process.env.E2E_SHARED_PROJECT_ID` —
+ * every worker Playwright forks afterward inherits the main process's env
+ * at fork time, so every spec file's own call below resolves to the
+ * identical project with no extra network round-trip.
+ *
+ * The lookup below only runs if that env var is absent (a spec executed
+ * outside `playwright.config.ts`'s configured `globalSetup`, or a future
+ * config that stops wiring it). It resolves by the project's fixed name,
+ * never by list position: `GET /api/projects` orders by `updated_at DESC`,
+ * so a position-based lookup ("the first one back") would return whichever
+ * project any other currently-running test most recently created or
+ * patched, not a stable identity.
  */
 export async function getOrCreateProject(request: APIRequestContext): Promise<string> {
+  const sharedId = process.env.E2E_SHARED_PROJECT_ID;
+  if (sharedId) return sharedId;
+
   const existing = await request.get(`${API}/projects`).then((r) => r.json());
-  if (Array.isArray(existing) && existing.length) return existing[0].id;
+  const found = Array.isArray(existing)
+    ? existing.find((p: { name?: string }) => p.name === SHARED_PROJECT_NAME)
+    : undefined;
+  if (found) return found.id;
 
   const res = await request.post(`${API}/projects`, {
-    data: { name: 'E2E Project', project_type: 'software', description: 'created by e2e' },
+    data: { name: SHARED_PROJECT_NAME, project_type: 'software', description: 'created by e2e' },
   });
   expect(res.ok(), `create project failed: ${res.status()}`).toBeTruthy();
 
   const list = await request.get(`${API}/projects`).then((r) => r.json());
-  expect(Array.isArray(list) && list.length, 'project list empty after create').toBeTruthy();
-  return list[0].id;
+  const created = Array.isArray(list)
+    ? list.find((p: { name?: string }) => p.name === SHARED_PROJECT_NAME)
+    : undefined;
+  expect(created, 'shared project not found by name after create').toBeTruthy();
+  return created.id;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { type Locator, type Page } from '@playwright/test';
-import { API, createFreshProject, enrollRunner, getOrCreateProject, test, expect, waitForApp } from './helpers';
+import { API, createFreshProject, enrollRunner, test, expect, waitForApp } from './helpers';
 
 // The Agents page — the one screen from an installed binary to a completed
 // attempt. `playwright.config.ts` prepends
@@ -50,11 +50,7 @@ test('steps 1, 2 and 4: turning agent execution on reveals both agents installed
   // A dedicated project, never the suite's shared one: `default_model` has
   // no route to unset once written (`ModelDefaultStep.tsx`'s own doc
   // comment), so saving one against a shared project would permanently
-  // change what every other spec sees on a reused `e2e.db`. Ensuring the
-  // suite's own shared project exists first keeps it (not this test's own,
-  // freshly created afterward) as `existing[0]` — the row every other
-  // spec's own `getOrCreateProject` reuses.
-  await getOrCreateProject(request);
+  // change what every other spec sees on a reused `e2e.db`.
   const projectName = `Agents page e2e ${Date.now()}`;
   await createFreshProject(request, projectName);
   await page.goto('/agents');
@@ -119,7 +115,6 @@ test('step 5: a test run reaches the real production router and appears in the t
   page,
   request,
 }) => {
-  await getOrCreateProject(request); // keeps the suite's shared project as `existing[0]`
   const projectName = `Agents page e2e test run ${Date.now()}`;
   await createFreshProject(request, projectName);
   const modelId = `e2e-test-run-${Date.now()}`;

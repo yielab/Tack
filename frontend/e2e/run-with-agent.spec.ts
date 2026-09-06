@@ -5,6 +5,7 @@ import {
   API,
   getOrCreateProject,
   getOrCreateItem,
+  createFreshProject,
   createFreshItem,
   createSprintWithItem,
   createFleet,
@@ -129,19 +130,15 @@ test('item-detail: submitting a run creates the request and it appears in the Ex
 
   // An explicit, real, matching model choice — never left on whatever the
   // shared `getOrCreateProject` project's own default model happens to be.
-  // That project is reused by every spec file that calls `getOrCreateProject`,
-  // `GET /api/projects` orders its results by `updated_at DESC`, and this
-  // test's own `request` client never scopes its create/patch calls to a
-  // project it exclusively owns — so under real concurrency, "the shared
-  // project" is whichever project *any* currently-running test most recently
-  // touched, not a stable identity. Leaving the model on its silent default
-  // ("Auto", or whatever "Project default" happened to resolve to) made this
-  // test's outcome depend on that ambient, cross-file state instead of on
-  // what this test itself set up. Selecting the target's own declared
-  // combination directly (`enrollRunner`'s fixture reports exactly one, so
-  // it is always index "0") ties the assertion to this test's own runner,
-  // the same way every project-touching test in `scheduler-e2e.spec.ts`
-  // already does.
+  // The shared project's identity is stable and nothing in this suite ever
+  // writes a `default_model` onto it (`getOrCreateProject`'s own doc
+  // comment; `createFreshProject`'s doc comment on why every write goes
+  // there instead), but this test's own claim is about what *it* set up,
+  // not about the shared project's ambient state either way. Selecting the
+  // target's own declared combination directly (`enrollRunner`'s fixture
+  // reports exactly one, so it is always index "0") ties the assertion to
+  // this test's own runner, the same way every project-touching test in
+  // `scheduler-e2e.spec.ts` already does.
   await modal.getByLabel('Choose…').check();
   await modal.getByRole('combobox', { name: 'Model' }).selectOption('0');
   await expect(modal.getByText('Supported', { exact: true })).toBeVisible();
@@ -175,7 +172,12 @@ test('the run form submits the project\'s configured model default, byte for byt
   executionToggleLock,
 }) => {
   void executionToggleLock;
-  const projectId = await getOrCreateProject(request);
+  // A dedicated project, never the shared one `getOrCreateProject` returns:
+  // this test patches `default_model` directly, which the API has no route
+  // to clear once set (`createFreshProject`'s own doc comment) — doing that
+  // to the shared project would permanently change what every other spec
+  // sees on a reused `e2e.db`.
+  const projectId = await createFreshProject(request, `RWA project-default project ${Date.now()}`);
   const itemId = await createFreshItem(request, projectId, `RWA project-default item ${Date.now()}`);
   const profileId = await createAgentProfile(request, `RWA project-default profile ${Date.now()}`);
   // The one runner reports the exact combination the project will default
