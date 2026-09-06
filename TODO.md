@@ -564,7 +564,8 @@ i18n, time tracking and in-UI diff review stay deferred — see §VI.5.
 | 14 — Truth first | VI-A1 · VI-A2 · VI-A3 | 60 | **Integrated** at `927f850` on `develop` (handoffs: `docs/agent-handoffs/part-vi/VI-A1.md`, `VI-A2.md`, `VI-A3.md`). All three adversarially verified against the real tree, not just their own reports — A1's live worked example re-checked, A3's stranger-read test and render proofs opened, A2's ADR cited by line against 0050/0058. `mdbook build` clean; the only `docs/CONFIG.md` conflict (A1's new bullet vs. A2's rewritten paragraph, both anticipated it) resolved keeping both contributions. **ADR 0061 is `Status: proposed` — Wave 15 (VI-B1/B2/B3) does not branch until the user records acceptance with a date in `VI-A2.md`.** One non-blocking finding routed to VI-D1: `docs/book/src/roadmap.md:3273` wants a forward reference to ADR 0061 once accepted (not fixed here — outside every Wave-14 card's ownership). |
 | 15 — Provider at the runner boundary | VI-B1 · VI-B2 · VI-B3 | 60 | **VI-B1 and VI-B2 integrated 2026-09-04** (handoffs `docs/agent-handoffs/part-vi/VI-B1.md`, `VI-B2.md`). **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038` (handoffs `VI-B3.md`, `VI-B4.md`). Both were green alone and neither built after the merge: B4 made the discovery report's catalog one status per provider and B3 called it expecting a single one. Reconciled at integration, which is the first moment either card could have seen the other. Two comments the merge falsified were repointed, one caught by `check-comments.sh` rather than by reading. **VI-B4 corrected its own central claim under challenge:** its first vendor-name grep covered only the dispatch functions and reported zero; run over the whole tree with each file split at its own `#[cfg(test)]`, two production sites still named Vercel, one of which would have recorded an unobserved model as harness-reported for the next gateway added. VI-B5 follows B4 alone, because it changes the contract B4's acceptance holds byte-identical. **opencode was removed from the tree the same day** (ADR 0063 decision 8, handoff `docs/agent-handoffs/part-vi/opencode-removal.md`) — Tack ships adapters for two harnesses and is not limited to two: an unknown harness name still parses and is refused at claim with the same typed reason any undeclared one gets. **VI-B2 landed narrower and better-shaped than its card:** opencode's gateway path was measured working but deliberately not built, because it is the only harness that could not be credentialed by per-spawn injection — it needed a written config file. That card also claimed the provider machinery carries no vendor name and that a second endpoint is three data rows and no code path. **Measured 2026-09-05, it is not:** `attach_catalog` looks up the Vercel config key by name rather than walking the configured providers, and the three rows only suffice for a provider whose catalog is a bearer-authenticated `data[].id` list. VI-B4 makes the claim true. Two card errors corrected by measurement: the default secret name had to be `vercel-ai-gateway/default`, since `SecretStore::resolve` never appends the label, and the card's vendor URL for codex 404s. **Escalated, now carded:** the catalog publishes per-model pricing, context windows and modalities, and `ModelCombination` has nowhere to put them — a reviewed wire field, not the `additional` map. ADR 0063 decision 5 records it; **VI-B5 owns it**. ADR 0061 accepted by the user on 2026-09-03 (recorded in `docs/agent-handoffs/part-vi/VI-A2.md`, amendments). Sequential B1 → B2 → B3; base `2958e9e`. Decision 1 of ADR 0061 was refined on 2026-09-03 before acceptance (platform keychain first, owner-only file where none answers, backend reported); VI-B1's card and dispatch block already match. |
 | 16 — UI-first flow | VI-C1 · VI-C2 · VI-C3 · VI-C4 | 60 | **Wave complete — VI-C1 integrated 2026-09-05** (handoff `VI-C1.md`): the Agents page, the sidebar entry, the Board's first-run banner, and the Fleet page's runner management moved under *Advanced*. Its stated blocker was wrong and its own amendment says so — the runner-v1 completion route is at `handlers/runner_protocol.rs:198`, in `tack-api` and not in either adapter; the eight live 404s came from guessed names and from percent-encoding that never delivered the real path. The real residual limit is narrower: a genuine harness subprocess reporting its own completion needs that adapter's argv and output shape. **VI-C2, VI-C3 and VI-C4 integrated 2026-09-04** (handoffs `docs/agent-handoffs/part-vi/VI-C2.md`, `VI-C3.md`, `VI-C4.md`). C2 merged with no conflict — it is frontend-only and shared no file with the desktop cards it integrated alongside. C1 still needs B2 + B3. VI-C4's two routes ship with no handler test in `tack-api` — the next Wave 16 card touching that crate owns adding them (see its amendment). |
-| 17 — Proof | VI-C5 · VI-C6 · VI-C7 · VI-D1 · VI-D2 | 60 | **VI-C5 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-vi/VI-C5.md`) — six handler tests, each proven load-bearing; the integrator re-ran the ordering proof independently by flipping `repo/execution.rs`'s `ORDER BY` to `DESC` and watching exactly the two ordering tests fail. It declared one gap, now carded as **VI-C6**: neither route's unknown-attempt path is covered. **VI-C7** was added from V-C2's surviving escalation. Original note follows. **VI-C5 dispatched 2026-09-05** — it needs nothing and shares no file with the other two, so it runs now rather than waiting for them. D2 (assets) needs C1, C2 and Part V's V-C2, which owns `docs/screenshots/`; D1 goes last and needs everything |
+| 17 — Proof | VI-C5 · VI-C6 · VI-C7 · VI-C8 · VI-C9 · VI-D1 · VI-D2 | 60 | **VI-C6 and VI-C7 integrated 2026-09-06.** C6: both attempt-list routes answer `404` for an unknown attempt *and* for one belonging to another execution, and the integrator's independent revert showed the cross-execution test failing with the other execution's artifact row in the body — it catches a leak, not a status code. That revert also showed **two more sites with the same scoping and no test at all**, now **VI-C8**; the artifact *download* is one of them. C7: an `AutoSelect` request is rejected by the scheduler unconditionally and by design, so the dialog's own default queues forever on any install with no explicit default model at any tier — **VI-C9** carries the fix and waits for VI-D2, which is filming that dialog. C7's first verdict overstated the scope and its amendment says so; it also retracts its own proposed fix. Wave 17 original note follows. |
+| 17 (original note) | — | 60 | **VI-C5 integrated 2026-09-06** (handoff `docs/agent-handoffs/part-vi/VI-C5.md`) — six handler tests, each proven load-bearing; the integrator re-ran the ordering proof independently by flipping `repo/execution.rs`'s `ORDER BY` to `DESC` and watching exactly the two ordering tests fail. It declared one gap, now carded as **VI-C6**: neither route's unknown-attempt path is covered. **VI-C7** was added from V-C2's surviving escalation. Original note follows. **VI-C5 dispatched 2026-09-05** — it needs nothing and shares no file with the other two, so it runs now rather than waiting for them. D2 (assets) needs C1, C2 and Part V's V-C2, which owns `docs/screenshots/`; D1 goes last and needs everything |
 
 **Integration line:** `develop`, the repository's default branch — same as Parts III–V.
 Branch every card from `develop`. Do not create a `plan/*` line.
@@ -770,6 +771,8 @@ estimate). Seven rules are specific to this Part:
 | New handler tests in `crates/tack-api/tests/` for those same two routes | VI-C5 — production files stay untouched |
 | The unknown-attempt cases in `crates/tack-api/tests/handlers/attempt_lists.rs` | VI-C6 — additions only; VI-C5's tests stay byte-identical |
 | Nothing in the tree. `docs/agent-handoffs/part-vi/VI-C7.md` only | VI-C7 — a measurement card; a fix it finds is written as a diff in the handoff, not applied |
+| New tests for the attempt-scoped events and artifact-download routes | VI-C8 — production files stay untouched |
+| `frontend/src/shared/runWithAgent/**` | VI-C9 — **after VI-D2 merges**, which is recording this dialog. Shares the directory with VI-C2, which is closed |
 | `docs/openapi.json`, `frontend/src/shared/api/schema.gen.ts` | **generated** — regenerated by whichever of B3 / C3 / C4 lands; the integrator re-runs `UPDATE_OPENAPI=1 … openapi_contract` and `npm run gen:api` after each merge. Never hand-edited |
 | `docs/contracts/runner-v1/**`, `crates/tack-orch/tests/runner_contract.rs` | **VI-B5, and nobody else.** VI-B2 escalated the field and VI-B5 carries it; every other card holds these files byte-identical and escalates with evidence instead. Smuggling one through `additional` to dodge the pin is forbidden — that is a contract change without a review |
 | `scripts/smoke.sh`, the amendments to every page VI-A1 wrote, the final pass on `docs/CONFIG.md`, the one "Run it" sentence in `README.md` that names the Agents page (and the final README merge), `CHANGELOG.md` `[Unreleased]` | VI-D1 |
@@ -1562,6 +1565,73 @@ card is recording live video against this same tree while you work.
 
 **Stop if:** reproducing needs a credential you do not have, or a change to the runner. Both
 are findings, not this card's files.
+
+---
+
+### VI-C8 — The same scoping, on the two routes nothing tests
+
+**Needs nothing** — VI-C6's file is on `develop`. Wave 17.
+
+**Owns:** new tests for the two routes below under `crates/tack-api/tests/` and the VI-C8
+handoff. **Production files stay untouched.**
+
+**Context.** `crates/tack-db/src/repo/execution.rs` looks an attempt up by
+`(request_id, attempt_number)` together at **four** sites. VI-C6 covered two of them. The
+integrator's own revert — dropping the `request_id` predicate at all four at once — made
+exactly VI-C6's two cross-execution tests fail and nothing else, which is the measurement
+that matters: the other two sites are `list_events_for_attempt_number` and
+`get_execution_artifact_by_attempt_number`, and **no test anywhere notices when their scoping
+goes away.** The second is the serious one. A listing that loses its filter leaks metadata; a
+*download* that loses its filter hands over another execution's file.
+
+**Tasks:** cover both routes for an attempt number that belongs to a different execution, and
+for one that does not exist. Follow `crates/tack-api/tests/handlers/attempt_lists.rs` — VI-C6
+left the pattern, including how it seeds two executions in one test.
+
+**Acceptance:** the revert-once proof is the *cross-execution* one, not a status-code flip:
+drop the `request_id` predicate from each site and show that your test fails **and that the
+other execution's row appears in the response body** — paste it. `git diff --stat` shows
+nothing outside your tests and the handoff.
+
+**Stop if:** either route turns out not to scope by execution at all. That is a security
+finding, not a test — write it up and stop.
+
+---
+
+### VI-C9 — "Auto" must not be a choice that silently never runs
+
+**Needs VI-D2 merged** — D2 is recording video of this very dialog, and this card changes it.
+
+**Owns:** `frontend/src/shared/runWithAgent/**` (the submit gate and whatever surface the fix
+needs) and the VI-C9 handoff. **Does not touch** the scheduler: its rejection is correct given
+the contract.
+
+**Context.** VI-C7 measured it end to end. The dialog defaults every harness to *Auto*. A
+request reaches the scheduler as `ModelSelector::AutoSelect` when no tier — agent profile,
+project, fleet — names an explicit model, and also when a tier is pinned to the literal
+`"auto"`, which stops the precedence walk where it stands. `evaluate_candidate` then rejects
+it unconditionally, before any harness or runner check. The result is a request that sits in
+`queued` with no error, no toast, no attempt row, and no wait long enough — on exactly the
+install a stranger has before completing the Agents page's default-model step. The submit gate
+meanwhile calls the choice allowed, on the promise that *"the scheduler will still validate at
+claim time"*. It does not validate; it always refuses.
+
+**The gate cannot decide this alone** — `gateHarnessModelSelection` receives only capabilities,
+harness and the model pair, and no tier's configuration. VI-C7's own proposed fix was retracted
+for that reason: blocking every unspecified model would break the installs where Auto works.
+
+**Tasks:** make the dialog tell the truth about what *Auto* will do on this install, and make
+the default-model step reachable from the place the operator hits the wall. Whether that needs
+a resolution preview on the wire or only what the client already knows is this card's to
+decide and to record — decide it from the code, not from this paragraph.
+
+**Acceptance:** on an install with no default model at any tier, an operator cannot submit a
+dispatch that will never run without being told so in the dialog, in words naming the fix. On
+an install where a tier names an explicit model, the same dispatch still submits and still
+runs — prove both live, with request ids. The false "the scheduler will still validate at
+claim time" string is gone from the tree.
+
+**Stop if:** the honest fix needs a server route that does not exist. Name it and stop.
 
 ---
 

@@ -701,6 +701,45 @@ exact conditions under which it does not.
 
 **Stop if:** it needs a credential you do not have, or a runner change. Both are findings.
 
+### VI-C8 — Cross-execution scoping on the two routes nothing tests (needs nothing)
+
+**Branch:** `agent/vi-c8-attempt-scoping` from the `develop` tip you are given.
+
+**Read (≈ 9k):**
+- The board prelude's surface map only (`§VI.0`) plus your card.
+- `crates/tack-api/tests/handlers/attempt_lists.rs` whole — VI-C6 left the pattern you
+  follow, including how it seeds two executions inside one test.
+- The two repo methods, found with
+  `grep -n "attempt_number = ?" crates/tack-db/src/repo/execution.rs`, and the handlers that
+  call them, found with one grep over `crates/tack-api/src/router.rs`.
+
+**Do not read:** `docs/openapi.json`, the frontend, any runner-protocol file, any other
+handoff.
+
+**Gate:** `cargo nextest run --workspace` green; `cargo clippy --workspace --all-targets --
+-D warnings`; `./scripts/check-comments.sh`; `./scripts/check-test-hygiene.sh`.
+`CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VI-C8`.
+
+**The proof that counts:** drop the `request_id` predicate from each site and show your test
+failing **with the other execution's row in the response body** — paste it. A status-code flip
+alone does not prove a leak test.
+
+**Stop if:** either route does not scope by execution at all. Security finding, not a test.
+
+### VI-C9 — Auto must not be a choice that silently never runs (after VI-D2)
+
+**Do not dispatch this until VI-D2 is merged.** D2 is recording video of this dialog.
+
+**Branch:** `agent/vi-c9-auto-truth`.
+
+**Read (≈ 12k):** your card; `docs/agent-handoffs/part-vi/VI-C7.md` **including its
+amendment**, which is where the real scope and the retracted fix live;
+`frontend/src/shared/runWithAgent/shared.ts` and `RunWithAgentModal.tsx`;
+`crates/tack-orch/src/model_policy/mod.rs` (the precedence walk and its doc comments).
+
+**Do not read:** the scheduler's internals beyond `evaluate_candidate`'s `AutoSelect` arm.
+Its rejection is correct and is not yours to change.
+
 ### VI-D2 — Assets that show the execution plane (after C1, C2 and Part V's V-C2)
 
 **Branch:** `agent/vi-d2-assets`.
