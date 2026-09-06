@@ -337,6 +337,18 @@ struct State {
     runner_config: RunnerConfig,
     running: Option<Running>,
     secret_meta: HashMap<String, DateTime<Utc>>,
+    /// Whether `providers[vercel_ai_gateway].enabled` currently reads `true`
+    /// only because [`EmbeddedRunnerControl::set_secret`] flipped it as a
+    /// convenience, rather than because the operator's own configuration
+    /// (TOML, `TACK_RUNNER_PROVIDER_VERCEL_AI_GATEWAY_ENABLED`, or an
+    /// already-`true` value at boot) already said so. Set only at the
+    /// instant `set_secret` actually changes the flag from `false` to
+    /// `true`; cleared by [`EmbeddedRunnerControl::remove_secret`] undoing
+    /// that exact flip. An operator's own `true` never sets this, so
+    /// removing the default secret never turns off a provider the operator
+    /// configured on directly. Never persisted — matches `enabled` itself,
+    /// which this process never writes back to any file either.
+    vercel_ai_gateway_secret_auto_enabled: bool,
 }
 
 /// The seam `tack-api`'s routes call (`handlers::local_runner`'s
@@ -378,6 +390,7 @@ impl EmbeddedRunnerControl {
                 runner_config,
                 running: None,
                 secret_meta,
+                vercel_ai_gateway_secret_auto_enabled: false,
             }),
         })
     }
@@ -495,14 +508,27 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
         // Narrow on purpose: a deployment that configured a *different*
         // secret-store entry name via `TACK_RUNNER_PROVIDER_
         // VERCEL_AI_GATEWAY_SECRET` keeps using its own console-only
-        // toggle, unchanged by this route.
-        if name == tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET
-            && let Some(provider) = state
+        // toggle, unchanged by this route. Only actually flipping the flag
+        // (not merely finding it already `true`) marks the auto-enable —
+        // [`EmbeddedRunnerControl::remove_secret`] undoes exactly this flip
+        // and nothing else, so an operator's own `enabled = true` is never
+        // clobbered by a later key removal.
+        if name == tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET {
+            let was_enabled = state
+                .runner_config
+                .providers
+                .get(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+                .is_some_and(|provider| provider.enabled);
+            if let Some(provider) = state
                 .runner_config
                 .providers
                 .get_mut(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
-        {
-            provider.enabled = true;
+            {
+                provider.enabled = true;
+            }
+            if !was_enabled {
+                state.vercel_ai_gateway_secret_auto_enabled = true;
+            }
         }
         Ok(())
     }
@@ -515,6 +541,27 @@ impl LocalRunnerControl for EmbeddedRunnerControl {
             .map_err(|error| LocalRunnerControlError::SecretStore(error.to_string()))?;
         state.secret_meta.remove(name);
         save_secret_meta(&state.runner_config.state_dir, &state.secret_meta);
+
+        // The mirror of `set_secret`'s own flip, narrowed the identical
+        // way: only the default secret name is ever considered, so a
+        // provider configured under a different name via
+        // `TACK_RUNNER_PROVIDER_VERCEL_AI_GATEWAY_SECRET` is never touched
+        // here either. And only undoes `set_secret`'s own convenience flip
+        // — an `enabled = true` the operator set directly (TOML, the
+        // `_ENABLED` environment variable, or already `true` at boot) is
+        // left exactly as it was, because `vercel_ai_gateway_secret_auto_
+        // enabled` is only ever `true` when this process's own `set_secret`
+        // is what turned it on.
+        if name == tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET
+            && state.vercel_ai_gateway_secret_auto_enabled
+            && let Some(provider) = state
+                .runner_config
+                .providers
+                .get_mut(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+        {
+            provider.enabled = false;
+            state.vercel_ai_gateway_secret_auto_enabled = false;
+        }
         Ok(())
     }
 
@@ -748,6 +795,7 @@ mod tests {
                 runner_config,
                 running: None,
                 secret_meta: HashMap::new(),
+                vercel_ai_gateway_secret_auto_enabled: false,
             }),
         }
     }
@@ -851,6 +899,132 @@ mod tests {
         assert!(
             enabled,
             "the default provider must be enabled once its secret is set"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_the_default_vercel_secret_disables_a_provider_it_alone_enabled() {
+        let dir = unique_temp_dir("secret-removal-disables");
+        unsafe {
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", "/dev/null");
+        }
+        let control = control_with_state_dir(dir.path());
+
+        control
+            .set_secret(tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET, "shh")
+            .await
+            .expect("set_secret");
+        control
+            .remove_secret(tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET)
+            .await
+            .expect("remove_secret");
+
+        let enabled = control
+            .state
+            .lock()
+            .await
+            .runner_config
+            .providers
+            .get(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+            .expect("seeded provider entry")
+            .enabled;
+        assert!(
+            !enabled,
+            "removing the only secret that enabled this provider must leave it exactly \
+             as it was before the set: disabled"
+        );
+
+        // A capability claim, not just an internal flag — assert the
+        // observable absence directly: a disabled provider reports
+        // `not_configured`, never `secret_unresolved` (which is what an
+        // enabled-with-no-credential provider reports forever).
+        assert!(matches!(
+            control.catalog().await,
+            CatalogSnapshot::NotConfigured
+        ));
+    }
+
+    #[tokio::test]
+    async fn removing_the_default_vercel_secret_leaves_an_operator_enabled_provider_on() {
+        let dir = unique_temp_dir("secret-removal-preserves-operator-enable");
+        unsafe {
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", "/dev/null");
+        }
+        let control = control_with_state_dir(dir.path());
+        // Simulates an operator's own explicit configuration (TOML, or
+        // `TACK_RUNNER_PROVIDER_VERCEL_AI_GATEWAY_ENABLED`) turning the
+        // provider on before any key was ever pasted through this control —
+        // never something `set_secret` itself did.
+        control
+            .state
+            .lock()
+            .await
+            .runner_config
+            .providers
+            .get_mut(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+            .expect("seeded provider entry")
+            .enabled = true;
+
+        control
+            .set_secret(tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET, "shh")
+            .await
+            .expect("set_secret");
+        control
+            .remove_secret(tack_runner::config::DEFAULT_VERCEL_AI_GATEWAY_SECRET)
+            .await
+            .expect("remove_secret");
+
+        let enabled = control
+            .state
+            .lock()
+            .await
+            .runner_config
+            .providers
+            .get(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+            .expect("seeded provider entry")
+            .enabled;
+        assert!(
+            enabled,
+            "a provider the operator enabled directly must never be turned off by a \
+             later key removal through this route"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_a_non_default_secret_never_touches_the_providers_enabled_flag() {
+        let dir = unique_temp_dir("secret-removal-narrow-name");
+        unsafe {
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", "/dev/null");
+        }
+        let control = control_with_state_dir(dir.path());
+        control
+            .state
+            .lock()
+            .await
+            .runner_config
+            .providers
+            .get_mut(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+            .expect("seeded provider entry")
+            .enabled = true;
+
+        control
+            .remove_secret("some-other-secret-name")
+            .await
+            .expect("remove_secret");
+
+        let enabled = control
+            .state
+            .lock()
+            .await
+            .runner_config
+            .providers
+            .get(tack_runner::config::VERCEL_AI_GATEWAY_CONFIG_KEY)
+            .expect("seeded provider entry")
+            .enabled;
+        assert!(
+            enabled,
+            "removing a secret under any name other than the default must never touch \
+             this provider's enabled flag — mirrors set_secret's own narrow scope"
         );
     }
 

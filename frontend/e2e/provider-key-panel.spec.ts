@@ -58,7 +58,6 @@ test('saving a key re-probes the catalog and the value never reaches the DOM', a
   await Promise.all([localRunnerLoaded, secretsLoaded]);
 
   const removeButton = page.getByRole('button', { name: 'Remove' });
-  const replaceButton = page.getByRole('button', { name: 'Replace' });
   const apiKeyField = page.getByLabel('API key');
   await Promise.race([
     removeButton.waitFor({ state: 'visible' }),
@@ -67,19 +66,15 @@ test('saving a key re-probes the catalog and the value never reaches the DOM', a
 
   // A previous run — or, once `executionToggleLock` serializes this test
   // against its siblings, a sibling run against the same long-lived e2e
-  // server — may have already saved a key. Reach the fill-in form via
-  // `Replace` (client-side only: it just flips this panel's own `editing`
-  // signal), never `Remove`: `EmbeddedRunnerControl::remove_secret`
-  // (`crates/tack-cli/src/local_runner.rs`) deletes the stored value but
-  // never resets the provider's own `enabled` flag — only `set_secret` ever
-  // sets it — so on a server process that has EVER saved this provider's
-  // key, `Remove` leaves the catalog reporting `secret_unresolved` forever
-  // after, never `not_configured` again (measured: deterministic once a
-  // sibling serialized behind the same lock has saved first — a Rust file,
-  // not this spec, and not fixed here). `Replace` reaches the identical form
-  // with no server call and no dependence on that bug.
+  // server — may have already saved a key. Removing it here drives the real
+  // `DELETE /api/local-runner/secrets/{name}` route and proves the panel
+  // reaches a clean slate: the catalog line drops back to "not configured"
+  // and the fill-in form reappears, rather than staying stuck reporting an
+  // unresolved secret for a provider still marked on.
   if (await removeButton.isVisible()) {
-    await replaceButton.click();
+    await removeButton.click();
+    await apiKeyField.waitFor({ state: 'visible' });
+    await expect(page.getByText('Catalog: not configured')).toBeVisible();
   }
 
   const secretValue = 'e2e-placeholder-key-never-should-render';
