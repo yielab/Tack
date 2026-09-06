@@ -198,4 +198,60 @@ test.describe('Execution tab — real attempts/decisions/artifacts against the p
     expect(Buffer.concat(chunks).toString('utf-8')).toBe(artifactContent);
     await expect(drawer.getByText('Downloaded.')).toBeVisible();
   });
+
+  test('a poll tick during a pending decision never unmounts the attempt panel — a typed-but-unsaved token and a chosen option both survive, and the Resolve control stays the same DOM node', async ({
+    page,
+    request,
+  }) => {
+    const projectId = await getOrCreateProject(request);
+    const itemId = await createFreshItem(request, projectId, `F4 poll survives ${Date.now()}`);
+    const profileId = await createAgentProfile(request, `F4 Profile PS ${Date.now()}`);
+    const modelId = 'opaque/model-alpha';
+
+    const { runnerId, credential } = await enrollRunner(request, `F4 Runner PS ${Date.now()}`, modelId);
+    const requestId = await createExecution(request, itemId, runnerId, profileId, modelId);
+    const lease = await claimOnceWithLease(request, runnerId, credential, `f4-ps-claim-${Date.now()}`);
+    expect(lease?.requestId).toBe(requestId);
+    const attemptId = lease!.attemptId;
+    const fencingToken = lease!.fencingToken;
+
+    await acceptAndStartAttempt(request, runnerId, credential, attemptId, fencingToken);
+    const decisionId = `dec-${Date.now()}`;
+    await createRunnerDecision(request, runnerId, credential, attemptId, fencingToken, decisionId, [
+      { option_id: 'allow_once', label: 'Allow once' },
+      { option_id: 'deny', label: 'Deny' },
+    ]);
+
+    await page.goto(`/projects/${projectId}/board?item=${itemId}`);
+    await waitForApp(page);
+    const drawer = page.getByRole('dialog');
+    await drawer.getByRole('tab', { name: 'Execution' }).click();
+    await expect(drawer.getByText('Attempt #1')).toBeVisible();
+    await drawer.getByRole('button', { name: /Show events, decisions & artifacts/ }).click();
+    await expect(drawer.getByText('e2e: allow this action?')).toBeVisible();
+
+    // Typed but never saved (no click on "Save") — this is the token
+    // FIELD's own local input state, distinct from the persisted
+    // preference `decisionTokenStore` already covers; only a live,
+    // continuously-mounted `DecisionInbox` keeps it.
+    const tokenField = drawer.getByLabel('Your decision token');
+    await tokenField.fill('typed-not-saved-token');
+    await drawer.getByRole('radio', { name: 'Allow once' }).check();
+
+    const resolveButton = drawer.getByRole('button', { name: 'Resolve' });
+    const resolveHandle = await resolveButton.elementHandle();
+    expect(resolveHandle).not.toBeNull();
+
+    // Longer than `realtime.ts`'s own 4s default poll interval, so at least
+    // one full invalidate-and-refetch round trip lands inside this wait
+    // regardless of how much time the setup above already used.
+    await page.waitForTimeout(6000);
+
+    // The exact node captured before the wait is still the one in the DOM
+    // — never detached and replaced by a fresh mount.
+    expect(await resolveHandle!.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await resolveHandle!.isVisible()).toBe(true);
+    await expect(tokenField).toHaveValue('typed-not-saved-token');
+    await expect(drawer.getByRole('radio', { name: 'Allow once' })).toBeChecked();
+  });
 });

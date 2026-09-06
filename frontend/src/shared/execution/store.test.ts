@@ -491,6 +491,64 @@ describe('createExecutionStore — attemptsFor() / loadAttempts()', () => {
     expect(store.attemptsFor('exec_1')).toEqual({ status: 'ready', data: [] });
   });
 
+  it('a refresh of a ready entry never transitions it through loading — the exact same object stays visible for the entire in-flight window', async () => {
+    const first = attemptSummary();
+    mockedAttemptsApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [first] }));
+    const store = createExecutionStore();
+    await store.loadAttempts('exec_1');
+    const initial = store.attemptsFor('exec_1');
+    expect(initial).toEqual({ status: 'ready', data: [first] });
+
+    const { promise, resolve } = deferred<{ data: { protocol_version: number; data: AttemptSummary[] }; headers: Headers }>();
+    mockedAttemptsApi.list.mockReturnValue(promise);
+    const refresh = store.loadAttempts('exec_1');
+
+    // Reference equality, not just structural — the SAME object a
+    // consumer's memo already holds, never a new one that merely looks
+    // the same, since a new reference alone (independent of its status
+    // label) is what re-triggers a reference-keyed consumer.
+    expect(store.attemptsFor('exec_1')).toBe(initial);
+
+    resolve(withHeaders({ protocol_version: 1, data: [first] }));
+    await refresh;
+    expect(store.attemptsFor('exec_1')).toBe(initial);
+  });
+
+  it('a refresh whose content is unchanged leaves attemptsFor() returning the exact same object, row objects included', async () => {
+    const original = attemptSummary();
+    mockedAttemptsApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [original] }));
+    const store = createExecutionStore();
+    await store.loadAttempts('exec_1');
+    const initial = store.attemptsFor('exec_1');
+
+    // A structurally-identical but distinct object, as a fresh HTTP
+    // response would deserialize — never the same reference as `original`.
+    const reFetched = attemptSummary();
+    mockedAttemptsApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [reFetched] }));
+    await store.loadAttempts('exec_1');
+
+    expect(store.attemptsFor('exec_1')).toBe(initial);
+    const record = store.attemptsFor('exec_1');
+    expect(record.status === 'ready' && record.data[0]).toBe(original);
+  });
+
+  it('a refresh with a changed row returns a new ready object, so a real state transition still renders', async () => {
+    const original = attemptSummary({ state: 'running' });
+    mockedAttemptsApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [original] }));
+    const store = createExecutionStore();
+    await store.loadAttempts('exec_1');
+    const initial = store.attemptsFor('exec_1');
+
+    const updated = attemptSummary({ state: 'completed' });
+    mockedAttemptsApi.list.mockResolvedValue(withHeaders({ protocol_version: 1, data: [updated] }));
+    await store.loadAttempts('exec_1');
+
+    const record = store.attemptsFor('exec_1');
+    expect(record).not.toBe(initial);
+    expect(record.status).toBe('ready');
+    expect(record.status === 'ready' && record.data[0]).toBe(updated);
+  });
+
   it('loadAttempts failure yields an explicit error record and rejects', async () => {
     mockedAttemptsApi.list.mockRejectedValue(new ApiError(500, 'boom', 'internal_error'));
     const store = createExecutionStore();

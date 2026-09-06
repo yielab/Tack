@@ -92,6 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Execution tab no longer flickers and forgets what you were doing every four
+  seconds.** Its background refresh used to replace an already-loaded attempt list with
+  "loading" first, which tore down and rebuilt the whole attempt panel — including the
+  decision inbox — on every poll tick: a chosen answer, a typed-but-unsaved decision
+  token, and an expanded detail section were all silently lost while a real decision was
+  still pending. A refresh now keeps exactly what was already showing until the new data
+  is known to actually differ, so a pending decision survives a poll indefinitely.
 - **A provider key pasted while agent execution was already on never reached the running
   runner, and the page said it had.** The embedded runner receives its configuration by
   value when it starts; storing a key updated only the control's own copy, which is what

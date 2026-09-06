@@ -38,6 +38,61 @@ function normalizeError(err: unknown): NormalizedExecutionError {
   return { status: 0, code: undefined, message: err instanceof Error ? err.message : 'Unknown error' };
 }
 
+/**
+ * Structural equality, independent of a JS object's own key insertion
+ * order. Two endpoints that both serialize "the same shape" (e.g. one row
+ * of a list response vs. a single-resource GET) make no promise about key
+ * order, so a naive `JSON.stringify` comparison can read byte-for-byte
+ * identical data as "changed" purely from that ordering difference —
+ * which is exactly what happened here: a request's summary compared equal
+ * on every `GET .../executions/{id}` refresh against the previous refresh,
+ * but not against the `GET .../executions?...` list row that first
+ * populated it, wrongly treating the first realtime tick as a real change.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, i) => deepEqual(item, b[i]));
+  }
+  const aRec = a as Record<string, unknown>;
+  const bRec = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRec);
+  const bKeys = Object.keys(bRec);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => Object.prototype.hasOwnProperty.call(bRec, key) && deepEqual(aRec[key], bRec[key]));
+}
+
+/**
+ * Reuses a previous fetch's exact `AttemptSummary` object for any row a
+ * refresh returns unchanged, rather than the freshly-deserialized one the
+ * new response carries. SolidJS's `<For>` matches array items by reference
+ * (`solid-js`'s `mapArray`), so a brand-new object for every row — even
+ * one whose fields are identical — reads as "this attempt was removed and
+ * a different one added," disposing and recreating everything rendered
+ * under it (a `<For>` on a fresh array has no cheaper way to know two
+ * objects are "the same row" without a shared reference or an explicit
+ * key). Only a row whose content actually changed gets the new object, so
+ * a real state transition still renders.
+ */
+function reuseUnchangedAttempts(previous: AttemptSummary[] | undefined, fresh: AttemptSummary[]): AttemptSummary[] {
+  if (!previous || previous.length === 0) return fresh;
+  const byId = new Map(previous.map((attempt) => [attempt.attempt_id, attempt]));
+  return fresh.map((row) => {
+    const prior = byId.get(row.attempt_id);
+    return prior && deepEqual(prior, row) ? prior : row;
+  });
+}
+
+/** Whether a refresh's (already row-deduplicated via
+ *  {@link reuseUnchangedAttempts}) result is exactly the same set of
+ *  attempt objects, in the same order, as what is already held — the
+ *  condition under which `loadAttempts` must not write anything new. */
+function sameAttempts(previous: AttemptSummary[], merged: AttemptSummary[]): boolean {
+  return previous.length === merged.length && previous.every((attempt, i) => attempt === merged[i]);
+}
+
 export type ListStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 /**
@@ -222,26 +277,80 @@ export function createExecutionStore(): ExecutionStore {
     };
   }
 
+  function cancellationEqual(a: CancellationState, b: CancellationState): boolean {
+    return a.requested === b.requested && a.pending === b.pending && a.conflict === b.conflict && a.error === b.error;
+  }
+
+  // Memoizes the record actually handed out per request id, reused whole
+  // when nothing about it changed — see `recordFor`'s own comment for why
+  // this exists alongside `reuseUnchangedAttempts` above.
+  const recordCache = new Map<string, ExecutionRequestRecord>();
+
+  /**
+   * `requestsForItem`/`requests` feed `ExecutionTimeline.tsx`'s `<For>`
+   * directly, and SolidJS's `<For>` matches array items by reference (see
+   * `reuseUnchangedAttempts`'s doc comment on `mapArray`) — so a record
+   * rebuilt fresh on every read, as this used to do unconditionally, made
+   * every mounted request row (and everything nested under it: the attempt
+   * list, the decision inbox) look like a brand-new row on every store
+   * mutation, including an unrelated realtime tick for a *different*
+   * request. Reusing the previous record when its `summary`/`error`/
+   * `cancellation` are all unchanged keeps that row's identity — and
+   * everything mounted under it — stable across a no-op refresh.
+   */
   function recordFor(requestId: string): ExecutionRequestRecord | undefined {
     const summary = cache.get(requestId);
     const error = fetchErrors.get(requestId);
-    if (!summary && !error) return undefined;
-    return {
+    if (!summary && !error) {
+      recordCache.delete(requestId);
+      return undefined;
+    }
+    const cancellation = deriveCancellation(summary, requestId);
+    const prior = recordCache.get(requestId);
+    if (prior && prior.summary === summary && prior.error === error && cancellationEqual(prior.cancellation, cancellation)) {
+      return prior;
+    }
+    const record: ExecutionRequestRecord = {
       status: summary ? 'ready' : 'error',
       summary,
       error,
-      cancellation: deriveCancellation(summary, requestId),
+      cancellation,
       fetchedAt: Date.now(),
     };
+    recordCache.set(requestId, record);
+    return record;
   }
 
   /** Applies a fetched row through the version guard; returns whether it
    *  actually landed (false = dropped as a stale, out-of-order response).
    *  `version` must be allocated at the *issuing* operation's start (see
    *  `GLOBAL_SEQUENCE_KEY`'s doc comment) — never here, which would instead
-   *  order writes by resolution time and defeat the whole guarantee. */
-  function applyFetchedSummary(summary: ExecutionSummary, version: number): boolean {
-    const applied = cache.set(summary.request_id, summary, version);
+   *  order writes by resolution time and defeat the whole guarantee.
+   *
+   *  Reuses the previously-cached summary object when the freshly
+   *  deserialized one is structurally identical to it, rather than storing
+   *  the new one — see `recordFor`'s doc comment for why an unchanged row
+   *  needs a stable reference, not just an unchanged value.
+   *
+   *  Normalizes to exactly `ExecutionSummary`'s five documented fields
+   *  first: `GET /executions/{id}` (this store's `loadOne`) serializes an
+   *  extra `protocol_version` alongside them that `GET /executions` (this
+   *  store's `loadList`/`loadForItems`) does not carry per-row — an
+   *  inconsistency between the two handlers, not a real change in the
+   *  request — so comparing the raw payloads treated every first refresh
+   *  from a list-sourced row to a get-sourced one as a change, every time,
+   *  independent of whether anything the type actually documents differed. */
+  function applyFetchedSummary(summaryRaw: ExecutionSummary, version: number): boolean {
+    const summary: ExecutionSummary = {
+      request_id: summaryRaw.request_id,
+      item_id: summaryRaw.item_id,
+      state: summaryRaw.state,
+      cancellation_requested_at: summaryRaw.cancellation_requested_at,
+      created_at: summaryRaw.created_at,
+    };
+    const previous = cache.get(summary.request_id);
+    const toStore = previous && deepEqual(previous, summary) ? previous : summary;
+    const applied = cache.set(summary.request_id, toStore, version);
     if (applied) {
       fetchErrors.delete(summary.request_id);
       touch();
@@ -418,13 +527,43 @@ export function createExecutionStore(): ExecutionStore {
     return attemptsCache.get(requestId) ?? ATTEMPTS_IDLE;
   }
 
+  /**
+   * `loading` is reserved for "nothing is known yet" (idle, or a previous
+   * error) — never for "the data we have might be one round trip stale."
+   * A request that already has `ready` data keeps showing exactly that
+   * object, unconditionally, for the entire refresh; `attemptsCache` is
+   * only written again once the fetch resolves, and only if the result
+   * actually differs from what is already held.
+   *
+   * This is stricter than a `refreshing` flag on the `ready` variant would
+   * be, and deliberately so: `attemptsFor()` is read as one plain value
+   * (`ExecutionTimeline.tsx`'s `RequestRow` calls it inside a `createMemo`,
+   * not through a `<For>`, which is the only place a reference change
+   * without a content change is harmless — see `reuseUnchangedAttempts`'s
+   * doc comment). SolidJS memos re-run their dependents whenever the
+   * tracked value's *reference* changes, full stop; a `refreshing` flag
+   * would need a new wrapper object to flip it, and that new reference
+   * would re-trigger every downstream computation exactly as `loading`
+   * did — including disposing and recreating the mounted attempt list and
+   * its nested decision inbox — even though the underlying data never
+   * changed. Skipping the write (not just skipping a status label) is the
+   * only version of this fix that actually holds.
+   */
   async function loadAttempts(requestId: string): Promise<void> {
-    attemptsCache.set(requestId, { status: 'loading' });
-    touch();
+    const existing = attemptsCache.get(requestId);
+    const previousData = existing?.status === 'ready' ? existing.data : undefined;
+    if (!previousData) {
+      attemptsCache.set(requestId, { status: 'loading' });
+      touch();
+    }
     try {
       const { data } = await attemptsApi.list(requestId);
-      attemptsCache.set(requestId, { status: 'ready', data: data.data });
-      touch();
+      const merged = reuseUnchangedAttempts(previousData, data.data);
+      const unchanged = previousData !== undefined && sameAttempts(previousData, merged);
+      if (!unchanged) {
+        attemptsCache.set(requestId, { status: 'ready', data: merged });
+        touch();
+      }
     } catch (err) {
       attemptsCache.set(requestId, { status: 'error', error: normalizeError(err) });
       touch();
