@@ -1,10 +1,8 @@
-// Public surface of the shared execution API/state layer (TODO.md III-E2).
-// E3 (fleet/runner management UI) and E4 ("Run with agent" + activity) — and
-// any later card — should import from this barrel rather than reaching into
+// Public surface of the shared execution API/state layer. The fleet/runner
+// management UI, the "Run with agent" + activity surfaces, and anything
+// added later should import from this barrel rather than reaching into
 // individual files, so the boundary of what's public stays visible in one
-// place. See `docs/agent-handoffs/part-iii/III-E2.md` for the narrative
-// tour of this surface, the backend gaps it works around, and how to extend
-// it once those gaps close.
+// place.
 
 export type {
   ExecutionState,

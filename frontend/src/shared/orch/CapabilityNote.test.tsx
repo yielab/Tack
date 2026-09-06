@@ -46,7 +46,7 @@ function capabilitiesWithPause(reason: string, level: 'unsupported' | 'supported
 }
 
 /**
- * The required regression this card exists to prove: a control whose
+ * The regression this file exists to prove: a control whose
  * capability is Unsupported renders a reason string that came from the
  * capability payload — asserted on the reason TEXT itself, not merely on
  * the control being disabled. A component that special-cased the plane's

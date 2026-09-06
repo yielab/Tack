@@ -164,12 +164,11 @@ export type BoardEvent =
   | { type: 'item_deleted'; project_id: string; item_id: string }
   | { type: 'board_config_updated'; project_id: string }
   | { type: 'sprint_updated'; project_id: string; sprint_id: string }
-  // Card B4 (Wave 2, realtime broadcast, task 34.5) — mirrors
-  // `BoardEvent::AgentRunUpdated`. Emitted only when a mirrored agent run's
-  // state actually changed (or was newly attributed to this item); a `state`
-  // value outside the known `RunState` set is possible (docket's
-  // `Unknown(String)` fallback, TODO.md §1.2) and must be rendered as-is, not
-  // assumed to be one of the known strings.
+  // Mirrors `BoardEvent::AgentRunUpdated`. Emitted only when a mirrored agent
+  // run's state actually changed (or was newly attributed to this item); a
+  // `state` value outside the known `RunState` set is possible (docket's
+  // `Unknown(String)` fallback) and must be rendered as-is, not assumed to
+  // be one of the known strings.
   | { type: 'agent_run_updated'; project_id: string; item_id: string; run_id: string; state: string }
   // Mirrors `BoardEvent::ApprovalPending`. Emitted only on the transition
   // into a `pending` approval state — never on a grant/deny decision or a

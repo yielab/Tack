@@ -1,12 +1,12 @@
 // Pure formatting + interpretation helpers for agent activity — kept
 // isolated and unit-tested because two of them enforce hard correctness
-// rules from TODO.md §0 rather than mere copy: rule 6 ("never present an
-// estimate as spend" — every money figure carries the word "estimated" AND
-// its pricing-snapshot date, even when that date is unknown) and the chip's
-// "an item with no agent activity shows no chip" rule (enforced by callers
-// treating an absent badge row / `isOrchDisabled` as "nothing to show", not
-// handled here, but `deriveAgentChipState` is what those callers feed once
-// they've already decided there IS a row to render).
+// rules rather than mere copy: "never present an estimate as spend" (every
+// money figure carries the word "estimated" AND its pricing-snapshot date,
+// even when that date is unknown) and "an item with no agent activity shows
+// no chip" (enforced by callers treating an absent badge row /
+// `isOrchDisabled` as "nothing to show", not handled here, but
+// `deriveAgentChipState` is what those callers feed once they've already
+// decided there IS a row to render).
 
 import type { AgentChipState } from '../ui/AgentStateChip';
 
@@ -30,7 +30,7 @@ export function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** Compact token count — tokens are the primary measure (TODO.md §0 rule 6). */
+/** Compact token count — tokens are the primary measure. */
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -42,12 +42,11 @@ export function formatTokens(n: number): string {
  * statement of the pricing-snapshot date — including when that date is
  * `null`. This is stricter than the Fleet view's
  * `formatEstimatedCost` (which silently omits the snapshot clause when the
- * date is unknown): the B5 card explicitly calls that out as not good enough
- * here — "`pricing_snapshot_at` is currently always `null` because no
- * pricing mechanism exists yet — so handle the null case honestly (don't
- * print a fake date, and don't silently drop the qualifier)." A reader must
- * never come away thinking a snapshot date exists just because the qualifier
- * is missing.
+ * date is unknown): `pricing_snapshot_at` is currently always `null`
+ * because no pricing mechanism exists yet, so the null case is handled
+ * honestly here — never a fake date, and never a silently dropped
+ * qualifier. A reader must never come away thinking a snapshot date exists
+ * just because the qualifier is missing.
  */
 export function formatEstimatedCost(usd: number | null, snapshotAt: string | null): string {
   if (usd == null) return 'cost estimate unavailable';
@@ -61,20 +60,18 @@ export function formatEstimatedCost(usd: number | null, snapshotAt: string | nul
 /**
  * Collapses the wire's `TaskStatus` (pending | running | done | failed |
  * blocked | waiting_approval | an unrecognised `Unknown(String)` value — see
- * `./api.ts`'s header comment) down to the chip's 5 visual states, per
- * TODO.md card B5's acceptance criterion ("the chip's five states are
- * visually distinct").
+ * `./api.ts`'s header comment) down to the chip's 5 visually distinct
+ * states.
  *
  * Two states fold into `failed` rather than getting a 6th slot of their own,
  * both deliberate, both flagged here for whoever next touches this:
  *
- *  - `blocked` → `failed`. Neither the roadmap's own list (34.9: "queued /
- *    running / waiting-approval / failed") nor the card's "five states" line
- *    names a distinct slot for it, and semantically "the agent cannot
- *    proceed without intervention" reads as "needs attention" — the same
- *    signal `failed` already carries. If a future card wants `blocked` to
- *    read differently (e.g. it's not actually an error, just paused), give
- *    it its own `AgentChipState` member and a 6th tone.
+ *  - `blocked` → `failed`. It has no distinct slot of its own among the
+ *    five, and semantically "the agent cannot proceed without intervention"
+ *    reads as "needs attention" — the same signal `failed` already carries.
+ *    A future change that wants `blocked` to read differently (e.g. it's
+ *    not actually an error, just paused) should give it its own
+ *    `AgentChipState` member and a 6th tone.
  *  - Any unrecognised value → `failed`. This is the conservative direction:
  *    showing an unfamiliar status as "queued" or "done" risks hiding a real
  *    problem, whereas flagging an unknown status as "needs a look" costs
@@ -82,10 +79,9 @@ export function formatEstimatedCost(usd: number | null, snapshotAt: string | nul
  *    philosophy of never erroring on an unknown value, just choosing the
  *    safe rendering.
  *
- * `done` is the one state present in the card's "five" but absent from the
- * roadmap's four — my reading is that a completed dispatch is exactly the
- * kind of at-a-glance signal this chip exists for, so it earns the fifth
- * slot rather than `blocked`.
+ * `done` earns the fifth slot (rather than giving `blocked` its own) because
+ * a completed dispatch is exactly the kind of at-a-glance signal this chip
+ * exists for.
  */
 export function deriveAgentChipState(remoteStatus: string): AgentChipState {
   switch (remoteStatus) {
@@ -137,7 +133,7 @@ const EVENT_TYPE_LABEL: Record<string, string> = {
  * and drops `item_id` entirely, so there is no query that can say how many
  * of *this item's* events were aged out, or even whether any were (an item
  * dispatched before the cutoff may simply never have had many events to
- * begin with). See B6's handoff note in TODO.md §6 for the full trail.
+ * begin with).
  * This message says "may have been aged out," never a number — inventing a
  * count would be less honest than the vague-but-true statement, not more
  * useful. Names the retention window so the caveat is actionable (a reader

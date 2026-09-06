@@ -54,7 +54,7 @@ export default function Sprints() {
   );
   const { items, refetch: refetchItems } = useProjectItems();
 
-  // Dispatch-to-agents gate (TODO.md Wave 3, card C4, task 35.8/35.9): reuses
+  // Dispatch-to-agents gate: reuses
   // the same bulk agent-activity fetch Board.tsx already relies on for its
   // own dispatch gating, rather than adding a second "is orchestration
   // enabled" probe — see `useAgentActivityMap`'s `orchAvailable` doc comment.
@@ -391,7 +391,7 @@ export default function Sprints() {
                           {/* Dispatch is privileged and outward-facing (spends
                               money, starts autonomous agents), so it never
                               renders when orchestration isn't positively
-                              confirmed enabled (TODO.md §0 rule 8) — no
+                              confirmed enabled — no
                               control that's just going to 404 or error. */}
                           <Show when={agentActivity.orchAvailable() && itemsForSprint(sprint.id).length > 0}>
                             <button
@@ -487,7 +487,7 @@ export default function Sprints() {
         </form>
       </Modal>
 
-      {/* Run sprint — dry-run preview + confirm (TODO.md Wave 3, card C4). */}
+      {/* Run sprint — dry-run preview + confirm. */}
       <DispatchSprintModal
         sprint={dispatchTarget()}
         onClose={() => setDispatchTarget(null)}
@@ -529,9 +529,9 @@ function ItemCard(props: {
             <p class="flex-1 min-w-0 text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
               {props.item.title}
             </p>
-            {/* "Run with agent" (TODO.md III-E4) — same new execution
+            {/* "Run with agent" — same execution
                 surface as Board's per-card trigger, distinct from this
-                view's own "Run sprint" button below (the legacy, sprint-wide
+                view's own "Run sprint" button below (the older, sprint-wide
                 Docket dispatch feature): this one launches a single item's
                 own execution request, not a bulk sprint dispatch. */}
             <span onClick={(e) => e.stopPropagation()}>

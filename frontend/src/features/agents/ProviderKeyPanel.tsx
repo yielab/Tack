@@ -8,9 +8,9 @@ import {
   localRunnerApi,
 } from './api';
 
-/** Verbatim text for each `CatalogSnapshot` variant — the card's own
- *  instruction: "Catalog: N models as of <ts>" for the success case, "the
- *  typed error, verbatim" for every other one. Never a fabricated count. */
+/** Verbatim text for each `CatalogSnapshot` variant: "Catalog: N models as
+ *  of <ts>" for the success case, the typed error verbatim for every
+ *  other one. Never a fabricated count. */
 function catalogText(catalog: CatalogSnapshot): string {
   switch (catalog.status) {
     case 'configured':

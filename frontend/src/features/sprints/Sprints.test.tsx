@@ -7,10 +7,10 @@ import { ExecutionStoreProvider } from '../../shared/state/executionContext';
 import type { Resource } from 'solid-js';
 import Sprints from './Sprints';
 
-// Regression test for TODO.md §6 "F1": D1 found the Sprints view's "Run
-// sprint" button resolving to 2 elements in a Playwright strict-mode
-// locator. The root cause (confirmed via `git diff` against C4's original
-// change, and by reading `Sprints.tsx` itself) is NOT a duplicate render for
+// Regression test: the Sprints view's "Run
+// sprint" button once resolved to 2 elements in a Playwright strict-mode
+// locator. The root cause (confirmed by reading `Sprints.tsx` itself) is
+// NOT a duplicate render for
 // one sprint — `Sprints.tsx` renders exactly one "Run sprint" button per
 // sprint, inside a single `<For each={activeSprints()}>`. It's two
 // genuinely different, correctly-rendered buttons for two different
@@ -22,10 +22,9 @@ import Sprints from './Sprints';
 //
 // The fix: each button's accessible name now includes its own sprint's name
 // (`Run sprint: <name>`), so screen-reader/voice-control users — and a
-// `getByRole('button', { name })` locator — can tell the two apart, per the
-// card's own guidance ("give each an accessible name that distinguishes it
-// ... not to remove one"). This test pins that behavior so it can't
-// regress back to an ambiguous shared name.
+// `getByRole('button', { name })` locator — can tell the two apart, rather
+// than sharing one ambiguous name. This test pins that behavior so it can't
+// regress.
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -87,7 +86,7 @@ function mockFetch(input: RequestInfo | URL): Promise<Response> {
       ),
     );
   }
-  // `ExecutionStoreProvider` (TODO.md III-E4) loads this once on mount.
+  // `ExecutionStoreProvider` loads this once on mount.
   if (url.includes('/executions')) {
     return Promise.resolve(new Response(JSON.stringify({ protocol_version: 1, data: [] }), { status: 200 }));
   }

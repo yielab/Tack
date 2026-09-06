@@ -141,11 +141,11 @@ export default function Table() {
     onCleanup(() => window.removeEventListener(ITEM_UPDATED_EVENT, onUpdated));
   });
 
-  // Card B4 (Wave 2, realtime broadcast, task 34.5): Table has no live board
+  // Table has no live board
   // socket otherwise (unlike Board.tsx) — this connection exists solely to
   // keep the agent-activity badge chip current when a mirrored run/approval
-  // changes, without inventing a broader live-refresh story this card
-  // doesn't ask for.
+  // changes, without inventing a broader live-refresh story that isn't
+  // needed here.
   createEffect(() => {
     const pid = params.id;
     if (!pid) return;

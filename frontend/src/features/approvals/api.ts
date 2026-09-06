@@ -1,17 +1,16 @@
-// Wire-format boundary for the fleet-wide approvals inbox (TODO.md Wave 4,
-// card D1, tasks 36.1/36.2). Every assumption about `GET /api/approvals` /
+// Wire-format boundary for the fleet-wide approvals inbox. Every
+// assumption about `GET /api/approvals` /
 // `POST /api/approvals/{token}`'s request/response shapes lives in this one
 // file — `ApprovalsPage.tsx` and `format.ts` only ever import types and
 // functions from here, never construct a request body or read a raw field
-// name themselves. Mirrors the pattern A5 set for `features/fleet/api.ts`
-// and C4 repeated for `shared/dispatch/api.ts`.
+// name themselves, the same pattern `features/fleet/api.ts` and
+// `shared/dispatch/api.ts` follow.
 //
 // Both routes and every field below are copied field-for-field from the real
 // Rust handler (`crates/tack-api/src/handlers/orch.rs`'s
 // `PendingApprovalResponse`/`PendingApprovalListResponse`/
 // `DecideApprovalRequest`/`DecideApprovalResponse`) and `docs/openapi.json`
-// — not a guess (unlike A5's original Fleet draft, this file was written
-// after the backend landed in the same session).
+// — not a guess.
 
 import { apiOrigin, request, ApiError, isOrchestrationDisabledError } from '../../shared/api/client';
 
@@ -46,8 +45,7 @@ export interface PendingApproval {
  * `GET /api/approvals` response envelope. The backend still sends a
  * grant-availability boolean alongside `rows` (whether
  * `TACK_ORCH_APPROVAL_TOKEN` is configured) — deliberately not declared or
- * read here anymore (card G1, TODO.md §II.1.2: "two ad-hoc capability bits
- * ... are retired"). It was never a *provider* capability — `Capabilities`
+ * read here anymore. It was never a *provider* capability — `Capabilities`
  * describes what a control plane can do, not whether this Tack server holds
  * a decision-granting secret — so there is no real field in
  * `shared/orch/capabilities.ts` for it to become. Pre-emptively hiding
@@ -114,8 +112,8 @@ export const approvalTokenStore = {
 
 /** True when the request failed because orchestration is disabled
  *  server-side — the default for every existing install. Delegates to
- *  `shared/api/client.ts#isOrchestrationDisabledError` (TODO.md card E2),
- *  which now distinguishes this from an ordinary 404 by a machine-readable
+ *  `shared/api/client.ts#isOrchestrationDisabledError`, which distinguishes
+ *  this from an ordinary 404 by a machine-readable
  *  `error.code`; kept as its own export so every existing caller
  *  (`ApprovalsPage.tsx`) keeps working unchanged. Note this only ever
  *  applies to `approvalsApi.list()`'s error — `approvalsApi.decide()`'s own

@@ -192,10 +192,9 @@ function submitButton(): HTMLButtonElement {
   return [...document.querySelectorAll('button')].find((b) => b.textContent === 'Run') as HTMLButtonElement;
 }
 
-/** Repository is a read-only summary by default (no free-text field visible
- *  — this card's own acceptance bar) — every test that needs to type a
- *  remote must expand it first, exactly as an operator would click
- *  "Change for this run". */
+/** Repository is a read-only summary by default (no free-text field
+ *  visible) — every test that needs to type a remote must expand it
+ *  first, exactly as an operator would click "Change for this run". */
 function expandRepository(): void {
   const btn = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Change for this run');
   btn!.click();
@@ -502,7 +501,7 @@ describe('RunWithAgentModal', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it('every visible field has an accessible label (native <label for>) — the keyboard/a11y path this card requires', async () => {
+  it('every visible field has an accessible label (native <label for>) — the keyboard/a11y path required here', async () => {
     mount({}, { runners: [RUNNER], fleets: [FLEET] });
     await flush();
     const dialog = document.querySelector('[role="dialog"]')!;

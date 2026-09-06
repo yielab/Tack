@@ -41,7 +41,7 @@ export interface RunWithAgentModalProps {
   itemId: string;
   itemTitle: string;
   /** The item's project — needed to read that project's model default
-   *  (VI-C3's `Project` model-policy tier, `GET /api/projects/{id}`). Every
+   *  (the `Project` model-policy tier, `GET /api/projects/{id}`). Every
    *  real caller (Board, item-detail, Sprint) already has this on the
    *  `Item` it is rendering; none of them ever construct a
    *  `CreateExecutionInput` themselves (this module's own header comment). */
@@ -49,7 +49,7 @@ export interface RunWithAgentModalProps {
   /** Called after a successful create, with the new request id — so a host
    *  (e.g. item-detail) can switch straight to the Execution tab. Never
    *  required: every surface already sees the new request appear via the
-   *  shared store without this callback (this card's acceptance bar). */
+   *  shared store without this callback. */
   onCreated?: (requestId: string) => void;
   /**
    * Injectable runner capability snapshots for the submit gate
@@ -94,13 +94,13 @@ function runnerSummaryToCapabilities(runner: RunnerSummary): RunnerCapabilities 
 }
 
 /**
- * The ONE shared "Run with agent" modal (TODO.md III-E4) — Board,
+ * The ONE shared "Run with agent" modal — Board,
  * item-detail, and Sprint all mount this exact component rather than each
  * building their own form, which is what makes "all three surfaces create
  * the same payload shape" true by construction rather than by convention.
  *
- * Vocabulary/visual distinctness from the legacy Docket "dispatch" feature
- * (`shared/dispatch/**`, III.0's vocabulary rule): this modal's title, every
+ * Vocabulary/visual distinctness from the older Docket "dispatch" feature
+ * (`shared/dispatch/**`): this modal's title, every
  * label, and its submit button all say "run" / "agent", never "dispatch" —
  * and it is a visually different modal (its own title bar, its own field
  * set) from `features/sprints/DispatchSprintModal.tsx`, not a themed
@@ -154,11 +154,10 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
   const agentProfilesData = (): AgentProfileSummary[] =>
     agentProfiles.error !== undefined ? [] : (agentProfiles() ?? []);
 
-  // "Agent execution is off" — the honest, currently-observable signal on
-  // this branch's base; see `shared.ts#isExecutionOff`'s own doc comment
-  // for what it will read once VI-B3 lands a real flag. Only claimed once
-  // the fetch has actually resolved (never during the initial loading
-  // flash, and never on a fetch error, which is "unknown", not "off").
+  // "Agent execution is off" — see `shared.ts#isExecutionOff`'s own doc
+  // comment for the signal this reads. Only claimed once the fetch has
+  // actually resolved (never during the initial loading flash, and never on
+  // a fetch error, which is "unknown", not "off").
   const executionOff = createMemo(
     () => !liveRunners.loading && liveRunners.error === undefined && isExecutionOff(activeRunners().length),
   );
@@ -233,7 +232,7 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
   // The capability reports belonging only to the currently selected target
   // — a specific runner, or every active member of a fleet — so the
   // Harness list and the "Choose…" model list reflect what THIS target
-  // reports, not the whole runner population (this card's task text).
+  // reports, not the whole runner population.
   const targetCapabilities = createMemo((): RunnerCapabilities[] => {
     const kind = selectorKind();
     const id = selectorId();
@@ -258,9 +257,8 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
     agentProfilesData().find((p) => p.agent_profile_id === agentProfileId()),
   );
 
-  // No project-level "default agent profile" storage exists on this
-  // branch's base (VI-C3 landed only `projects.default_model` — see this
-  // card's handoff, "Surface-map delta"). The one default that IS honest
+  // No project-level "default agent profile" storage exists — only
+  // `projects.default_model`. The one default that IS honest
   // without it: when exactly one agent profile exists, use it — the same
   // "a real, unambiguous choice needs no picker" reasoning the target
   // picker above applies to a single active runner.
@@ -358,7 +356,7 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
   );
 
   // Structural (non-capability) validation — every reason is shown, never a
-  // silently-disabled control (TODO.md III.2 rule 7).
+  // silently-disabled control.
   const structuralErrors = createMemo((): string[] => {
     const errors: string[] = [];
     if (!selectorId().trim()) errors.push('Select where this runs.');

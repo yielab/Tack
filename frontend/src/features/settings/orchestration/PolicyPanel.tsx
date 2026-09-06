@@ -27,14 +27,14 @@ const tdStyle = {
 
 /**
  * Guardrail/tool-call/approval activity for this project's linked control
- * plane — sourced entirely from mirrored `/metrics` samples (card B3's
- * ingestion), never a live call. **Every number here is control-plane-wide**,
+ * plane — sourced entirely from mirrored `/metrics` samples,
+ * never a live call. **Every number here is control-plane-wide**,
  * not scoped to just this project — `POLICY_SCOPE_CAVEAT` is rendered first,
  * above every figure, not as a footnote, because it changes how every number
  * below it should be read.
  *
  * Chain-verification of the underlying audit log is out of scope here by
- * design (the card's explicit instruction) — this panel links out to
+ * design — this panel links out to
  * `docket audit verify` as a command to run, rather than reimplementing
  * tamper detection in Rust.
  */

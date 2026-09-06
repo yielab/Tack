@@ -3,15 +3,15 @@ import { render } from 'solid-js/web';
 import DispatchSprintModal from './DispatchSprintModal';
 import type { Sprint } from '../../shared/types';
 
-// The modal is the confirmation gate for a privileged, sprint-wide action
-// (TODO.md Wave 3, card C4, task 35.8/35.9) — the dry-run preview must show
+// The modal is the confirmation gate for a privileged, sprint-wide action —
+// the dry-run preview must show
 // BEFORE any real dispatch is possible, and the outcome taxonomy must never
 // be flattened in the post-dispatch summary. `Modal` renders via `<Portal>`
 // onto `document.body` (see `shared/ui/Modal.tsx`), so every query below
 // goes through `document`, not the render-target container.
 //
-// Mock payloads below match the REAL contract (card C3, reconciled
-// 2026-08-05 against `docs/openapi.json`): `max_in_flight` is a query
+// Mock payloads below match the REAL contract, reconciled
+// against `docs/openapi.json`: `max_in_flight` is a query
 // parameter, every sprint item is always present with an `order` and a
 // `decision`, and the response carries a server-computed `summary`.
 
@@ -212,7 +212,7 @@ describe('DispatchSprintModal', () => {
     const text = dialog().textContent!;
     expect(text).toContain('1 dispatched');
     expect(text).toContain('1 waiting on approval');
-    // Never a single merged "2 dispatched" — the exact misrepresentation the card's brief names.
+    // Never a single merged "2 dispatched".
     expect(text).not.toContain('2 dispatched');
   });
 

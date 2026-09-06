@@ -264,7 +264,7 @@ export default function Timeline() {
   // (fill *and* text) toward whatever's behind it — collapsing the
   // fill/text contrast gap well under WCAG AA at any status opacity below
   // ~1 (verified down to ~2:1 at the old 0.45 "done" value, across all
-  // priorities and all six palette×mode combos). See TODO.md §6, A11.
+  // priorities and all six palette×mode combos).
   const isDone = (status: string) =>
     project()?.workflow?.statuses?.find(s => s.name === status)?.category === 'done';
 

@@ -73,8 +73,7 @@ describe('ExecutionStoreProvider', () => {
     await flush();
 
     // Same instance — this is the mechanism behind "every consumer sees one
-    // consistent state" (III-E2's acceptance bar, inherited by every
-    // consumer this Provider serves).
+    // consistent state," inherited by every consumer this Provider serves.
     expect(seenByA).toBe(seenByB);
     expect(seenByA!.requests().has('req-1')).toBe(true);
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/executions'))).toBe(true);

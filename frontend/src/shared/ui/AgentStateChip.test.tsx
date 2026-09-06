@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe('AgentStateChip', () => {
-  it('covers exactly 5 states, each with a distinct tone (TODO.md card B5 acceptance)', () => {
+  it('covers exactly 5 states, each with a distinct tone', () => {
     const states = Object.keys(AGENT_STATE_LABEL) as AgentChipState[];
     expect(states.sort()).toEqual(['done', 'failed', 'queued', 'running', 'waiting_approval'].sort());
     const tones = new Set(Object.values(AGENT_STATE_TONE));

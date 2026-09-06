@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render } from 'solid-js/web';
+import { MemoryRouter, Route } from '@solidjs/router';
 import EnrollmentPanel from './EnrollmentPanel';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -7,7 +8,14 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 function mount() {
   const container = document.createElement('div');
   document.body.appendChild(container);
-  const dispose = render(() => <EnrollmentPanel />, container);
+  const dispose = render(
+    () => (
+      <MemoryRouter>
+        <Route path="/" component={EnrollmentPanel} />
+      </MemoryRouter>
+    ),
+    container,
+  );
   return { container, dispose };
 }
 
@@ -41,10 +49,10 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('EnrollmentPanel — states the GET /runners gap up front', () => {
-  it('names the missing list endpoint rather than implying a full roster', () => {
+describe('EnrollmentPanel — states its session-local limitation up front', () => {
+  it('says it does not confirm connection rather than implying a full, live roster', () => {
     mount();
-    expect(document.body.textContent).toMatch(/no endpoint yet to list existing runners/i);
+    expect(document.body.textContent).toMatch(/doesn't check back with the server/i);
   });
 });
 
@@ -77,7 +85,7 @@ describe('EnrollmentPanel — enrollment and the one-time token', () => {
     expect(body).toMatchObject({ name: 'runner-a', total_capacity: 1, available_capacity: 1 });
   });
 
-  it('never shows the token again once the modal is closed — the credential-displays-once acceptance bar', async () => {
+  it('never shows the token again once the modal is closed — a credential displays once only', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input);
       const method = (init as RequestInit | undefined)?.method ?? 'GET';

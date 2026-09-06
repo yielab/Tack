@@ -98,7 +98,7 @@ describe('ArtifactDownloadPanel — discovers artifacts, never asks for an id', 
   });
 });
 
-describe('ArtifactDownloadPanel — every download outcome is a distinct, visible state (acceptance bar: "artifact failure visible")', () => {
+describe('ArtifactDownloadPanel — every download outcome is a distinct, visible state (artifact failure stays visible)', () => {
   it('clicking Download calls GET .../artifacts/{artifact_id}/content for that exact row and shows "Downloaded." on success', async () => {
     const fetchMock = mockFetch([VERIFIED], () => new Response('artifact bytes', { status: 200 }));
     const c = mount();

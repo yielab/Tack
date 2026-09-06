@@ -49,16 +49,15 @@ const StepHeader: Component<{ n: number; title: string; done?: boolean; locked?:
 );
 
 /**
- * Settings → Orchestration (TODO.md Phase 39, card E2: "make the
- * agent-factory control center discoverable"). Everything in this file is
- * new; there was no way to discover, enable, or set up orchestration from
- * the UI before this card — an operator had to know to set
+ * Settings → Orchestration — makes the agent-factory control center
+ * discoverable. Everything in this file is
+ * new; before it, there was no way to discover, enable, or set up
+ * orchestration from the UI — an operator had to know to set
  * `TACK_ORCH_ENABLE` and restart the server, sight unseen.
  *
- * **Wire contract:** `GET/PUT /api/settings/orchestration` — frozen jointly
- * with card E1 (the concurrent Rust card making the flag runtime-toggleable
- * and DB-backed, following the existing Cloud Backup precedent) before
- * either agent started; see `./api.ts`'s header comment for the full field
+ * **Wire contract:** `GET/PUT /api/settings/orchestration` — the flag is
+ * runtime-toggleable and DB-backed, following the existing Cloud Backup
+ * precedent; see `./api.ts`'s header comment for the full field
  * rationale, especially why both `source` and `env_default` exist.
  *
  * **The guided setup is sequential because the backend actually is.**
@@ -73,8 +72,8 @@ const StepHeader: Component<{ n: number; title: string; done?: boolean; locked?:
  * **Enabling is deliberately not a bare switch.** The paragraph directly
  * under the heading names the concrete consequence — Tack begins polling a
  * configured control plane and can dispatch work to autonomous agents that
- * spend money — before the control that flips it, per the card's explicit
- * instruction. It also isn't behind a confirmation dialog: the explanation
+ * spend money — before the control that flips it. It also isn't behind a
+ * confirmation dialog: the explanation
  * is permanent and unmissable rather than a one-time modal an operator
  * calls up once, reads, and never sees again — and turning the feature back
  * off is always a single, frictionless click, matching how every other

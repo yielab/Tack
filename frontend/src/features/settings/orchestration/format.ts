@@ -1,10 +1,10 @@
 // Formatting + interpretation helpers for the Orchestration settings panel.
 // Kept isolated and unit-tested for the same reason `shared/agentActivity/
-// format.ts` is: two of these enforce TODO.md §0 rule 6 ("never present an
-// estimate as spend") rather than mere copy — `formatBudgetCap` and
+// format.ts` is: two of these enforce "never present an
+// estimate as spend" rather than mere copy — `formatBudgetCap` and
 // `budgetProgress`'s caveat text. Reuses `formatEstimatedCost`/`formatTokens`
-// from `shared/agentActivity/format.ts` verbatim (per card D2's explicit
-// instruction) rather than writing a second cost formatter.
+// from `shared/agentActivity/format.ts` verbatim rather than writing a
+// second cost formatter.
 
 import type { ControlPlaneHealth } from './api';
 
@@ -49,8 +49,8 @@ export interface BudgetProgress {
  * `null` (stale/unlinked — see `OrchBudget.cost_usd_estimated`'s doc
  * comment).
  *
- * **This is an estimate of a fraction of an estimate** (TODO.md §0 rule 6's
- * own example): `costUsd` is Tack's own token-based estimate, unverified
+ * **This is an estimate of a fraction of an estimate**:
+ * `costUsd` is Tack's own token-based estimate, unverified
  * against a real bill, and the fraction compounds that uncertainty with a
  * user-typed cap. Every caller must render `BUDGET_PROGRESS_CAVEAT` beside
  * this value — never the bare percentage alone.

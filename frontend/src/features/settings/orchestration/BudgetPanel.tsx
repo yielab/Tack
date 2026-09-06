@@ -27,7 +27,7 @@ export interface BudgetPanelProps {
 /**
  * Budget cap vs. estimated spend to date, for this project's linked control
  * plane. Every dollar figure is Tack's own token-based estimate — see
- * `formatEstimatedCost`'s doc comment (TODO.md §0 rule 6) — never docket's
+ * `formatEstimatedCost`'s doc comment — never docket's
  * own bill (docket doesn't expose one over HTTP either; see
  * `crates/tack-api/src/handlers/orch.rs`'s `OrchBudgetResponse` doc comment).
  *
@@ -99,7 +99,7 @@ const BudgetPanel: Component<BudgetPanelProps> = (props) => {
               <Badge tone={HEALTH_TONE[data().health!]}>{HEALTH_LABEL[data().health!]}</Badge>
             </Show>
 
-            {/* Tokens are the primary measure (TODO.md §0 rule 6) — at least as
+            {/* Tokens are the primary measure — at least as
                 prominent as the dollar figure beneath them. */}
             <div
               style={{
@@ -148,7 +148,7 @@ const BudgetPanel: Component<BudgetPanelProps> = (props) => {
             </Show>
 
             {/* Progress band — always accompanied by the compounding-estimate
-                caveat, never a bare percentage (TODO.md §0 rule 6). */}
+                caveat, never a bare percentage. */}
             <Show when={budgetProgress(data().cost_usd_estimated, data().budget_usd)}>
               {(progress) => (
                 <div>

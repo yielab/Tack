@@ -58,7 +58,7 @@ describe('priorityColor / priorityLabel', () => {
     // -secondary, not -tertiary: this value also gets used as a solid fill
     // behind `--color-text-inverse` text (Calendar/Timeline priority chips),
     // and -tertiary fails WCAG AA there in all three dark-mode palettes
-    // (see src/shared/ui/PriorityDot.tsx, TODO.md §6 A11).
+    // (see src/shared/ui/PriorityDot.tsx).
     expect(priorityColor('low')).toContain('secondary');
     expect(priorityColor('none')).toContain('secondary');
   });

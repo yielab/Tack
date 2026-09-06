@@ -6,8 +6,8 @@ import { ExecutionStoreProvider } from '../../shared/state/executionContext';
 import type { Resource } from 'solid-js';
 import ItemDetailDrawer from './ItemDetailDrawer';
 
-// Dispatch-to-agents on the item-detail drawer (TODO.md Wave 3, card C4, task
-// 35.8). A separate file from `ItemDetailDrawer.test.tsx` so each mock fetch
+// Dispatch-to-agents on the item-detail drawer. A separate file from
+// `ItemDetailDrawer.test.tsx` so each mock fetch
 // map can vary the `/agent-activity` and `/dispatch` responses per test
 // without complicating the base drawer test's fixtures.
 //
@@ -75,7 +75,7 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (url.includes('/sprints')) {
     return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
   }
-  // `ExecutionStoreProvider` (TODO.md III-E4) loads this once on mount.
+  // `ExecutionStoreProvider` loads this once on mount.
   if (url.includes('/executions')) {
     return Promise.resolve(new Response(JSON.stringify({ protocol_version: 1, data: [] }), { status: 200 }));
   }
@@ -144,7 +144,7 @@ describe('ItemDetailDrawer — dispatch to agents', () => {
     dispose();
   });
 
-  it('renders no dispatch control at all when the probe 404s (orchestration disabled, TODO.md §0 rule 8)', async () => {
+  it('renders no dispatch control at all when the probe 404s (orchestration disabled)', async () => {
     agentActivityStatus = 404;
     const { container, dispose } = mount();
     await openDrawer(container);

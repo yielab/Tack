@@ -6,11 +6,11 @@ import ExecutionTimeline from './ExecutionTimeline';
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const disposers: Array<() => void> = [];
 
-/** The top-level request `<li>` rows only — `AttemptList.tsx` (card III-F4)
- *  now nests its own `<li>` elements per attempt inside each request row, so
- *  a plain `querySelectorAll('li')` would pick up both levels and break any
- *  test asserting positional order or count. Scoped to the outer request
- *  `<ul>`'s direct children via `:scope`. */
+/** The top-level request `<li>` rows only — `AttemptList.tsx` nests its own
+ *  `<li>` elements per attempt inside each request row, so a plain
+ *  `querySelectorAll('li')` would pick up both levels and break any test
+ *  asserting positional order or count. Scoped to the outer request `<ul>`'s
+ *  direct children via `:scope`. */
 function requestRows(container: HTMLElement): HTMLLIElement[] {
   return [...container.querySelectorAll<HTMLLIElement>('ul.space-y-3 > li')];
 }

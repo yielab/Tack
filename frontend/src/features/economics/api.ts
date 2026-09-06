@@ -1,4 +1,4 @@
-// Wire-format boundary for the unit-economics dashboard (TODO.md Phase 38, card D5).
+// Wire-format boundary for the unit-economics dashboard.
 //
 // `GET /api/economics/summary` and `GET /api/economics/items` are real, already-built
 // endpoints (`crates/tack-api/src/handlers/economics.rs`) — every type below was
@@ -114,7 +114,7 @@ function itemsQueryString(query: EconomicsItemsQuery & { format?: 'json' | 'csv'
 /** True when the request failed because orchestration is disabled
  *  server-side — distinct from a 200 with zero completed items (enabled,
  *  nothing to show yet) and from any other failure. Delegates to
- *  `shared/api/client.ts#isOrchestrationDisabledError` (TODO.md card E2);
+ *  `shared/api/client.ts#isOrchestrationDisabledError`;
  *  kept as its own export so every existing caller (`EconomicsPage.tsx`)
  *  keeps working unchanged. */
 export function isOrchDisabled(err: unknown): boolean {

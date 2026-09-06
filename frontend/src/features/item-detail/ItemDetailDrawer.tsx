@@ -27,7 +27,7 @@ import AgentActivityTab from './tabs/AgentActivityTab';
 const BASE_TABS: TabItem[] = [
   { id: 'details', label: 'Details' },
   { id: 'activity', label: 'Activity' },
-  // "Execution" (TODO.md III-E4) — the new, neutral Part III execution
+  // "Execution" — the newer, neutral execution
   // domain (`ExecutionRequest`/`ExecutionAttempt` via `tack-runner`). Always
   // present, unlike the legacy "Agent Activity" tab below (which only
   // appears once Docket activity actually exists) — an item with zero
@@ -90,17 +90,17 @@ const ItemDetailDrawer: Component = () => {
 
   // Agent activity is fetched once here — not inside `AgentActivityTab`, unlike
   // every other tab — because the drawer needs to know whether the item HAS
-  // any agent activity before deciding whether to show the tab at all
-  // (TODO.md card B5: "an item with no agent activity shows no chip and no
-  // empty tab"). A 404 (`TACK_ORCH_ENABLE` unset — the default install state,
-  // TODO.md §0 rule 8) or any other fetch failure is treated the same as "no
+  // any agent activity before deciding whether to show the tab at all: an
+  // item with no agent activity shows no chip and no empty tab. A 404
+  // (`TACK_ORCH_ENABLE` unset — the default install state) or any other
+  // fetch failure is treated the same as "no
   // activity": the tab quietly doesn't appear rather than surfacing an error
   // for a feature most installs haven't turned on.
   const [agentActivity, { refetch: refetchAgentActivity }] = createResource(itemId, (id) =>
     id ? agentActivityApi.getForItem(id) : null,
   );
 
-  // Card B4 (Wave 2, realtime broadcast, task 34.5): a mirrored agent run or
+  // A mirrored agent run or
   // approval change for the item currently open in this drawer should update
   // the "Agent Activity" tab without a manual reopen. The socket needs the
   // item's *project*, not just its id, and that's only known once `item()`
@@ -122,11 +122,11 @@ const ItemDetailDrawer: Component = () => {
     onCleanup(() => { off(); s.close(); });
   });
 
-  // Dispatch-to-agents control (TODO.md Wave 3, card C4, task 35.8). Reuses
+  // Dispatch-to-agents control. Reuses
   // the per-item agent-activity fetch above as the "is orchestration even
   // enabled here" signal rather than adding a second probe: `orchAvailable`
   // is true only once that fetch has resolved WITHOUT error — a 404
-  // (`TACK_ORCH_ENABLE` unset, the default install state, TODO.md §0 rule 8)
+  // (`TACK_ORCH_ENABLE` unset, the default install state)
   // or any other failure both mean "don't show a privileged control that's
   // about to fail," the same conservative posture `useAgentActivityMap`'s
   // own `orchAvailable` applies for the Board/List/Table badges.
@@ -155,16 +155,14 @@ const ItemDetailDrawer: Component = () => {
 
   // A Solid resource accessor THROWS once it has errored (calling
   // `agentActivity()` directly, as opposed to reading `.loading`/`.error`) —
-  // discovered while building this card's dispatch control: calling the
+  // calling the
   // errored accessor from inside a memo that runs in the same reactive batch
   // that just set the error aborts that batch, silently wedging sibling
   // computations (found the hard way via `DispatchSprintModal`'s equivalent
   // resource — see its `dryRunData` for the fuller explanation). Every read
   // of the resource's *value* goes through this safe accessor instead —
   // `undefined` once errored, exactly like `agentActivity()` would return if
-  // it simply hadn't thrown. This predates this card (card B5's original
-  // resource), surfaced only now because no test previously drove it into an
-  // error state through the full drawer.
+  // it simply hadn't thrown.
   const agentActivityData = () => (agentActivity.error !== undefined ? undefined : agentActivity());
 
   const hasAgentActivity = () => {
@@ -225,12 +223,12 @@ const ItemDetailDrawer: Component = () => {
           <div class="space-y-6">
             <ItemHeader item={it()} onPatch={patch} />
 
-            {/* Run with agent (TODO.md III-E4) — the new, neutral Part III
+            {/* Run with agent — the newer, neutral
                 execution surface (`ExecutionRequest`/`ExecutionAttempt` via
                 `tack-runner`). Deliberately its own control, visually and
-                structurally separate from the legacy "Dispatch to agents"
-                block below (a different, older Docket-backed feature per
-                III.0's vocabulary rule) — the two are not variants of one
+                structurally separate from the older "Dispatch to agents"
+                block below (a different, older Docket-backed feature) — the
+                two are not variants of one
                 feature and never share a component. A successful run
                 switches straight to the new "Execution" tab so the request
                 that just appeared is immediately visible, without a page
@@ -247,13 +245,13 @@ const ItemDetailDrawer: Component = () => {
               />
             </div>
 
-            {/* Dispatch to agents (TODO.md Wave 3, card C4, task 35.8) — a
+            {/* Dispatch to agents — a
                 privileged, outward-facing action, so it's a distinct,
                 explicit control rather than folded into an existing button
                 row. Only rendered once `orchAvailable()` positively confirms
-                the feature is on for this install (§0 rule 8: off by
-                default). The three outcomes this whole card exists to keep
-                distinct (queued/dispatched, policy-blocked, waiting-approval)
+                the feature is on for this install (off by
+                default). The three distinct outcomes
+                (queued/dispatched, policy-blocked, waiting-approval)
                 render via the same `DispatchOutcomeNote` the sprint dispatch
                 modal uses, so they read identically everywhere. */}
             <Show when={orchAvailable()}>

@@ -87,9 +87,9 @@ const StatTile: Component<{ label: string; value: string; emphasis?: boolean; hi
 );
 
 /**
- * Unit economics dashboard (TODO.md Phase 38, card D5) — answers "what did each
+ * Unit economics dashboard — answers "what did each
  * product line cost, in tokens and estimated dollars, per shipped item, and how
- * often did agents need rework?" (the card's acceptance bar, verbatim).
+ * often did agents need rework?"
  *
  * Three honesty rules enforced throughout this page, not just in the API layer:
  *

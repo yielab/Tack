@@ -23,21 +23,21 @@ export interface DispatchSprintModalProps {
 }
 
 /**
- * "Run sprint" (TODO.md Wave 3, card C4, task 35.8) — the dry-run preview IS
+ * "Run sprint" — the dry-run preview IS
  * the confirmation step: there is no one-click path from the Sprints board
  * straight to a real dispatch. Opening this modal always shows the
  * dependency-ordered plan first; only an explicit "Confirm dispatch" click
  * on THIS screen calls the real endpoint. This is deliberate, not
- * incidental — the card's brief treats confirmation for sprint-wide dispatch
- * as required, not optional, for exactly the reason a dry-run preview
+ * incidental — confirmation for sprint-wide dispatch
+ * is required, not optional, for exactly the reason a dry-run preview
  * matters here: dispatching a whole sprint to autonomous agents is exactly
  * the action someone wants to inspect before confirming.
  *
  * `POST /sprints/{id}/dispatch` and `GET /sprints/{id}/dispatch/dry-run`
- * (card C3) landed after this file's first draft; wired up here against the
- * real contract (`docs/openapi.json`, reconciled 2026-08-05 — see
- * `shared/dispatch/api.ts`'s header comment and TODO.md §6 "C3 — 2026-08-05"
- * for the field-by-field diff against the original guess). Two corrections
+ * are wired up here against the
+ * real contract (`docs/openapi.json` — see
+ * `shared/dispatch/api.ts`'s header comment
+ * for the field-by-field detail). Two corrections
  * that would otherwise have been silent bugs: `max_in_flight` is a query
  * parameter, not a JSON body field (a body was never read server-side, so
  * the override would have simply been ignored); and every sprint item is
@@ -174,9 +174,9 @@ const DispatchSprintModal: Component<DispatchSprintModalProps> = (props) => {
             {/* Every excluded item names ITS OWN reason (decision + detail),
                 not a generic "not eligible" — e.g. "Waiting on dependencies —
                 waiting on 2 direct dependencies to finish" tells the operator
-                exactly what to go check, per this card's own bar: "the
-                dry-run preview should be able to explain why something isn't
-                ready, not just that it isn't." */}
+                exactly what to go check: the
+                dry-run preview must explain why something isn't
+                ready, not just that it isn't. */}
             <Show when={notPlanned().length > 0}>
               <details class="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
                 <summary class="cursor-pointer select-none">
@@ -248,10 +248,9 @@ const NotPlannedRow: Component<{ item: SprintDispatchItemResponse }> = (props) =
  *  straight off the server's own `summary` (never re-derived by counting
  *  `items` client-side — see `summarizeSprintDispatchCounts`'s doc comment),
  *  so a single "N dispatched" can never be shown when some of those are
- *  actually waiting on a human or a dependency (the exact misrepresentation
- *  this card's brief names by example: "'8 dispatched' when three are
- *  awaiting approval misrepresents the state of the work"), plus the full
- *  per-item breakdown below it. */
+ *  actually waiting on a human or a dependency — "8 dispatched" when three
+ *  are awaiting approval would misrepresent the state of the work — plus
+ *  the full per-item breakdown below it. */
 const DispatchResultsSummary: Component<{ response: SprintDispatchResponse }> = (props) => {
   const counts = createMemo(() => summarizeSprintDispatchCounts(props.response.summary));
 

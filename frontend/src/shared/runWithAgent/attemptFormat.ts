@@ -1,19 +1,18 @@
 // Pure, framework-agnostic display logic for one attempt's model provenance
-// and usage economics (TODO.md III-F4: "model provenance, honest
-// usage/economics"). Kept separate from `AttemptList.tsx` for the same
+// and usage economics. Kept separate from `AttemptList.tsx` for the same
 // reason `shared.ts` is separate from `RunWithAgentModal.tsx` — unit
 // testable without mounting anything, and a single place every consumer
 // (`AttemptList.tsx`, its tests) reads through so "Not measured" can never
 // silently drift into "$0.00" at a second call site.
 //
-// **The load-bearing rule this whole file exists to enforce (CLAUDE.md rule
-// 1 / III.2 rule 7):** `usage_economics.runner_time_cost.cost_usd_estimated`
+// **The load-bearing rule this whole file exists to enforce (CLAUDE.md
+// rule 1, "unsupported is typed, unknown is explicit, unmeasured is
+// nullable"):** `usage_economics.runner_time_cost.cost_usd_estimated`
 // is `{value: null, source: "not_measured"}` in *every real response this
 // API returns today* — no runner infra cost-rate is stored anywhere in this
-// schema (III-F3 handoff, "Schema/API/contract change requested" item 2).
-// `formatUsdMeasurement` below renders that literal, unmistakable text
-// `"Not measured"` — never `$0.00`, `—`, `0`, or a blank cell, which would
-// each be a lie about real money. `absent_usage_never_serializes_as_zero`
+// schema. `formatUsdMeasurement` below renders that literal, unmistakable
+// text `"Not measured"` — never `$0.00`, `—`, `0`, or a blank cell, which
+// would each be a lie about real money. `absent_usage_never_serializes_as_zero`
 // (`crates/tack-orch/src/usage_provenance.rs`) is the backend half of this
 // same guarantee; this file is the frontend half.
 
@@ -21,11 +20,11 @@ import type { ModelProvenance, RunnerTimeCost, UsageEconomics } from '../executi
 import type { Measurement } from '../execution/types';
 import type { StateTone } from './shared';
 
-/** The exact literal this card's acceptance bar names. Never interpolated
- *  or abbreviated differently at a second call site — every caller that
- *  needs this text imports this constant rather than retyping the string,
- *  so a future edit can never accidentally introduce a second, slightly
- *  different spelling. */
+/** The exact literal every unmeasured usage figure must render. Never
+ *  interpolated or abbreviated differently at a second call site — every
+ *  caller that needs this text imports this constant rather than retyping
+ *  the string, so a future edit can never accidentally introduce a second,
+ *  slightly different spelling. */
 export const NOT_MEASURED_TEXT = 'Not measured';
 
 /**

@@ -76,7 +76,7 @@ export function contrastRatio(l1: number, l2: number): number {
  * (L=1) / pure black (L=0) has higher contrast against a background of
  * luminance L guarantees >=4.5:1 for every possible L, verified exhaustively
  * across all 360 integer hues at this saturation/lightness (worst case
- * 4.59:1 at hue 10; see TODO.md §6, A12 handoff, for the full table).
+ * 4.59:1 at hue 10 — see `Avatar.test.tsx` for the exhaustive proof).
  */
 export function textColorForHue(hue: number): string {
   const [r, g, b] = hslToRgb(hue, AVATAR_SAT, AVATAR_LIGHT);

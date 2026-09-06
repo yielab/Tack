@@ -87,10 +87,9 @@ const ItemCard: Component<{
         <Show when={props.agentInfo}>
           {(info) => <AgentStateChip state={info().state} title={info().remoteStatus} />}
         </Show>
-        {/* "Run with agent" (TODO.md III-E4) — the new, neutral Part III
-            execution surface. Deliberately a separate control from
-            `DispatchCardMenu` below (the older, unrelated Part II Docket
-            "dispatch" feature), per III.0's vocabulary rule: distinct icon,
+        {/* "Run with agent" — the newer, neutral execution surface.
+            Deliberately a separate control from `DispatchCardMenu` below
+            (the older, unrelated Docket "dispatch" feature): distinct icon,
             distinct label, distinct backend domain (`ExecutionRequest` via
             `tack-runner`, never `orch_tasks`). */}
         <RunWithAgentButton

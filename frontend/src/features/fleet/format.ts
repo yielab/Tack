@@ -1,8 +1,8 @@
 // Pure formatting helpers for the Fleet view — kept isolated and unit-tested
-// because two of them enforce hard correctness rules from TODO.md §0 rather
-// than mere copy: rule 6 ("never present an estimate as spend" — every money
-// figure carries the word "estimated") and the A5 card's "never a
-// confident-looking zero" rule for unreachable planes.
+// because two of them enforce hard correctness rules rather
+// than mere copy: "never present an estimate as spend" — every money
+// figure carries the word "estimated" — and "never a
+// confident-looking zero" for unreachable planes.
 
 import type { ControlPlaneHealth } from './api';
 
@@ -24,8 +24,8 @@ export function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** Compact token count (tokens are the primary measure, TODO.md §0 rule 6 —
- *  this must read at least as prominently as the dollar figure next to it). */
+/** Compact token count — tokens are the primary measure and
+ *  this must read at least as prominently as the dollar figure next to it. */
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -35,7 +35,7 @@ export function formatTokens(n: number): string {
 /**
  * Every money figure carries the literal word "estimated" and, when the
  * plane reports one, its pricing-snapshot date. This is a correctness
- * requirement (TODO.md §0 rule 6): docket's cost numbers are estimates from
+ * requirement: docket's cost numbers are estimates from
  * labelled pricing tables, not billed spend, and must never be presented as
  * if they were.
  */

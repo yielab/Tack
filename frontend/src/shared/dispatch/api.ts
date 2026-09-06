@@ -1,47 +1,41 @@
-// Wire-format boundary for dispatching work to an agent fleet (TODO.md Wave
-// 3, card C4, tasks 35.8/35.9). Every assumption about request/response
-// shapes lives in this one file, plus `./format.ts` for interpreting them —
-// consuming components (`ItemDetailDrawer.tsx`, `Board.tsx`'s `ItemCard`
-// menu, `features/sprints/DispatchSprintModal.tsx`) only ever import types
+// Wire-format boundary for dispatching work to an agent fleet. Every
+// assumption about request/response shapes lives in this one file, plus
+// `./format.ts` for interpreting them — consuming components
+// (`ItemDetailDrawer.tsx`, `Board.tsx`'s `ItemCard` menu,
+// `features/sprints/DispatchSprintModal.tsx`) only ever import types
 // and functions from here, never construct a request body or read a raw
-// field name themselves. Mirrors the pattern A5 set for `features/fleet/
-// api.ts` and B5 repeated for `shared/agentActivity/api.ts` — "when the real
-// endpoint lands (or changes), reconcile against this file only."
+// field name themselves, so when the real endpoint lands (or changes),
+// reconciling against this file is the only place that needs to happen.
 //
-// Two endpoints, two very different confidence levels:
+// Two endpoints:
 //
-//  1. `POST /items/{id}/dispatch` — built by card C1, landed *before* this
-//     card started, and confirmed field-for-field against
+//  1. `POST /items/{id}/dispatch` — confirmed field-for-field against
 //     `docs/openapi.json`'s `DispatchItemResponse`/`DispatchedTaskResponse`
 //     schemas (themselves generated from the real Rust handler in
-//     `crates/tack-api/src/handlers/orch.rs`) plus card R1's later addition
-//     of the typed `policy_id` field. This is NOT a guess — every field name
+//     `crates/tack-api/src/handlers/orch.rs`), including the typed
+//     `policy_id` field. This is NOT a guess — every field name
 //     and nullability below is copied from the generated schema.
 //
 //  2. `POST /sprints/{id}/dispatch` and `GET /sprints/{id}/dispatch/dry-run`
-//     — card C3 landed these *after* this file's first draft (written
-//     against a best guess while C3 was still in progress). Reconciled
-//     2026-08-05 against `docs/openapi.json`'s `SprintDispatchItemResponse`/
-//     `SprintDispatchSummary`/`DryRunSprintDispatchResponse`/
-//     `SprintDispatchResponse` schemas and C3's own handoff note (TODO.md §6
-//     "C3 — 2026-08-05", which includes a field-by-field diff against this
-//     file's original guess) — every field below is the real, generated
-//     contract, not a guess. Three things the original guess got wrong,
-//     worth remembering because they'd otherwise fail silently: (1)
-//     `max_in_flight` is a **query parameter** on both routes, not a JSON
-//     body field — a body was never read by the handler, so sending it there
-//     silently did nothing; (2) every sprint item is **always** present with
-//     an `order` — nothing is filtered out of the plan the way a nullable
-//     "position" implied; (3) eligibility is a **closed vocabulary**
-//     (`decision`), not free text, and dry-run vs. a real run share the same
-//     shape with different possible `decision` values (`would_dispatch` only
-//     appears in a dry run; `dispatched`/`blocked`/`waiting_approval`/`error`
-//     only appear in a real run).
+//     — confirmed field-for-field against `docs/openapi.json`'s
+//     `SprintDispatchItemResponse`/`SprintDispatchSummary`/
+//     `DryRunSprintDispatchResponse`/`SprintDispatchResponse` schemas.
+//     Three things worth remembering because they'd otherwise fail
+//     silently: (1) `max_in_flight` is a **query parameter** on both
+//     routes, not a JSON body field — a body was never read by the
+//     handler, so sending it there silently did nothing; (2) every sprint
+//     item is **always** present with an `order` — nothing is filtered out
+//     of the plan the way a nullable "position" implied; (3) eligibility is
+//     a **closed vocabulary** (`decision`), not free text, and dry-run vs. a
+//     real run share the same shape with different possible `decision`
+//     values (`would_dispatch` only appears in a dry run;
+//     `dispatched`/`blocked`/`waiting_approval`/`error` only appear in a
+//     real run).
 
 import { request } from '../api/client';
 export { isOrchDisabled } from '../agentActivity/api';
 
-// ── Single-item dispatch (`POST /items/{id}/dispatch`, card C1 + R1) ───────
+// ── Single-item dispatch (`POST /items/{id}/dispatch`) ─────────────────────
 
 /**
  * A dispatched (or already-in-flight) `orch_tasks` row, projected for the
@@ -55,10 +49,10 @@ export interface DispatchedTaskResponse {
   remote_status: string;
   attempt: number;
   dispatched_at: string;
-  /** The prompt-injection boundary flag (Phase 35/C2, task 35.7) — echoed
-   *  back so a caller could show "dispatched untrusted" if a future card
+  /** The prompt-injection boundary flag — echoed
+   *  back so a caller could show "dispatched untrusted" if it
    *  wants to, though nothing renders it yet (same "no UI story yet, don't
-   *  invent one" call B6 made for the identical field on the agent-activity
+   *  invent one" call made for the identical field on the agent-activity
    *  endpoint). */
   trusted: boolean;
 }
@@ -100,9 +94,8 @@ export interface DispatchItemResponse {
    *  actual words to act on it). */
   message: string | null;
   /** Present only when `outcome === "blocked"` — the guardrail policy id
-   *  that fired (card R1's typed `OrchError::PolicyBlocked`). This is the
-   *  single field TODO.md's brief for this card calls out by name: "Show
-   *  *which* policy blocked it." */
+   *  that fired (the typed `OrchError::PolicyBlocked`). Shows
+   *  *which* policy blocked it. */
   policy_id: string | null;
   /** The Tack status `status_map` named for this trigger and actually
    *  applied — absent when `status_map` named no target, the item was
@@ -110,21 +103,21 @@ export interface DispatchItemResponse {
    *  `status_map_rejected`). */
   status_applied: string | null;
   /** Set when the workflow engine refused the `status_map`-driven
-   *  transition (TODO.md §0 rule 7). The item was left exactly as it was;
+   *  transition. The item was left exactly as it was;
    *  this is the engine's own reason (e.g. an invalid transition or a WIP
-   *  limit). C1's handoff: "surface this prominently — it means docket is
-   *  running the task but Tack couldn't reflect it on the board." */
+   *  limit) — surfaced prominently, since it means docket is
+   *  running the task but Tack couldn't reflect it on the board. */
   status_map_rejected: string | null;
 }
 
 // ── Sprint dispatch (`POST /sprints/{id}/dispatch`, `GET
-//    /sprints/{id}/dispatch/dry-run` — card C3) ────────────────────────────
+//    /sprints/{id}/dispatch/dry-run`) ───────────────────────────────────────
 
 /**
  * One item's place in a sprint-dispatch plan or report — the SAME shape for
- * both the dry-run preview and a real run's per-item result (C3's own
- * design, decision 5: "so the two responses read the same way side by
- * side"), matching `SprintDispatchItemResponse` in
+ * both the dry-run preview and a real run's per-item result, so the two
+ * responses read the same way side by side, matching
+ * `SprintDispatchItemResponse` in
  * `crates/tack-api/src/handlers/orch.rs` / `docs/openapi.json` exactly.
  * **Every item in the sprint is always present** — nothing is filtered out
  * of the plan; `decision` is what tells you whether it will actually run.
@@ -140,7 +133,7 @@ export interface SprintDispatchItemResponse {
   /**
    * The closed decision vocabulary (a plain `string` here, not a TS union,
    * for the same "degrade rather than break on an unrecognised value"
-   * reason `DispatchItemResponse.outcome` is kept a string — see
+   * reason `DispatchItemResponse.outcome` is kept a string) — see
    * `format.ts#describeDispatchOutcome`, which now maps every one of these
    * too):
    *  - `"waiting_on_dependencies"` — a direct dependency hasn't reached a
@@ -156,9 +149,9 @@ export interface SprintDispatchItemResponse {
    *  - `"blocked"` / `"waiting_approval"` / `"dispatched"` — **real run
    *    only**: same meaning as the identically-named single-item outcomes.
    *  - `"error"` — **real run only**: this item's own dispatch failed or its
-   *    worker task panicked (C3's partial-failure design: one item's
-   *    failure never aborts the rest of the sprint) — see `error`. Has no
-   *    single-item-dispatch equivalent; a genuinely new case.
+   *    worker task panicked (one item's failure never aborts the rest of
+   *    the sprint) — see `error`. Has no single-item-dispatch equivalent;
+   *    a genuinely new case.
    */
   decision: string;
   /** Present only when `decision === "waiting_on_dependencies"` — every
@@ -178,9 +171,9 @@ export interface SprintDispatchItemResponse {
 }
 
 /** Pre-computed counts over a real dispatch run's per-item `decision`
- *  values — "the UI's headline '8 dispatched, 2 waiting on dependencies'
- *  line without re-deriving it client-side from the row list" (C3's own
- *  words). Also returned by the dry-run endpoint (predicting what a real run
+ *  values — the UI's headline "8 dispatched, 2 waiting on dependencies"
+ *  line without re-deriving it client-side from the row list. Also returned
+ *  by the dry-run endpoint (predicting what a real run
  *  would show). Every key is always present, even at 0 — never re-derive
  *  these by summing `items` yourself; read them directly. */
 export interface SprintDispatchSummary {

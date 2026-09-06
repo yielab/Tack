@@ -1,29 +1,28 @@
-// Wire-format boundary for `tack_orch::Capabilities` (card G1, backend half) —
-// what a registered control plane can actually do, surfaced on
+// Wire-format boundary for `tack_orch::Capabilities` — what a registered
+// control plane can actually do, surfaced on
 // `GET /api/control-planes/{id}` (`ControlPlaneResponse.capabilities`) and
 // `GET /api/fleet` (`FleetEntry.capabilities`). Every field here is a
 // snake_case projection of `crates/tack-api/src/handlers/orch.rs`'s
 // `CapabilitiesResponse` and its five `*Level` enums — not a guess; the enum
 // string values are pinned in `docs/openapi.json`.
 //
-// This is the whole point of TODO.md §II.0 rule 6 ("a capability is a value,
-// never a provider check") and the mechanism §II.1.2 describes: every
-// non-boolean field carries a `reason: string` written by the *adapter*
-// (docket, or later GitHub Actions), never invented by this API layer or by
-// a component. A component that wants to know whether a control should be
-// interactive, and what to say when it isn't, imports {@link gate} (or one
-// of the named per-field helpers below) from this file — never a hard-coded
-// string, and never an equality check against a plane's `kind` string (the
-// grep this repo's CI runs to catch a regression stays at zero hits).
+// A capability is a value, never a provider check: every non-boolean field
+// carries a `reason: string` written by the *adapter* (docket, or later
+// GitHub Actions), never invented by this API layer or by a component. A
+// component that wants to know whether a control should be interactive, and
+// what to say when it isn't, imports {@link gate} (or one of the named
+// per-field helpers below) from this file — never a hard-coded string, and
+// never an equality check against a plane's `kind` string (the grep this
+// repo's CI runs to catch a regression stays at zero hits).
 //
 // Two ad-hoc capability bits predate this module and are retired in favour
-// of it (TODO.md card G1, item 3): the approvals inbox's old
-// grant-availability boolean (`features/approvals/api.ts` — see that file's
-// header for why its replacement isn't literally a `Capabilities` read: it
-// was never a provider capability, it was a Tack-server auth gate) and
+// of it: the approvals inbox's old grant-availability boolean
+// (`features/approvals/api.ts` — see that file's header for why its
+// replacement isn't literally a `Capabilities` read: it was never a
+// provider capability, it was a Tack-server auth gate) and
 // `useAgentActivityMap`'s `orchAvailable()` used as a dispatch gate (see
-// that file's doc comment for the residual wiring gap this card found but
-// could not close without editing a file outside its ownership).
+// that file's doc comment for the residual wiring gap that was found but
+// could not be closed without editing a file outside this module).
 
 /** Wire mirror of `tack_orch::Support` — pause/resume readiness. */
 export type SupportLevel = 'unsupported' | 'advisory' | 'supported';
@@ -81,7 +80,7 @@ export interface Capabilities {
  *  interaction, and the reason to show either way. `reason` is always the
  *  adapter-authored string from the capability payload — a control must
  *  never substitute a hard-coded string for it and must never branch on
- *  which provider `kind` is registered (TODO.md §II.0 rule 6). */
+ *  which provider `kind` is registered. */
 export interface CapabilityGate {
   enabled: boolean;
   reason: string;

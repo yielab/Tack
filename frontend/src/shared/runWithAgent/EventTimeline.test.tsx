@@ -85,8 +85,8 @@ describe('EventTimeline', () => {
   });
 
   // -----------------------------------------------------------------
-  // III-G2 adversarial regression: a harness/runner controls `payload`
-  // (III.1.6 — free-form, not a fixed schema) and could report an HTML/JS
+  // Adversarial regression: a harness/runner controls `payload`
+  // (free-form, not a fixed schema) and could report an HTML/JS
   // payload, deliberately or via a compromised harness. This event stream
   // is rendered directly in the operator UI, so it is exactly the kind of
   // "prompt rendering" surface the audit's XSS case targets. Proves the

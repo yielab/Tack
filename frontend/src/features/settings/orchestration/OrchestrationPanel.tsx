@@ -11,14 +11,14 @@ export interface OrchestrationPanelProps {
 }
 
 /**
- * Project Settings → Orchestration tab (TODO.md Wave 4, card D2, tasks
- * 36.3/36.4): budget and policy panels for this project's linked control
- * plane. No pause control anywhere on this page — see `./api.ts`'s header
- * comment for why that's a deliberate omission, not an oversight.
+ * Project Settings → Orchestration tab: budget and policy panels for this
+ * project's linked control plane. No pause control anywhere on this page —
+ * see `./api.ts`'s header comment for why that's a deliberate omission, not
+ * an oversight.
  *
- * Gating follows card C4's `orchAvailable()` pattern exactly: `false` while
- * loading and on ANY fetch error, not just a 404, so a control that's about
- * to 404 never renders (TODO.md §0 rule 8). This panel's own `GET
+ * Gating follows the same `orchAvailable()` pattern used elsewhere: `false`
+ * while loading and on ANY fetch error, not just a 404, so a control that's
+ * about to 404 never renders. This panel's own `GET
  * /projects/{id}/orch-link` fetch doubles as that probe — the same
  * "reuse the already-in-flight request instead of adding a second probe"
  * reasoning `useAgentActivityMap.orchAvailable` documents.

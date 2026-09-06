@@ -46,7 +46,7 @@ export const HEALTH_TONE: Record<ControlPlaneHealth, BadgeTone> = {
 
 /** Copy explaining what "not yet connected" actually means — the state
  *  every freshly-registered control plane starts in until the reconciler's
- *  next poll (TODO.md card A2's health state machine: healthy → degraded
+ *  next poll (the health state machine: healthy → degraded
  *  after 3 consecutive failures → unreachable after 10; recovery is
  *  immediate on one success). There is no synchronous "test connection"
  *  endpoint — this IS the test, playing out over the next poll cycle. */

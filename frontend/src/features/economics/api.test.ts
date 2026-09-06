@@ -65,9 +65,9 @@ describe('economicsApi.items', () => {
 
 describe('economicsApi.exportCsv', () => {
   // Asserts on content rather than `instanceof Blob` — the latter trips the same
-  // cross-realm jsdom quirk already named among this project's 3 known
+  // cross-realm jsdom quirk already named among this project's known
   // pre-existing failures (`client.test.ts`'s own `requestBlob` test), which
-  // TODO.md's baseline says not to chase down in an unrelated card.
+  // is out of scope to chase down here.
   it('requests format=csv and returns the CSV body via requestBlob', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')

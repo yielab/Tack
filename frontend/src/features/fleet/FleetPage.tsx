@@ -61,11 +61,10 @@ const RegisterPlaneEmptyState: Component = () => (
 );
 
 /** Shown when orchestration is off — the default state for every existing
- *  install, since orchestration is off unless an operator opts in (TODO.md
- *  §0 rule 8). Previously this told the operator to set `TACK_ORCH_ENABLE`
- *  and restart the server by hand — a dead end with no in-app next step.
- *  Card E2 (Phase 39) makes the flag UI-toggleable, so this now links
- *  straight to the guided setup instead. */
+ *  install, since orchestration is off unless an operator opts in. The flag
+ *  is UI-toggleable, so this links straight to the guided setup rather than
+ *  telling the operator to set `TACK_ORCH_ENABLE` and restart the server by
+ *  hand — a dead end with no in-app next step. */
 const OrchDisabledEmptyState: Component = () => {
   const navigate = useNavigate();
   return (

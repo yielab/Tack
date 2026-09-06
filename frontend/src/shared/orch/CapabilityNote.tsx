@@ -12,9 +12,8 @@ export interface CapabilityNoteProps {
  * The one place a `CapabilityGate` becomes visible copy. Renders nothing
  * while the gate is enabled; once disabled, always shows the reason
  * **verbatim from the capability payload** — never a string this component
- * invents. This is the concrete answer to TODO.md §II.0 rule 6
- * ("a capability is a value, never a provider check") for read-only/
- * informational controls: `features/fleet/FleetRow.tsx` and
+ * invents. A capability is a value, never a provider check, applied to
+ * read-only/informational controls: `features/fleet/FleetRow.tsx` and
  * `features/settings/orchestrationSettings/ControlPlanesManager.tsx` both
  * use this instead of writing their own copy, so there is exactly one place
  * that could regress into a hard-coded string.

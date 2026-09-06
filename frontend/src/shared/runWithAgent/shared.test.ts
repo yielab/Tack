@@ -3,7 +3,6 @@ import {
   HARNESS_KINDS,
   buildCreateExecutionInput,
   generateIdempotencyKey,
-  resolveDefaultProvenance,
   gateHarnessModelSelection,
   describeExecutionState,
   isTerminalStateString,
@@ -115,10 +114,10 @@ describe('buildCreateExecutionInput', () => {
   });
 
   it('two different entry points building from equal form values produce byte-identical payloads', () => {
-    // This is the concrete proof behind the acceptance bar "all three
-    // surfaces create the same payload shape... no divergent DTOs between
-    // entry points" — Board/item-detail/Sprint all end up calling this exact
-    // function, so equal input always yields equal output.
+    // Proof that all three surfaces create the same payload shape, with no
+    // divergent DTOs between entry points — Board/item-detail/Sprint all end
+    // up calling this exact function, so equal input always yields equal
+    // output.
     const a = buildCreateExecutionInput(values());
     const b = buildCreateExecutionInput(values());
     expect(a).toEqual(b);
@@ -131,16 +130,6 @@ describe('generateIdempotencyKey', () => {
     const b = generateIdempotencyKey();
     expect(a).not.toBe(b);
     expect(a.length).toBeGreaterThan(0);
-  });
-});
-
-describe('resolveDefaultProvenance', () => {
-  it('is always the typed not_available state today — III-F3 (Wave 5) has not landed', () => {
-    const result = resolveDefaultProvenance();
-    expect(result.status).toBe('not_available');
-    if (result.status === 'not_available') {
-      expect(result.reason).toMatch(/III-F3/);
-    }
   });
 });
 
@@ -182,8 +171,8 @@ describe('gateHarnessModelSelection', () => {
   it('with zero capability snapshots and a SPECIFIC model chosen, blocks submission with a typed reason', () => {
     // This is a falsifiable claim ("this exact combination works"), and with
     // no real capability data available it cannot be verified as supported —
-    // TODO.md III.2 rule 7, "never report supported: true without at least
-    // one runner's real capability data backing it."
+    // never report supported: true without at least one runner's real
+    // capability data backing it.
     const gate = gateHarnessModelSelection([], 'codex', 'openai', 'opaque/model-alpha');
     expect(gate.allowed).toBe(false);
     expect(gate.advisory).toBe(false);

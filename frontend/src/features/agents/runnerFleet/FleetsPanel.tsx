@@ -9,20 +9,20 @@ import { parseOptionalJsonObject } from './format';
  * `crates/tack-api/src/handlers/runner_admin.rs`) — a scheduling group of
  * runners a request can target with `{kind:"fleet", fleet_id}`
  * (`RunnerSelector`, `shared/execution/types.ts`). Distinct from
- * `../api.ts`'s `FleetRow`/`FleetEntry` (Part II's per-project Docket
+ * `../api.ts`'s `FleetRow`/`FleetEntry` (an older, per-project Docket
  * control-plane roster) — see that file's own header comment; nothing here
  * imports from it.
  *
- * **Membership is not readable or writable from this build.** The schema
- * already has an `agent_fleet_members` join table (migration 041,
- * `crates/tack-db/src/migrations.rs`) but `runner_admin.rs::routes()`
- * registers no route that reads or writes it — confirmed by grepping the
- * file for `member`. `FleetSummary` itself carries no roster count. Rather
- * than build a membership editor with nothing to call, this panel states
- * the gap once, next to the field it would occupy — the same "unsupported
- * is typed, unknown is explicit" discipline `RunnerHealthCard.tsx` applies
- * to health, not a client-side membership list that would silently do
- * nothing on submit.
+ * **This panel has no membership roster view or editor.** The API can add
+ * or remove a fleet member (`POST`/`DELETE /runner-fleets/{fleet_id}/
+ * members[/{runner_id}]`), but nothing here calls either, and no endpoint
+ * returns a fleet's current roster directly — only `RunnerSummary.fleet_ids`
+ * (from `GET /runners`) shows which fleets a given runner belongs to.
+ * Rather than build a membership editor with no roster to read back, this
+ * panel states the gap once, next to the field it would occupy — the same
+ * "unsupported is typed, unknown is explicit" discipline `RunnerHealthCard.tsx`
+ * applies to health, not a client-side membership list that would silently
+ * do nothing on submit.
  */
 const FleetsPanel: Component = () => {
   const [fleets, { refetch, mutate }] = createResource(() => fleetsApi.list());
@@ -113,8 +113,7 @@ const FleetsPanel: Component = () => {
                     </Badge>
                   </div>
                   <p class="mt-1 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                    Membership isn't readable from this build — no route exposes{' '}
-                    <code class="font-mono">agent_fleet_members</code> yet (requested in this card's handoff).
+                    This page can't show or edit which runners belong to this fleet yet.
                   </p>
                 </li>
               )}

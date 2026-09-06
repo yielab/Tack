@@ -1,46 +1,36 @@
-// Domain vocabulary for Part III's runner-fleet execution surface (TODO.md
-// III-E2, Wave 4 / Phase 54).
+// Domain vocabulary for the runner-fleet execution surface.
 //
 // **Why this is hand-written and not imported from `../api/schema.gen`:**
 // every operator execution/fleet/runner/profile route
 // (`crates/tack-api/src/handlers/executions.rs`,
 // `crates/tack-api/src/handlers/runner_admin.rs`, wired in
-// `crates/tack-api/src/router.rs`) currently publishes an EMPTY OpenAPI
-// schema for its request/response bodies (`docs/openapi.json`: every one of
-// `/api/executions`, `/api/executions/{request_id}`,
-// `/api/executions/{request_id}/cancel`,
-// `/api/executions/{request_id}/requeue`, `/api/runner-fleets`,
-// `/api/agent-profiles`, `/api/model-profiles`, `/api/runners/*` has
-// `"schema": {}` for every 200 response and JSON request body). C5 (Wave 2)
-// wired the routes; per TODO.md's Wave 4 dependency graph, filling in real
-// generated schemas is E6's job ("route/spec/generated updates ... only
-// after E1-E5"), because E1's scheduler still had to land first. There is
-// therefore NO generated type to reuse for this domain yet — every shape
-// below is instead copied field-for-field from the real Rust source (cited
-// per type) the same way `shared/dispatch/api.ts` and
+// `crates/tack-api/src/router.rs`) now publishes a real, generated OpenAPI
+// schema for its request/response bodies — but this file's shapes were
+// written before that existed and were never migrated to import the
+// generated types: matching each field to its generated equivalent across
+// every consumer in this domain is a larger refactor, not done here. Every
+// shape below is instead copied field-for-field from the real Rust source
+// (cited per type) the same way `shared/dispatch/api.ts` and
 // `shared/orch/capabilities.ts` already do for their own domains. This file
 // is the ONE place that mirrors those shapes; nothing downstream may
-// redeclare a competing copy. See `docs/agent-handoffs/part-iii/III-E2.md`,
-// "Schema/API/contract change requested from another owner" for the request
-// to E6 to close this gap for real once the operator surface is annotated.
+// redeclare a competing copy.
 //
 // A second, independent source grounds the richer domain concepts
 // (`ExecutionState`, `RunnerSelector`, capability snapshots, usage
 // provenance) that the current thin operator GET responses don't yet expose
 // at all: `crates/tack-orch/src/execution/{types,capabilities}.rs` (the
-// Part III runner-v1 protocol's own Rust types) and the frozen fixtures
-// under `docs/contracts/runner-v1/` (III.1.6's language-neutral authority).
-// Those fixtures describe the runner<->API protocol, not the
+// runner-v1 protocol's own Rust types) and the frozen fixtures under
+// `docs/contracts/runner-v1/` (the language-neutral authority for that
+// protocol). Those fixtures describe the runner<->API protocol, not the
 // browser-facing operator API — but they are the only real, versioned
 // description of this vocabulary that exists anywhere in the repo, and the
 // operator surface is defined to carry the same values (e.g.
 // `execution_requests.state` and `execution_attempts.state` are the same
-// column values the runner protocol negotiates). Modeling them here now
-// means the richer UI E3/E4 will eventually need has a stable type to code
-// against once the read endpoints land, instead of a second reconciliation
-// later.
+// column values the runner protocol negotiates). Modeling them here means
+// a richer UI has a stable type to code against once a read endpoint for
+// it lands, instead of a second reconciliation later.
 
-// ─── Lifecycle (III.1.1; docs/contracts/runner-v1/lifecycle-transitions.json;
+// ─── Lifecycle (docs/contracts/runner-v1/lifecycle-transitions.json;
 //     crates/tack-orch/src/execution/types.rs `ExecutionState`) ─────────────
 
 /**
@@ -174,14 +164,15 @@ export interface CapabilityLimits {
  * documents: an embedded snapshot (inside an enrollment/refresh envelope)
  * omits it, while a standalone capabilities report carries it.
  *
- * **There is currently no operator-facing endpoint that returns this shape
- * for a registered runner** — `agent_runners.capability_snapshot` is
- * write-only today (set once at `POST /runners/enrollment`,
- * `crates/tack-api/src/handlers/runner_admin.rs`'s `create_pending_runner`)
- * and there is no `GET /runners` route at all. `capabilities.ts`'s selector
- * functions are written against this type so the pure logic is ready the
- * moment a read endpoint exists; see `docs/agent-handoffs/part-iii/
- * III-E2.md` for the request to close this gap.
+ * `GET /runners` returns this shape for every registered runner, but not
+ * directly: `agent_runners.capability_snapshot` comes back as
+ * `RunnerSummary.capability_snapshot` (`api.ts`), an untyped parse of the
+ * stored JSON, and `RunWithAgentModal.tsx`'s `runnerSummaryToCapabilities`
+ * adapts it into this shape (nesting `protocol_version`/`runner_version`
+ * inside the report the way the wire type documents them, rather than as
+ * the sibling columns the row carries them as). `capabilities.ts`'s
+ * selector functions are written against this type and consume that
+ * adapted value.
  */
 export interface RunnerCapabilities {
   protocol_version?: number;
@@ -203,8 +194,8 @@ export type MeasurementSource = 'measured' | 'estimated' | 'not_measured';
 /**
  * A nullable metric paired with its provenance — never a fabricated zero.
  * `value` is `null` whenever `source === 'not_measured'`; a `0` value with a
- * `'measured'`/`'estimated'` source is a real, distinct fact (TODO.md's
- * "unmeasured is nullable" rule, applied to every usage figure).
+ * `'measured'`/`'estimated'` source is a real, distinct fact — unmeasured is
+ * nullable, applied to every usage figure.
  */
 export interface Measurement<T> {
   value: T | null;
@@ -232,15 +223,15 @@ export interface Usage {
  * fifteen values whenever the server set one at all.
  *
  * **Not exposed on `ApiError` today: `retryable` and `details`.**
- * `shared/api/client.ts` (not owned by this card) extracts only
- * `error.message` and `error.code` from the envelope
- * (`toApiError`) — `retryable` and the per-code `details` object (e.g.
- * `invalid_transition`'s `{from, to}`, `stale_lease`'s `{attempt_id,
- * current_fencing_token}`) are silently dropped before this file ever sees
- * the error. `code` alone is sufficient for this card's optimistic-cancel
- * conflict/error distinction (see `store.ts`); richer per-code detail
- * rendering is a `shared/api/client.ts` enhancement requested in this card's
- * handoff, not something this file can add without editing unowned code.
+ * `shared/api/client.ts` extracts only `error.message` and `error.code`
+ * from the envelope (`toApiError`) — `retryable` and the per-code `details`
+ * object (e.g. `invalid_transition`'s `{from, to}`, `stale_lease`'s
+ * `{attempt_id, current_fencing_token}`) are silently dropped before this
+ * file ever sees the error. `code` alone is sufficient for the
+ * optimistic-cancel conflict/error distinction this file needs (see
+ * `store.ts`); richer per-code detail rendering would need a
+ * `shared/api/client.ts` enhancement this file can't make without editing
+ * that module.
  */
 export type StableErrorCode =
   | 'invalid_request'

@@ -1,17 +1,15 @@
-// Wire-format boundary for the Provisioning wizard (Phase 37, card D4,
-// tasks 37.2/37.4). Every assumption about `POST /api/templates/{id}/
-// provision`, `GET /api/control-planes`, and `GET /api/templates` lives in
-// this one file — `ProvisioningWizard.tsx` and `format.ts` only ever import
-// types and functions from here, never construct a request body or read a
-// raw wire field themselves. Mirrors the pattern A5/D1/C4/D2 each set for
-// their own feature's `api.ts`.
+// Wire-format boundary for the Provisioning wizard. Every assumption about
+// `POST /api/templates/{id}/provision`, `GET /api/control-planes`, and
+// `GET /api/templates` lives in this one file — `ProvisioningWizard.tsx`
+// and `format.ts` only ever import types and functions from here, never
+// construct a request body or read a raw wire field themselves, the same
+// pattern every other feature's `api.ts` in this tree follows.
 //
 // Field shapes are copied field-for-field from the real Rust handler
 // (`crates/tack-api/src/handlers/provisioning.rs` —
 // `CreateProjectWithPodRequest`/`ProvisionPodRequest`/
-// `CreateProjectWithPodResponse`/`ProvisioningOutcome`), written after the
-// backend landed in the same session (not a guess), and cross-checked
-// against the regenerated `shared/api/schema.gen.ts`.
+// `CreateProjectWithPodResponse`/`ProvisioningOutcome`), not a guess, and
+// cross-checked against the regenerated `shared/api/schema.gen.ts`.
 
 import { request, isOrchestrationDisabledError } from '../../shared/api/client';
 
@@ -44,8 +42,7 @@ export interface TemplateOption {
   orchestration: TemplateOrchestration | null;
 }
 
-/** `docket` pod blueprint — the five real values (`core/blueprints.py`,
- *  verified 2026-08-05 by card D3, reused here rather than re-verified). */
+/** `docket` pod blueprint — the five real values, from `core/blueprints.py`. */
 export type OrchBlueprint = 'software' | 'research' | 'content' | 'ops' | 'agentic-product';
 
 export const BLUEPRINT_OPTIONS: { value: OrchBlueprint; label: string }[] = [
@@ -103,8 +100,8 @@ export interface ProvisionedPodMember {
 
 /** Discriminated on `status` — mirrors the Rust `#[serde(tag = "status")]`
  *  enum exactly. Both variants mean the project is real; only `"linked"`
- *  means the pod is also wired up to it. See `ProvisioningOutcomeNote.tsx`
- *  for how each is rendered. */
+ *  means the pod is also wired up to it. See `ProvisioningWizard.tsx`'s
+ *  `ResultPanel` for how each is rendered. */
 export type ProvisioningOutcome =
   | {
       status: 'linked';
@@ -150,7 +147,7 @@ export const provisioningApi = {
 
 /** True when a request failed because orchestration is disabled
  *  server-side — distinct from any other failure. Delegates to
- *  `shared/api/client.ts#isOrchestrationDisabledError` (TODO.md card E2);
+ *  `shared/api/client.ts#isOrchestrationDisabledError`;
  *  kept as its own export so every existing caller (`ProvisioningWizard.tsx`)
  *  keeps working unchanged. */
 export function isOrchDisabled(err: unknown): boolean {

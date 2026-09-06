@@ -107,8 +107,7 @@ export class ApiError extends Error {
 }
 
 /** The machine-readable `error.code` a feature route returns when
- *  `TACK_ORCH_ENABLE`/the database override is off — TODO.md's E1/E2
- *  contract (Phase 39, "make orchestration discoverable"). Routes migrated to
+ *  `TACK_ORCH_ENABLE`/the database override is off. Routes migrated to
  *  this contract answer with a 409 or 403 carrying this code instead of a
  *  bare 404, so a real "not found" and "feature is off" are distinguishable
  *  even when they'd otherwise share a status code on the same route. */

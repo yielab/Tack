@@ -1,29 +1,21 @@
 // Wire-format boundary for per-item agent activity (the item-detail "Agent
 // Activity" tab, and the badge chip shown on Board/List/Table).
 //
-// Card B6 (2026-08-05) implemented both endpoints below
-// (`crates/tack-api/src/handlers/orch.rs`'s `get_item_agent_activity` /
-// `get_project_agent_activity`) and reconciled them against this file
-// field-for-field, matching A4's precedent for the Fleet view exactly —
-// **zero changes to any component that consumes these types**
-// (`AgentActivityTab.tsx`, `AgentStateChip.tsx`, `format.ts`, the Board/
-// List/Table call sites). Every type below, and the two open questions this
-// header used to flag, are now confirmed against the real handler rather
-// than assumed:
+// Both endpoints below (`crates/tack-api/src/handlers/orch.rs`'s
+// `get_item_agent_activity` / `get_project_agent_activity`) are reconciled
+// against this file field-for-field. Two assumptions worth stating
+// explicitly since nothing in the type shape below makes them obvious:
 //
 //  1. "Latest attempt" tie-break (bulk badge endpoint): highest `attempt`
-//     number wins; ties broken by `dispatched_at` desc — exactly the
-//     assumption this comment originally documented.
+//     number wins; ties broken by `dispatched_at` desc.
 //  2. Inner join, not a left join with an explicit null state — an item
 //     with no `orch_tasks` row has no row in `AgentBadgeResponse.rows`,
 //     which is what `useAgentActivityMap` already treats as "no badge."
 //
-// The only wire additions beyond what this file originally assumed:
 // `ItemAgentActivity.events_truncated` / `.events_retention_days` (see their
-// own doc comments below) — additive, so this reconciliation really did
-// touch only this file, not the component tree. `AgentActivityTab.tsx`
-// doesn't render them yet; that's a follow-up, not a blocker, since
-// `events` is empty until B2's trace ingestion lands regardless.
+// own doc comments below) are additive fields; `AgentActivityTab.tsx`
+// doesn't render them yet — that's a follow-up, not a blocker, since
+// `events` is empty until trace ingestion lands regardless.
 //
 // Field provenance — every field here is a snake_case projection of a real
 // column, not an invention:
@@ -31,54 +23,53 @@
 //  1. `crates/tack-db/src/migrations.rs`:
 //     - migration 021 `orch_tasks` (PK `(item_id, remote_task_id)`):
 //       `remote_task_id, remote_run_id, remote_status, attempt, tokens_in,
-//       tokens_out, cost_usd_estimated, dispatched_at`. `trusted` (untrusted
-//       auto-dispatch flag, Phase 35/C2 concept) exists on the table but is
+//       tokens_out, cost_usd_estimated, dispatched_at`. `trusted` (an
+//       untrusted auto-dispatch flag) exists on the table but is
 //       deliberately NOT surfaced here — there's no UI story for it yet
-//       (no auto-dispatch feature has landed), so exposing it now would just
-//       be a field nobody reads. Flagging as a gap for whoever builds C2.
+//       (no auto-dispatch feature has landed), so exposing it now would
+//       just be a field nobody reads.
 //     - migration 022 `orch_runs`: `run_id, source, state, started_at,
 //       ended_at, error` (via `orch_tasks.remote_run_id`, not a hard FK —
 //       see the migration's own comment on why).
 //     - migration 023 `orch_events`: `id, event_type, payload, occurred_at`
-//       — this table is currently ALWAYS EMPTY: ingestion is card B2 (Trace
-//       ingestion, 34.4), which is blocked on a docket endpoint that doesn't
-//       exist yet (`GET /traces/{project}`, see TODO.md §Wave 2 card B2).
-//       The `events` field is still modeled and rendered now so that when B2
-//       ships, populating it is a pure backend change — no frontend diff.
+//       — this table is currently ALWAYS EMPTY: ingestion is blocked on a
+//       docket endpoint that doesn't exist yet (`GET /traces/{project}`).
+//       The `events` field is still modeled and rendered now so that when
+//       ingestion ships, populating it is a pure backend change — no
+//       frontend diff.
 //     - migration 024 `orch_approvals`: `token, remote_task_id, agent,
 //       action, state, requested_at, decided_at`.
-//  2. `crates/tack-orch/src/lib.rs` (frozen by W0-A) — the wire *values* for
+//  2. `crates/tack-orch/src/lib.rs` — the wire *values* for
 //     the state fields come from `TaskStatus` (orch_tasks.remote_status:
 //     pending|running|done|failed|blocked|waiting_approval), `RunState`
 //     (orch_runs.state: queued|running|succeeded|failed|cancelled), and
 //     `ApprovalState` (orch_approvals.state: pending|granted|denied). Every
-//     one of these carries an `Unknown(String)` fallback on the Rust side
-//     (TODO.md §1.2: "a docket upgrade that adds a state must degrade to
-//     'shown as-is', never a deserialization error") — so every string field
-//     below is typed as a plain `string`, not a TS union, and rendering code
-//     must handle an unrecognised value by showing it verbatim rather than
-//     assuming it's one of the known set. `deriveAgentChipState` in
-//     `./format.ts` is where that degradation happens for the chip.
+//     one of these carries an `Unknown(String)` fallback on the Rust side —
+//     a docket upgrade that adds a state must degrade to "shown as-is,"
+//     never a deserialization error — so every string field below is typed
+//     as a plain `string`, not a TS union, and rendering code must handle
+//     an unrecognised value by showing it verbatim rather than assuming
+//     it's one of the known set. `deriveAgentChipState` in `./format.ts` is
+//     where that degradation happens for the chip.
 //
 // Two endpoints, two shapes:
 //
 //  - `GET /items/{id}/agent-activity` — full detail for the item-detail tab.
 //    One row per `orch_tasks` attempt for this item, each carrying its
 //    correlated run (if `remote_run_id` resolves) and events (empty until
-//    B2), plus every `orch_approvals` row for this item (both pending and
-//    decided — the tab is a history view, not just a pending-inbox).
+//    trace ingestion lands), plus every `orch_approvals` row for this item
+//    (both pending and decided — the tab is a history view, not just a
+//    pending-inbox).
 //  - `GET /projects/{id}/agent-activity` — the bulk shape Board/List/Table
 //    need for badges: one row per item *that has at least one `orch_tasks`
 //    row* (an inner join, not a left join with nulls) — an item with no
-//    agent activity simply has no row, which is how the chip knows to render
-//    nothing (TODO.md card B5's acceptance: "an item with no agent activity
-//    shows no chip"). Each row carries only the latest attempt's raw
-//    `remote_status` — same reasoning as 34.9's "compact state chip ... driven
-//    by the orch_tasks LEFT JOIN" wording, projected down to what a badge
-//    needs. "Latest attempt" means the row with the highest `attempt` number
-//    (ties broken by `dispatched_at` desc), not e.g. "any non-terminal
-//    attempt wins" — confirmed against `list_latest_orch_task_status_for_project`
-//    in `crates/tack-db/src/repo/orch.rs` (card B6).
+//    agent activity simply has no row, which is how the chip knows to
+//    render nothing. Each row carries only the latest attempt's raw
+//    `remote_status`, projected down to what a badge needs. "Latest
+//    attempt" means the row with the highest `attempt` number (ties broken
+//    by `dispatched_at` desc), not e.g. "any non-terminal attempt wins" —
+//    confirmed against `list_latest_orch_task_status_for_project`
+//    in `crates/tack-db/src/repo/orch.rs`.
 
 import { request, isOrchestrationDisabledError } from '../api/client';
 
@@ -126,7 +117,7 @@ export interface ItemAgentAttempt {
    *  and not a single-column key). */
   attempt: number;
   dispatched_at: string;
-  /** Primary measure (TODO.md §0 rule 6) — always a number, never absent. */
+  /** Primary measure — always a number, never absent. */
   tokens_in: number;
   tokens_out: number;
   /** Derived estimate, never billed spend. `null` when the task hasn't been
@@ -148,27 +139,26 @@ export interface ItemAgentApproval {
   token: string;
   remote_task_id: string | null;
   /** `orch_approvals.agent` — populated from docket's `role` field on
-   *  ingestion (see TODO.md §6 "B1 — 2026-08-04": "There's no separate
-   *  'agent' concept on docket's wire shape — role is the closest field").
-   *  Kept as a plain string, may be `null` if docket ever omits it. */
+   *  ingestion: there's no separate "agent" concept on docket's wire
+   *  shape — role is the closest field. Kept as a plain string, may be
+   *  `null` if docket ever omits it. */
   agent: string | null;
   action: string | null;
   /** `ApprovalState`: pending | granted | denied | (unknown, verbatim). */
   state: string;
   requested_at: string;
-  /** `null` until Wave 3's `decide_approval` writes a decision back — see
-   *  B1's handoff: ingestion alone never populates this. */
+  /** `null` until `decide_approval` writes a decision back — ingestion
+   *  alone never populates this. */
   decided_at: string | null;
 }
 
 export interface ItemAgentActivity {
-  /** Newest attempt first (the tab's own display order — TODO.md card B5:
-   *  "grouped by attempt, newest first"). */
+  /** Newest attempt first — the tab's own display order. */
   attempts: ItemAgentAttempt[];
   approvals: ItemAgentApproval[];
-  /** Added by card B6, beyond B5's original contract — not yet rendered by
+  /** Not yet rendered by
    *  `AgentActivityTab.tsx` (a follow-up, not a blocker: `events` is empty
-   *  until B2's trace ingestion lands regardless, so there's nothing to
+   *  until trace ingestion lands regardless, so there's nothing to
    *  qualify yet in practice). `orch_events_daily` (the retention rollup)
    *  aggregates by day/control_plane/event_type only — it drops `item_id`
    *  entirely, so the backend can't say "this item's events were rolled
@@ -203,7 +193,7 @@ export interface AgentBadgeResponse {
  *  server-side — the default for every existing install. Callers treat this
  *  the same as "no agent activity" (fail open to a quiet UI, not an error
  *  state) since it's the overwhelmingly common case, not a bug. Delegates to
- *  `shared/api/client.ts#isOrchestrationDisabledError` (TODO.md card E2),
+ *  `shared/api/client.ts#isOrchestrationDisabledError`,
  *  the one canonical place this check lives; kept as its own export so every
  *  existing caller keeps working unchanged. */
 export function isOrchDisabled(err: unknown): boolean {

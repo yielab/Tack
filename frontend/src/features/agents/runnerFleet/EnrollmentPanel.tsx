@@ -1,4 +1,5 @@
 import { type Component, For, Show, createSignal } from 'solid-js';
+import { A } from '@solidjs/router';
 import { Badge, Button, Field, Modal } from '../../../shared/ui';
 import { toast } from '../../../shared/ui/toast';
 import { runnersApi, type EnrollRunnerResult } from '../../../shared/execution';
@@ -11,9 +12,9 @@ import { formatExpiresIn, parseOptionalJsonObject } from './format';
  *  this array (see `EnrollRunnerResult`'s own doc comment in
  *  `shared/execution/api.ts` — "must display/copy it immediately and MUST
  *  NOT persist it"). Session-only (a plain signal, not `localStorage`/
- *  `sessionStorage`) — a reload starts with an empty roster, which is
- *  honest: there is no endpoint to repopulate it from (see this file's
- *  header comment). */
+ *  `sessionStorage`) — a reload starts with an empty roster: this panel
+ *  never calls `GET /runners` to repopulate it (see this file's header
+ *  comment for why, and for where that endpoint IS used). */
 interface SessionRunner {
   runnerId: string;
   name: string;
@@ -25,21 +26,21 @@ interface SessionRunner {
 }
 
 const UNCONFIRMED_REASON =
-  'Enrolled this session. Tack has no endpoint to read back whether the runner has connected — ' +
-  'there is no GET /runners (or equivalent) route today (see this card\'s handoff, gap 1).';
+  'Enrolled this session. This page only shows what this browser session enrolled or revoked — ' +
+  'it does not check whether the runner has actually connected.';
 
 /**
- * Enrollment/revocation UI for Part III runners (TODO.md III-E3). Backed by
- * real endpoints — `POST /runners/enrollment`, `POST /runners/{id}/revoke`,
+ * Enrollment/revocation UI for runners. Backed by real endpoints —
+ * `POST /runners/enrollment`, `POST /runners/{id}/revoke`,
  * `POST /runners/{id}/enrollment-tokens/{token_id}/revoke`
- * (`crates/tack-api/src/handlers/runner_admin.rs`) — but there is currently
- * no way to LIST existing runners (`runner_admin.rs::routes()` registers no
- * `GET /runners`, confirmed by reading the file directly, matching
- * `docs/agent-handoffs/part-iii/III-E2.md`'s gap 1). So this panel can only
- * ever show runners this browser session has itself enrolled or explicitly
- * revoked by ID — never a full roster. That limitation is stated up front,
- * not discovered by an operator staring at an empty list wondering if
- * something is broken.
+ * (`crates/tack-api/src/handlers/runner_admin.rs`) — plus `GET /runners`,
+ * which exists and reports every runner's live connection/capacity state
+ * (`runnersApi.list()`, used by `AgentsPage.tsx`, `RunWithAgentModal.tsx`
+ * and `FirstRunBanner.tsx`), but which this panel does not call. So this
+ * panel can only ever show runners this browser session has itself enrolled
+ * or explicitly revoked by ID — never a full, confirmed roster. That
+ * limitation is stated up front, not discovered by an operator staring at
+ * an empty list wondering if something is broken.
  */
 const EnrollmentPanel: Component = () => {
   const [sessionRunners, setSessionRunners] = createSignal<SessionRunner[]>([]);
@@ -52,7 +53,7 @@ const EnrollmentPanel: Component = () => {
 
   // The one-time token — cleared the moment the modal closes so "a
   // credential displays once only" holds structurally, not just by
-  // convention (III-E3's acceptance bar).
+  // convention.
   const [freshToken, setFreshToken] = createSignal<EnrollRunnerResult | undefined>();
   const [copied, setCopied] = createSignal(false);
 
@@ -205,10 +206,9 @@ const EnrollmentPanel: Component = () => {
     <div class="space-y-5">
       <p class="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
         Enroll issues a one-time token a <code class="font-mono">tack-runner</code> process exchanges for a
-        durable credential. Tack has no endpoint yet to list existing runners, so this page only shows
-        runners enrolled or revoked from this browser this session — see{' '}
-        <code class="font-mono">docs/agent-handoffs/part-iii/III-E3.md</code> for the requested{' '}
-        <code class="font-mono">GET /runners</code> endpoint.
+        durable credential. This page doesn't check back with the server, so it only shows runners
+        enrolled or revoked from this browser this session, not whether they actually connected — see the{' '}
+        <A href="/agents">Agents</A> page for a live runner roster.
       </p>
 
       {/* Enroll form */}

@@ -4,9 +4,9 @@ import { describeDispatchOutcome, dispatchOutcomeDetail } from './format';
 
 /**
  * Toasts a single-item dispatch outcome with a tone-appropriate toast type,
- * so "waiting approval" never reads as a plain success toast (this card's
- * headline correctness rule — "rendering waiting-approval as success is a
- * bug, not a wording nit"). Shared by the item-detail dispatch control and
+ * so "waiting approval" never reads as a plain success toast: rendering
+ * waiting-approval as success is a bug, not a wording nit. Shared by the
+ * item-detail dispatch control and
  * the board card menu so both toast identically rather than each mapping
  * `outcome` to a toast type on its own.
  *

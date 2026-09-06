@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render } from 'solid-js/web';
+import { MemoryRouter, Route } from '@solidjs/router';
 import RunnerFleetSection from './RunnerFleetSection';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -7,7 +8,14 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 function mount() {
   const container = document.createElement('div');
   document.body.appendChild(container);
-  const dispose = render(() => <RunnerFleetSection />, container);
+  const dispose = render(
+    () => (
+      <MemoryRouter>
+        <Route path="/" component={RunnerFleetSection} />
+      </MemoryRouter>
+    ),
+    container,
+  );
   return { container, dispose };
 }
 
