@@ -11,7 +11,7 @@
 | Part | Cycle | Phases | Status | Where |
 |---|---|---|---|---|
 | **VII** | **Desktop app & background service** | 61 | **ACTIVE** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. **VII-C2 integrated 2026-09-06** — the README now leads with the download and shows the app. Its correction to `crate-tour.md` exposed that the tray's agent-execution entry still says the route it reads does not exist, which is now **VII-B4** (Wave 22); **VII-B4 integrated 2026-09-06** — the tray now reads `GET /api/local-runner` and reports six typed states, so the app and the README screenshot beside it finally agree. **VII-D1 is the only card left in this Part**, held only until VI-D2 stops using the display | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
-| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
+| **VI** | **Agent Onboarding & Provider UX** | 60 | **ACTIVE** — Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
 | **V** | **Adoption & First Public Release** | 59 | **ACTIVE** — Waves 11–12 done. **V-C2 and V-C3 both integrated 2026-09-06**; V-C3 published nothing, by design, and its walk of the stranger's path found that `install.sh` had installed nothing since `v0.1.0-beta.7` (fixed in the same change). **V-C4** carries the two CI checks that stayed green through it. The publish list — posts, issues, Discussions, GitHub description — is the user's to run, and is in `docs/LAUNCH-CHECKLIST.md` | [§V](#part-v--adoption--first-public-release-phase-59) |
 | **IV** | **Standalone Single-Binary Operation** | 58 | Done — Wave 10 integrated at `83fefab` | [§IV](#part-iv--standalone-single-binary-operation-phase-58) |
 | III | Harness-Agnostic Runner Fleet | 50–57 | Feature-complete, **tag refused** | [§III](#part-iii--harness-agnostic-runner-fleet-phases-5057), archive |
@@ -2187,6 +2187,54 @@ second test would catch.
 wait. Say what the two numbers are and stop.
 
 ---
+
+### VI-C24 — A serious contrast failure has been reported three times and carded zero times
+
+**Needs nothing.** Wave 17.
+
+**Owns:** the light palettes' `--color-text-secondary` in `frontend/src/index.css`, whatever
+renders it at reduced opacity in the item detail drawer, and the handoff. Does **not** own
+`a11y.spec.ts` — the test is already correct and already failing; making it pass by changing
+what it asserts is the one outcome this card forbids.
+
+`a11y.spec.ts`'s "item detail drawer with the dispatch control visible" fails on axe's
+`color-contrast` rule: foreground `#5f736e` on `#e9edec` at **4.27:1** against WCAG AA's 4.5:1,
+six violating nodes, axe impact `serious`. A second background, `#eef1f0`, comes in at 4.43:1 —
+also short.
+
+**It is not a flake and not accumulation.** VI-C1's handoff reproduced it against an unmodified
+base by stashing every change that card made. VI-C13's handoff carried it forward. VI-C22's
+integrator measured it reproducing from a freshly emptied database. Three handoffs named it,
+each correctly concluding it was outside their own card's ownership, and no card was ever
+written — so it has been the standing failure that makes "the E2E suite passes clean" untrue
+for weeks, and it absorbed part of the blame that belonged to database accumulation.
+
+`#5f736e` is not a declared token. It is `--color-text-secondary` (`#566b66` in the default
+light palette) composited at roughly 94% opacity over the surface beneath it — which is what
+turns a token that passes on paper into a rendered colour that fails. The dark palette already
+carries the fix for exactly this shape: `index.css`'s dark block documents lightening
+`--color-text-secondary` from `#67807a` because it measured 3.52:1 on `--color-bg-subtle`. The
+three light palettes (default, `clay`, `graphite`) never got the same treatment.
+
+**Tasks:** decide whether the fix belongs in the token or in the thing that reduces its opacity —
+they are different bugs with the same symptom, and the choice is the card's. Check all three
+light palettes, not only the default: the failing test exercises one, and a fix that leaves
+`clay` and `graphite` short has fixed a test rather than a defect. Contrast is measured against
+what is actually composited, so verify the rendered pair, not the declared token values.
+
+**Acceptance:** `npx playwright test --project=chromium -g "item detail drawer with the dispatch
+control visible"` passes, and the full chromium suite's only remaining failures are unrelated to
+`color-contrast` — state what is left. Report the measured ratio for every pair you changed, in
+all three light palettes, with the command. Prove the test is load-bearing by reverting the
+colour once and showing it fails again. Say whether the dark palettes were already compliant or
+were quietly relying on the same opacity trick.
+
+**Stop if:** meeting 4.5:1 requires a colour that no longer reads as secondary text against
+primary — that is a design decision, not a contrast calculation. Say what the two constraints
+are and stop.
+
+---
+
 
 ## §VI.5 Definition of done, and deliberate exclusions
 
