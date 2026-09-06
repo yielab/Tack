@@ -133,3 +133,87 @@ async fn split_origin_websocket_handshake_accepts_subprotocol_credential_without
         "subprotocol credential should authorize the upgrade, got: {response}"
     );
 }
+
+/// A raw handshake reader (this test, or `curl`) only ever checks the status
+/// line — see the assertion above, which is the shape every WebSocket check
+/// in this repo used to have. That shape cannot tell a spec-compliant
+/// handshake apart from one a real browser refuses to use: RFC 6455 §4.1
+/// requires a client that offered a subprotocol to fail the connection when
+/// the response omits `Sec-WebSocket-Protocol`, and nothing about the status
+/// line changes either way. This test closes that gap on the wire level by
+/// parsing the response headers and asserting the exact selected value; the
+/// browser side of the same gap (proving a real client actually stays
+/// connected) is proved separately in
+/// `frontend/e2e/board-websocket-subprotocol.spec.ts`, which no Rust-only
+/// test can stand in for.
+#[tokio::test]
+async fn board_live_handshake_selects_the_tack_v1_subprotocol() {
+    let (app, _) = common::test_app().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let address = listener.local_addr().expect("test listener address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let project = reqwest::Client::new()
+        .post(format!("http://{address}/api/projects"))
+        .json(&serde_json::json!({ "name": "WS subprotocol test", "project_type": "software" }))
+        .send()
+        .await
+        .expect("create project over the real listener")
+        .error_for_status()
+        .expect("project creation must succeed")
+        .json::<serde_json::Value>()
+        .await
+        .expect("project JSON");
+    let project_id = project["id"].as_str().expect("project ID");
+
+    let request_target = format!("/api/projects/{project_id}/boards/live");
+    let request = format!(
+        "GET {request_target} HTTP/1.1\r\n\
+         Host: {address}\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\
+         Sec-WebSocket-Protocol: tack.v1\r\n\r\n"
+    );
+
+    let mut stream = TcpStream::connect(address)
+        .await
+        .expect("connect WebSocket client");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("send browser-style WebSocket handshake");
+    let mut buffer = [0_u8; 4096];
+    let count = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+        .await
+        .expect("WebSocket handshake timed out")
+        .expect("read WebSocket handshake");
+    let response = String::from_utf8_lossy(&buffer[..count]).into_owned();
+    server.abort();
+
+    assert!(
+        response.starts_with("HTTP/1.1 101"),
+        "handshake did not upgrade: {response}"
+    );
+    let header_line = response
+        .lines()
+        .find(|line| {
+            line.to_ascii_lowercase()
+                .starts_with("sec-websocket-protocol:")
+        })
+        .unwrap_or_else(|| panic!("response carries no Sec-WebSocket-Protocol header: {response}"));
+    let value = header_line
+        .split_once(':')
+        .expect("header has a colon")
+        .1
+        .trim();
+    assert_eq!(
+        value, "tack.v1",
+        "response selected the wrong subprotocol: {header_line}"
+    );
+}
