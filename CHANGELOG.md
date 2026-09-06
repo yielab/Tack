@@ -160,6 +160,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the job had been building on stable since it was created — a green check that verified
   nothing about the floor, which is how the dependency graph drifted three minor versions
   past the documented MSRV unnoticed.
+- **The board's live-update WebSocket now completes its handshake in a real browser.**
+  `board_live` offered no `Sec-WebSocket-Protocol` response header even though the
+  frontend always offers `tack.v1`; RFC 6455 §4.1 requires a client that offered a
+  subprotocol to fail the connection when the response omits one, so every browser
+  closed the socket immediately and a freshly created item never appeared on the board
+  that created it without a full page reload. The handshake now selects `tack.v1`
+  whenever the client offers it (token auth via the separate `tack.auth.*` subprotocol
+  is unaffected — it is never selected as the response protocol). A `curl`-shaped check
+  of the handshake status line could not have caught this; only a real browser client
+  enforces the rule the fix depends on.
 
 ### Removed
 

@@ -17,7 +17,7 @@ The API server loads configuration from `tack.toml` (if present) or environment 
 | `TACK_STORAGE_DIR` | `./storage` | Attachment storage directory |
 | `TACK_API_TOKEN` | _(none)_ | Optional Bearer token — requires `Authorization: Bearer <token>` on all API requests |
 | `TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK` | `false` | Explicit opt-out for the startup refusal to bind a non-loopback address with no `TACK_API_TOKEN` set (see `docs/adr/0059-single-operator-identity-posture.md`). Loopback binds are unaffected either way. Off by default — this widens who can reach an unauthenticated API, so it must be a deliberate choice, never a fallback the code takes on its own |
-| `TACK_ALLOWED_ORIGINS` | `localhost:8080,127.0.0.1:8080` | Comma-separated CORS allow-list |
+| `TACK_ALLOWED_ORIGINS` | `http://localhost:8080,http://127.0.0.1:8080,http://localhost:3210,http://127.0.0.1:3210,https://tack.test` | Comma-separated allow-list of browser origins. Setting it replaces the default list. It gates CORS **and** the board's live WebSocket upgrade, which refuses any `Origin` outside it before the handshake; a UI served from another port (Vite's `5173` dev server, the E2E suite's `5199`) needs its origin here or it never receives a live event |
 | `TACK_MAX_BODY_SIZE` | `2097152` | Global request body limit in bytes (default 2 MB; upload endpoint is always 50 MB) |
 | `TACK_WEBHOOK_URL` | _(none)_ | Outbound webhook URL — when set, POSTs JSON events on item create/update/delete, sprint status changes, and due-soon alerts |
 | `TACK_WEBHOOK_SECRET` | _(none)_ | HMAC-SHA256 signing secret; adds `X-Tack-Signature: sha256=<hex>` to each delivery |
