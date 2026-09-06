@@ -24,7 +24,7 @@ import type {
   RunnerCapabilities,
   HarnessCapability,
 } from '../execution';
-import { harnessProbeStatus, isCombinationSupported } from '../execution';
+import { isCombinationSupported } from '../execution';
 import type { ProjectModelDefault } from '../types';
 
 // ─── Harness kinds ──────────────────────────────────────────────────────────
@@ -190,6 +190,116 @@ export function resolveDefaultProvenance(): DefaultProvenance {
   return { status: 'not_available', reason: DEFAULT_RESOLUTION_NOT_AVAILABLE_REASON };
 }
 
+// ─── Model policy resolution (mirrors crates/tack-orch/src/model_policy/**) ─
+
+/** One precedence tier a default model can come from, in the same order
+ *  `crates/tack-orch/src/model_policy/mod.rs`'s `ModelPolicyTier::ORDER`
+ *  checks them (request override excluded — this vocabulary only describes
+ *  what an Auto request, which never carries an override, resolves to). */
+export type ModelPolicyTier = 'agent_profile' | 'project' | 'fleet';
+
+const MODEL_POLICY_TIER_LABEL: Record<ModelPolicyTier, string> = {
+  agent_profile: 'agent profile',
+  project: 'project',
+  fleet: 'fleet',
+};
+
+/** The `{"default_model": ...}` convention read out of an agent profile's
+ *  `limits` or a fleet's `default_policy` — both untyped JSON blobs on the
+ *  wire (`AgentProfileSummary.limits` / `FleetSummary.default_policy`,
+ *  `shared/execution/api.ts`). Mirrors
+ *  `crates/tack-orch/src/model_policy/wiring.rs`'s
+ *  `parse_model_default_convention` field-for-field: a missing key,
+ *  malformed shape, or unrecognised literal all mean "this tier expressed no
+ *  opinion" (`null`), never a thrown error. */
+export type ModelDefaultConvention =
+  | { kind: 'auto' }
+  | { kind: 'explicit'; provider: string; model_id: string }
+  | null;
+
+export function parseModelDefaultConvention(raw: unknown): ModelDefaultConvention {
+  if (raw === null || typeof raw !== 'object') return null;
+  const defaultModel = (raw as Record<string, unknown>).default_model;
+  if (defaultModel === undefined || defaultModel === null) return null;
+  if (typeof defaultModel === 'string') return defaultModel === 'auto' ? { kind: 'auto' } : null;
+  if (typeof defaultModel !== 'object') return null;
+  const provider = (defaultModel as Record<string, unknown>).provider;
+  const modelIdValue = (defaultModel as Record<string, unknown>).model_id;
+  if (typeof provider !== 'string' || typeof modelIdValue !== 'string') return null;
+  return { kind: 'explicit', provider, model_id: modelIdValue };
+}
+
+/**
+ * What an Auto ("let the runner decide") request actually resolves to for a
+ * specific agent profile / project / fleet-or-runner target. Without this,
+ * `gateHarnessModelSelection` has no way to tell "Auto will schedule because
+ * some tier names an explicit model" from "Auto will queue forever because
+ * none does" — both send the identical null/null pair over the wire, and
+ * the difference is entirely server-side state this function has to read
+ * from the same data the modal already fetches for other fields. Mirrors
+ * `crates/tack-orch/src/model_policy/mod.rs`'s `resolve_model_policy`
+ * precedence walk (agent profile → project → fleet; request override is
+ * never present here, since this is only computed for an Auto selection)
+ * applied to the same three tiers `wiring.rs`'s
+ * `resolve_request_model_policy` reads at request time — the request's own
+ * agent profile, its item's project, and (only when the target IS a fleet)
+ * that fleet.
+ *
+ * `outcome: 'pinned_auto'` is `mod.rs`'s documented nuance that a tier
+ * explicitly set to the literal `"auto"` is a real, present value that
+ * *stops* the walk at that tier rather than falling through to a
+ * less-specific tier that might name a concrete model — so a fleet or
+ * agent-profile default beneath it never gets a chance to rescue the
+ * request, exactly like the server.
+ *
+ * This is a hand-written copy of three specific Rust decisions —
+ * `ModelPolicyTier::ORDER`'s precedence, `resolve_model_policy`'s walk over
+ * it, and `parse_model_default_convention`'s parsing of the `limits`/
+ * `default_policy` blobs — not a shared definition. Nothing on either side
+ * fails to build or fails a test if they drift apart. Because
+ * `gateHarnessModelSelection` now blocks a dispatch on this function's
+ * answer instead of only commenting on it, the practical risk runs one
+ * direction: this copy falling behind a Rust-side change that would resolve
+ * *more* requests (an added tier, a reordered precedence, a convention
+ * parsed more leniently) reads as `'unresolved'`/`'pinned_auto'` here after
+ * the server would already schedule the same request fine — a dialog that
+ * confidently refuses a dispatch that would have worked, not one that lets
+ * through a dispatch that won't. That asymmetry follows from
+ * `parse_model_default_convention`'s own stated posture (an unrecognised
+ * shape reads as "no opinion", never an error) — tightening that posture
+ * later, the one change that would point the risk the other way, would be
+ * a deliberate, visible break from how it already documents itself, not a
+ * quiet drift.
+ */
+export type AutoModelResolution =
+  | { outcome: 'explicit'; source: ModelPolicyTier; provider: string; model_id: string }
+  | { outcome: 'pinned_auto'; source: ModelPolicyTier }
+  | { outcome: 'unresolved' };
+
+export function resolveAutoModelPolicy(
+  agentProfileLimits: unknown,
+  projectDefaultModel: ProjectModelDefault | null | undefined,
+  fleetDefaultPolicy: unknown,
+): AutoModelResolution {
+  const projectConvention: ModelDefaultConvention =
+    projectDefaultModel == null
+      ? null
+      : projectDefaultModel.kind === 'auto'
+        ? { kind: 'auto' }
+        : { kind: 'explicit', provider: projectDefaultModel.provider, model_id: projectDefaultModel.model_id };
+  const tiers: Array<[ModelPolicyTier, ModelDefaultConvention]> = [
+    ['agent_profile', parseModelDefaultConvention(agentProfileLimits)],
+    ['project', projectConvention],
+    ['fleet', parseModelDefaultConvention(fleetDefaultPolicy)],
+  ];
+  for (const [source, value] of tiers) {
+    if (!value) continue;
+    if (value.kind === 'auto') return { outcome: 'pinned_auto', source };
+    return { outcome: 'explicit', source, provider: value.provider, model_id: value.model_id };
+  }
+  return { outcome: 'unresolved' };
+}
+
 // ─── Capability gating ──────────────────────────────────────────────────────
 
 export interface CombinationGate {
@@ -202,6 +312,13 @@ export interface CombinationGate {
    *  caller render a softer, non-blocking notice instead of implying the
    *  combination was actually verified. */
   advisory: boolean;
+  /** A concrete next step the operator can take right now, when the block
+   *  above is fixable from a page that exists — currently only "set the
+   *  project's default model" (the one tier with a settings UI at all; an
+   *  agent-profile or fleet default is API-only, so there is nothing to
+   *  link to for those). Omitted whenever nothing is actionable, including
+   *  whenever the combination is already allowed. */
+  fix?: { label: string; href: string };
 }
 
 /**
@@ -214,44 +331,77 @@ export interface CombinationGate {
  *
  * Two cases:
  *
- * 1. **A specific model provider/id was chosen.** This is a real,
- *    falsifiable claim ("this exact combination works"), so
- *    `isCombinationSupported` is authoritative: unsupported blocks
- *    submission outright (`allowed: false`, `advisory: false`).
+ * 1. **A specific model provider/id was chosen** (including a model chosen
+ *    via "Project default"). This is a real, falsifiable claim ("this exact
+ *    combination works"), so `isCombinationSupported` is authoritative:
+ *    unsupported blocks submission outright.
  *
- * 2. **`modelProvider`/`modelId` are both `null` ("Auto").** III.1.2 makes
- *    this a first-class, always-legal request shape, not "a combination
- *    that happens to be unsupported" — there is nothing concrete to
- *    validate, so this never hard-blocks. What IS shown is whatever
- *    harness-level probe evidence exists (`harnessProbeStatus`), as a
- *    non-blocking advisory: today, with no operator-facing capability-read
- *    endpoint at all (`shared/execution/api.ts`'s Gap 1 — no `GET
- *    /runners`), every harness reports `probed: false` and the advisory
- *    says so honestly, rather than either fabricating a "supported" claim or
- *    permanently disabling the one feature this whole card exists to ship.
- *    The real enforcement point either way is the scheduler at claim time
- *    (III-E1's own acceptance: "invalid combinations name reasons").
+ * 2. **`modelProvider`/`modelId` are both `null` ("Auto").** Unlike the
+ *    advisory this function used to show here, Auto's fate is no longer a
+ *    guess: `crates/tack-orch/src/scheduler/select.rs`'s `evaluate_candidate`
+ *    unconditionally rejects a request that reaches it as
+ *    `ModelSelector::AutoSelect` (`IneligibleReason::AutoSelectNotVerified`
+ *    — no runner-v1 capability field lets a runner attest it safely accepts
+ *    an unspecified model), and it reaches the scheduler that way if and
+ *    only if `autoResolution` (the caller's own
+ *    {@link resolveAutoModelPolicy} result, computed against the currently
+ *    selected agent profile / project / fleet-or-runner target) is anything
+ *    other than `'explicit'`. So: `'explicit'` re-runs the exact same
+ *    `isCombinationSupported` check this function uses for an explicit
+ *    choice, against the resolved pair (this *is* what the request will
+ *    resolve to server-side); `'pinned_auto'`/`'unresolved'` both block,
+ *    because both are requests the scheduler always refuses today, and name
+ *    the fix instead of the retired advisory that claimed the scheduler
+ *    would still validate an unresolved choice at claim time -- it never
+ *    does, for either of those two outcomes.
  */
 export function gateHarnessModelSelection(
   capabilities: RunnerCapabilities[],
   harnessKind: string,
   modelProvider: string | null,
   modelId: string | null,
+  autoResolution: AutoModelResolution = { outcome: 'unresolved' },
+  projectSettingsHref?: string,
 ): CombinationGate {
   if (modelProvider == null || modelId == null) {
-    const probe = harnessProbeStatus(capabilities, harnessKind);
-    if (probe.probed) {
-      return { allowed: true, advisory: false, reason: 'At least one runner reports this harness cleanly.' };
+    if (autoResolution.outcome === 'explicit') {
+      const tierLabel = MODEL_POLICY_TIER_LABEL[autoResolution.source];
+      const combo = isCombinationSupported(
+        capabilities,
+        harnessKind,
+        autoResolution.provider,
+        autoResolution.model_id,
+      );
+      return {
+        allowed: combo.supported,
+        advisory: false,
+        reason: `Resolves via the ${tierLabel}'s default model (${autoResolution.provider} / ${autoResolution.model_id}): ${combo.reason}.`,
+      };
+    }
+    const fix: CombinationGate['fix'] =
+      projectSettingsHref && (autoResolution.outcome === 'unresolved' || autoResolution.source === 'project')
+        ? { label: 'Set a default model for this project', href: projectSettingsHref }
+        : undefined;
+    if (autoResolution.outcome === 'pinned_auto') {
+      const tierLabel = MODEL_POLICY_TIER_LABEL[autoResolution.source];
+      return {
+        allowed: false,
+        advisory: false,
+        reason:
+          `This ${tierLabel} is explicitly set to Auto, and no runner can attest it safely accepts an ` +
+          'unspecified model — this request would queue forever and never run. Choose an explicit model below' +
+          (fix ? ', or change that default.' : '.'),
+        fix,
+      };
     }
     return {
-      allowed: true,
-      advisory: true,
-      reason: probe.lastError
-        ? `No runner currently reports this harness cleanly (last probe error: "${probe.lastError}"). ` +
-          'The scheduler will still validate at claim time.'
-        : 'No runner capability data is available yet to confirm this harness is installed anywhere ' +
-          '(see docs/agent-handoffs/part-iii/III-E2.md, Gap 1: no GET /runners endpoint exists). ' +
-          'The scheduler will still validate at claim time.',
+      allowed: false,
+      advisory: false,
+      reason:
+        'No agent profile, project, or fleet default model is configured for this target, and no runner can ' +
+        'attest it safely accepts an unspecified model — this request would queue forever and never run. ' +
+        'Choose an explicit model below, or set a default model.',
+      fix,
     };
   }
   const combo = isCombinationSupported(capabilities, harnessKind, modelProvider, modelId);

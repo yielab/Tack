@@ -64,6 +64,25 @@ export async function createFreshProject(request: APIRequestContext, name: strin
   return list.at(-1).id;
 }
 
+/**
+ * Sets a project's default-model tier directly, via the same
+ * `PATCH /api/projects/:id` route `features/settings/panels/AgentsPanel.tsx`'s
+ * "Project default model" field writes. Only usable on a project from
+ * {@link createFreshProject}, never the shared one `getOrCreateProject`
+ * returns — see that function's own doc comment on why.
+ */
+export async function setProjectDefaultModel(
+  request: APIRequestContext,
+  projectId: string,
+  provider: string,
+  modelId: string,
+): Promise<void> {
+  const res = await request.patch(`${API}/projects/${projectId}`, {
+    data: { default_model: { kind: 'explicit', provider, model_id: modelId } },
+  });
+  expect(res.ok(), `set project default model failed: ${res.status()}`).toBeTruthy();
+}
+
 /** Ensure the given project has at least one item and return its id. */
 export async function getOrCreateItem(
   request: APIRequestContext,

@@ -243,4 +243,79 @@ describe('isCombinationSupported', () => {
     // provider that never showed up in a *trustworthy* report.
     expect(result.reason).toBe('no runner reports this model provider for this harness');
   });
+
+  // Mirrors `crates/tack-orch/src/scheduler/select.rs`'s own arm: an
+  // undeclared pairing still schedules when the harness attests
+  // `model_passthrough: supported` — both bundled harnesses (codex,
+  // claude-code) ship empty `model_combinations` and rely entirely on this.
+  it('an undeclared pairing is supported when the harness attests model_passthrough: supported', () => {
+    const passthrough = fixtureCapabilities({
+      harnesses: [
+        {
+          harness_kind: 'codex',
+          installed_version: '1.2.3',
+          probe_error: null,
+          probed_at: '2026-08-06T12:00:00Z',
+          model_combinations: [],
+          model_passthrough: { support: 'supported', reason: null },
+        },
+      ],
+    });
+    const result = isCombinationSupported([passthrough], 'codex', 'anthropic', 'opaque/model-unlisted');
+    expect(result.supported).toBe(true);
+    expect(result.reason).toContain('model passthrough');
+    expect(result.supportingRunnerCount).toBe(1);
+  });
+
+  it('an "advisory" (not "supported") model_passthrough attestation does not unlock an undeclared pairing', () => {
+    const advisoryOnly = fixtureCapabilities({
+      harnesses: [
+        {
+          harness_kind: 'codex',
+          installed_version: '1.2.3',
+          probe_error: null,
+          probed_at: '2026-08-06T12:00:00Z',
+          model_combinations: [],
+          model_passthrough: { support: 'advisory', reason: 'unverified' },
+        },
+      ],
+    });
+    const result = isCombinationSupported([advisoryOnly], 'codex', 'anthropic', 'opaque/model-unlisted');
+    expect(result.supported).toBe(false);
+  });
+
+  it('a harness with a probe error never counts as passthrough-supported either', () => {
+    const failedPassthrough = fixtureCapabilities({
+      harnesses: [
+        {
+          harness_kind: 'codex',
+          installed_version: '1.2.3',
+          probe_error: 'binary not found on PATH',
+          probed_at: '2026-08-06T12:00:00Z',
+          model_combinations: [],
+          model_passthrough: { support: 'supported', reason: null },
+        },
+      ],
+    });
+    const result = isCombinationSupported([failedPassthrough], 'codex', 'anthropic', 'opaque/model-unlisted');
+    expect(result.supported).toBe(false);
+  });
+
+  it('a declared combination is not double-counted when the same runner also attests passthrough', () => {
+    const both = fixtureCapabilities({
+      harnesses: [
+        {
+          harness_kind: 'codex',
+          installed_version: '1.2.3',
+          probe_error: null,
+          probed_at: '2026-08-06T12:00:00Z',
+          model_combinations: [{ model_provider: 'openai', model_ids: ['opaque/model-alpha'], discovery: 'reported' }],
+          model_passthrough: { support: 'supported', reason: null },
+        },
+      ],
+    });
+    const result = isCombinationSupported([both], 'codex', 'openai', 'opaque/model-alpha');
+    expect(result.supportingRunnerCount).toBe(1);
+    expect(result.reason).toBe('1 runner reports this combination');
+  });
 });

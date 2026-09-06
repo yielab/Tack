@@ -27,6 +27,7 @@ import {
   describeProjectModelDefault,
   projectDefaultModelPair,
   isModelPassthroughAttested,
+  resolveAutoModelPolicy,
   type RunWithAgentFormValues,
 } from './shared';
 
@@ -131,11 +132,18 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
   const runnersData = (): RunnerSummary[] => (liveRunners.error !== undefined ? [] : (liveRunners() ?? []));
   const activeRunners = (): RunnerSummary[] => runnersData().filter((r) => isActiveRunnerState(r.state));
 
+  // The submit gate's own input. Scoped to `targetCapabilities()` (the
+  // selected runner, or every active member of a selected fleet) — never
+  // the whole runner population — because that's exactly what the real
+  // scheduler evaluates per candidate (`crates/tack-orch/src/scheduler/
+  // select.rs`'s `evaluate_candidate`, called once per eligible runner
+  // implied by the request's own selector, never against an unrelated
+  // runner elsewhere in the fleet). `props.capabilities` still overrides
+  // this outright for tests, matching its own doc comment: it replaces the
+  // gate's input, never which machines/groups the picker itself shows.
   const capabilities = (): RunnerCapabilities[] => {
     if (props.capabilities) return props.capabilities();
-    return runnersData()
-      .map(runnerSummaryToCapabilities)
-      .filter((c): c is RunnerCapabilities => c !== null);
+    return targetCapabilities();
   };
 
   // Resources throw once errored — read through a safe accessor everywhere
@@ -323,8 +331,30 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
     return null;
   };
 
+  // What an Auto ("let the runner decide") request would actually resolve to
+  // for the currently selected agent profile / project / target — computed
+  // fresh from data this modal already fetches for other purposes (the
+  // agent profile list, the project resource, the fleet list), never a
+  // second network round-trip. See `shared.ts#resolveAutoModelPolicy`'s doc
+  // comment for why this needs three tiers, not just the project's own
+  // default this fieldset already shows.
+  const autoModelResolution = createMemo(() =>
+    resolveAutoModelPolicy(
+      selectedAgentProfile()?.limits,
+      project()?.default_model ?? null,
+      selectorKind() === 'fleet' ? fleetsData().find((f) => f.fleet_id === selectorId())?.default_policy : null,
+    ),
+  );
+
   const combinationGate = createMemo(() =>
-    gateHarnessModelSelection(capabilities(), harnessKind(), modelProvider(), modelId()),
+    gateHarnessModelSelection(
+      capabilities(),
+      harnessKind(),
+      modelProvider(),
+      modelId(),
+      autoModelResolution(),
+      `/projects/${props.projectId}/settings?tab=agents`,
+    ),
   );
 
   // Structural (non-capability) validation — every reason is shown, never a
@@ -618,18 +648,31 @@ const RunWithAgentModal: Component<RunWithAgentModalProps> = (props) => {
 };
 
 const CombinationGateNote: Component<{ gate: ReturnType<typeof gateHarnessModelSelection> }> = (props) => (
-  <p class="flex items-start gap-1.5 text-xs" style={{ color: props.gate.advisory ? 'var(--color-warning-700)' : props.gate.allowed ? 'var(--color-success-700)' : 'var(--color-danger-600)' }}>
-    <Show when={!props.gate.allowed}>
-      <Badge tone="danger">Unsupported</Badge>
+  <div class="space-y-1">
+    <p class="flex items-start gap-1.5 text-xs" style={{ color: props.gate.advisory ? 'var(--color-warning-700)' : props.gate.allowed ? 'var(--color-success-700)' : 'var(--color-danger-600)' }}>
+      <Show when={!props.gate.allowed}>
+        <Badge tone="danger">Unsupported</Badge>
+      </Show>
+      <Show when={props.gate.allowed && props.gate.advisory}>
+        <Badge tone="warning">Unverified</Badge>
+      </Show>
+      <Show when={props.gate.allowed && !props.gate.advisory}>
+        <Badge tone="success">Supported</Badge>
+      </Show>
+      <span>{props.gate.reason}</span>
+    </p>
+    <Show when={props.gate.fix}>
+      {(fix) => (
+        <A
+          href={fix().href}
+          class="inline-flex items-center gap-1 text-xs font-medium"
+          style={{ color: 'var(--color-primary-600)' }}
+        >
+          {fix().label}
+        </A>
+      )}
     </Show>
-    <Show when={props.gate.allowed && props.gate.advisory}>
-      <Badge tone="warning">Unverified</Badge>
-    </Show>
-    <Show when={props.gate.allowed && !props.gate.advisory}>
-      <Badge tone="success">Supported</Badge>
-    </Show>
-    <span>{props.gate.reason}</span>
-  </p>
+  </div>
 );
 
 export default RunWithAgentModal;

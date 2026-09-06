@@ -10,7 +10,19 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 const disposers: Array<() => void> = [];
 
 const FLEET = { fleet_id: 'fleet-1', name: 'Primary Fleet', concurrency_limit: 5, default_policy: null };
-const PROFILE = { agent_profile_id: 'profile-1', name: 'Reviewer', instructions: 'Review the diff', tool_policy: { read: true }, limits: null };
+/** Carries a `default_model` convention matching `RUNNER`'s own declared
+ *  `codex`/`openai`/`opaque/model-alpha` combination below, so an Auto
+ *  submission through this profile resolves to a real, supported pair —
+ *  most tests in this file need that to be true to submit at all, since an
+ *  Auto request that resolves to nothing is blocked before it ever reaches
+ *  the wire (`shared.ts#gateHarnessModelSelection`). */
+const PROFILE = {
+  agent_profile_id: 'profile-1',
+  name: 'Reviewer',
+  instructions: 'Review the diff',
+  tool_policy: { read: true },
+  limits: { default_model: { provider: 'openai', model_id: 'opaque/model-alpha' } },
+};
 /** A second profile — with only one candidate, `RunWithAgentModal` auto-selects
  *  it (the same "an unambiguous single choice needs no picker" reasoning the
  *  target picker applies), so any test proving "no agent profile selected"
@@ -329,6 +341,44 @@ describe('RunWithAgentModal', () => {
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).not.toContain('Project default —');
     expect(modelModeRadio(1).checked).toBe(true); // "Auto" is the only other radio besides "Choose…"
+  });
+
+  it('with no default model configured at any tier, Auto is blocked and names the fix, with a link to set one', async () => {
+    // PROFILE_2 carries no `default_model` convention, and this mount's
+    // project/fleets carry none either — the "every tier absent" state the
+    // scheduler's AutoSelectNotVerified rejects unconditionally.
+    mount({}, { runners: [RUNNER], fleets: [], agentProfiles: [PROFILE_2] });
+    await flush();
+    expandRepository();
+    setField(field('Remote'), 'git@example.com:org/repo.git');
+    await flush();
+    expect(modelModeRadio(1).checked).toBe(true); // Auto, the default with no project opinion
+    expect(submitButton().disabled).toBe(true);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Unsupported');
+    expect(dialog.textContent).toMatch(/no agent profile, project, or fleet default model is configured/i);
+    const fixLink = [...dialog.querySelectorAll('a')].find((a) => a.textContent === 'Set a default model for this project');
+    expect(fixLink).toBeTruthy();
+    expect(fixLink!.getAttribute('href')).toBe('/projects/project-1/settings?tab=agents');
+  });
+
+  it('with the project pinned explicitly to Auto, the same request is blocked with a distinct, tier-naming reason', async () => {
+    mount(
+      {},
+      {
+        runners: [RUNNER],
+        fleets: [],
+        agentProfiles: [PROFILE_2],
+        project: { id: 'project-1', name: 'P', default_model: { kind: 'auto' } },
+      },
+    );
+    await flush();
+    expandRepository();
+    setField(field('Remote'), 'git@example.com:org/repo.git');
+    await flush();
+    expect(submitButton().disabled).toBe(true);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toMatch(/project is explicitly set to auto/i);
   });
 
   it('"Choose…" lists the target\'s own reported model combinations, and picking one is real, gate-supported data', async () => {
