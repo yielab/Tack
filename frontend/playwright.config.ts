@@ -34,8 +34,11 @@ export default defineConfig({
   testDir: './e2e',
   // Capture specs (screenshots / hero GIF) are local-only tools — they require
   // ffmpeg and a running dev environment. Exclude them from the default CI suite;
-  // run them explicitly with `make screenshots` or `make gif`.
-  testIgnore: ['**/screenshots.spec.ts', '**/hero-gif.spec.ts'],
+  // run them explicitly with `make screenshots` or `make gif`. recovery-demo.spec.ts
+  // is excluded for a different reason: it targets a release artifact in Docker,
+  // not this config's dev `cargo run`/`npm run dev` webServer — see
+  // playwright.recovery-demo.config.ts and scripts/record-recovery-demo.sh.
+  testIgnore: ['**/screenshots.spec.ts', '**/hero-gif.spec.ts', '**/recovery-demo.spec.ts'],
   // One test file shouldn't leak state into another; each creates what it needs.
   fullyParallel: true,
   forbidOnly: isCI,
