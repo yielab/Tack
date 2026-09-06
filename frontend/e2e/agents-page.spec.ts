@@ -1,5 +1,5 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
-import { API, createFreshProject, enrollRunner, getOrCreateProject, waitForApp } from './helpers';
+import { type Locator, type Page } from '@playwright/test';
+import { API, createFreshProject, enrollRunner, getOrCreateProject, test, expect, waitForApp } from './helpers';
 
 // The Agents page — the one screen from an installed binary to a completed
 // attempt. `playwright.config.ts` prepends
@@ -10,6 +10,13 @@ import { API, createFreshProject, enrollRunner, getOrCreateProject, waitForApp }
 // header comment. Their reported versions (9.9.1/9.9.2) are the load-bearing
 // proof that step 1-2 assertions below observe the real probe, not
 // something the frontend fabricated.
+//
+// The first test below flips the same server-wide "agent execution on/off"
+// switch `execution-toggle.spec.ts` and `provider-key-panel.spec.ts` each
+// drive — it holds `executionToggleLock` (`./helpers.ts`) for that reason;
+// see that fixture's own doc comment before touching either. The second
+// test (step 5) never touches that switch — it deliberately does not
+// request the lock, so it stays as parallel as everything else.
 
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', (err) => {
@@ -38,6 +45,7 @@ async function selectProjectIfPickerShows(page: Page, projectName: string) {
 test('steps 1, 2 and 4: turning agent execution on reveals both agents installed at the shim\'s own version, and a default model saves against the real project', async ({
   page,
   request,
+  executionToggleLock,
 }) => {
   // A dedicated project, never the suite's shared one: `default_model` has
   // no route to unset once written (`ModelDefaultStep.tsx`'s own doc

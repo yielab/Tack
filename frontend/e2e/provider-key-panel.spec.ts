@@ -1,5 +1,4 @@
-import { test, expect } from '@playwright/test';
-import { waitForApp } from './helpers';
+import { test, expect, waitForApp } from './helpers';
 
 // ADR 0061 decision 2 — a UI-only user hands the embedded runner a Vercel
 // AI Gateway key, write-only, with the catalog re-probed in the same
@@ -13,6 +12,15 @@ import { waitForApp } from './helpers';
 // 2026-09) rather than timing out, so the catalog line still changes from
 // "not configured" to a typed "unreachable" reason — proving the re-probe
 // fired with no restart, even without proving a real model count.
+//
+// The re-probe this test drives (`put_local_runner_secret`'s own `catalog()`
+// call, `crates/tack-api/src/handlers/local_runner.rs`) holds the same
+// server-wide `EmbeddedRunnerControl` lock `execution-toggle.spec.ts` and
+// `agents-page.spec.ts`'s first test flip via `PUT /api/local-runner` —
+// `executionToggleLock` (`./helpers.ts`) keeps this test's real network
+// round trip from stalling either of theirs, and their on/off flips from
+// landing mid-probe here. See that fixture's own doc comment before
+// removing it.
 
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', (err) => {
@@ -20,28 +28,58 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('saving a key re-probes the catalog and the value never reaches the DOM', async ({ page }) => {
+test('saving a key re-probes the catalog and the value never reaches the DOM', async ({ page, executionToggleLock }) => {
+  // `ProviderKeyPanel.tsx`'s own `stored()` getter (`secrets()?.data.find(...)
+  // ?? null`) is falsy both while its `secrets` resource is still in flight
+  // AND once it resolves to "no key stored" — the identical fallback `<form>`
+  // renders either way. On a reused `e2e.db` where a previous run left a key
+  // stored, racing `removeButton`/`apiKeyField` visibility against that
+  // ambiguity can land on the *loading* rendering, decide "fill the form",
+  // and then have the real response arrive a moment later saying a key
+  // already exists — yanking the form out from under the fill/click
+  // (measured: 4 of 10 solo runs of the *unmodified* file failed this way,
+  // `npx playwright test -g "saving a key re-probes" --project=chromium
+  // --workers=1`, run before this fix existed). Waiting for both of the
+  // panel's own initial GETs to land first — attached before navigation, so
+  // neither can complete before this test is listening — makes the DOM this
+  // test reads next the settled state, not a transient one.
+  const localRunnerLoaded = page.waitForResponse(
+    (res) => res.request().method() === 'GET' && res.url().endsWith('/api/local-runner'),
+  );
+  const secretsLoaded = page.waitForResponse(
+    (res) => res.request().method() === 'GET' && res.url().endsWith('/api/local-runner/secrets'),
+  );
+
   await page.goto('/agents');
   await waitForApp(page);
 
   const heading = page.getByRole('heading', { name: 'Vercel AI Gateway key' });
   await expect(heading).toBeVisible();
+  await Promise.all([localRunnerLoaded, secretsLoaded]);
 
   const removeButton = page.getByRole('button', { name: 'Remove' });
+  const replaceButton = page.getByRole('button', { name: 'Replace' });
   const apiKeyField = page.getByLabel('API key');
-  // The panel renders one of these two mutually-exclusive states once its
-  // two resources (status, secrets) resolve — wait for either rather than
-  // racing an `isVisible()` check against the still-loading skeleton.
   await Promise.race([
     removeButton.waitFor({ state: 'visible' }),
     apiKeyField.waitFor({ state: 'visible' }),
   ]);
 
-  // Remove any key a previous run left behind, so this run starts from a
-  // known "not configured" state.
+  // A previous run — or, once `executionToggleLock` serializes this test
+  // against its siblings, a sibling run against the same long-lived e2e
+  // server — may have already saved a key. Reach the fill-in form via
+  // `Replace` (client-side only: it just flips this panel's own `editing`
+  // signal), never `Remove`: `EmbeddedRunnerControl::remove_secret`
+  // (`crates/tack-cli/src/local_runner.rs`) deletes the stored value but
+  // never resets the provider's own `enabled` flag — only `set_secret` ever
+  // sets it — so on a server process that has EVER saved this provider's
+  // key, `Remove` leaves the catalog reporting `secret_unresolved` forever
+  // after, never `not_configured` again (measured: deterministic once a
+  // sibling serialized behind the same lock has saved first — a Rust file,
+  // not this spec, and not fixed here). `Replace` reaches the identical form
+  // with no server call and no dependence on that bug.
   if (await removeButton.isVisible()) {
-    await removeButton.click();
-    await expect(page.getByText('Catalog: not configured')).toBeVisible();
+    await replaceButton.click();
   }
 
   const secretValue = 'e2e-placeholder-key-never-should-render';

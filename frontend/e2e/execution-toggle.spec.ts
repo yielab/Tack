@@ -1,11 +1,16 @@
-import { test, expect } from '@playwright/test';
-import { waitForApp } from './helpers';
+import { test, expect, waitForApp } from './helpers';
 
 // ADR 0061 decision 6 — a UI-only user turns the embedded runner on/off,
 // with no restart. The e2e webServer runs a plain `cargo run -p tack-cli --
 // serve` (no `--with-runner`) on loopback (`playwright.config.ts`), so
 // `/api/local-runner` is genuinely mounted and this exercises the real
 // `EmbeddedRunnerControl` lifecycle end to end, not a mock.
+//
+// This is the whole server-wide switch `provider-key-panel.spec.ts` and
+// `agents-page.spec.ts`'s first test also drive — `executionToggleLock`
+// (`./helpers.ts`) keeps this test's own on/off round trip from racing
+// either of theirs under full parallel load. See that fixture's own doc
+// comment before removing it.
 
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', (err) => {
@@ -13,7 +18,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('turning agent execution on and off round-trips the observed state', async ({ page }) => {
+test('turning agent execution on and off round-trips the observed state', async ({ page, executionToggleLock }) => {
   await page.goto('/agents');
   await waitForApp(page);
 
