@@ -181,35 +181,16 @@ impl HarnessBinary {
 }
 
 /// Searches the *runner process's own* `PATH` (never an attempt-supplied
-/// value) for an executable named `claude`, mirroring ordinary shell PATH
-/// resolution. Resolved once by [`ClaudeCodeAdapter::discover`]; a later
-/// uninstall is caught defensively in `validate`/`start`, not by re-searching
-/// PATH on every call.
+/// value), then the shared well-known install locations in
+/// [`super::locate`], for an executable named `claude`. Resolved once by
+/// [`ClaudeCodeAdapter::discover`]; a later uninstall is caught defensively
+/// in `validate`/`start`, not by re-searching on every call.
 fn discover_installed_binary() -> Result<HarnessBinary, String> {
-    let path_var = std::env::var_os("PATH")
-        .ok_or_else(|| "runner process has no PATH environment variable set".to_string())?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join("claude");
-        if !candidate.is_file() {
-            continue;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let Ok(metadata) = std::fs::metadata(&candidate) else {
-                continue;
-            };
-            if metadata.permissions().mode() & 0o111 == 0 {
-                continue;
-            }
-        }
-        let resolved = candidate.canonicalize().unwrap_or(candidate);
-        return Ok(HarnessBinary {
-            program: resolved,
-            prefix_args: Vec::new(),
-        });
-    }
-    Err("no executable named `claude` was found on PATH".to_string())
+    let program = super::locate::locate_installed("claude").map_err(|error| error.to_string())?;
+    Ok(HarnessBinary {
+        program,
+        prefix_args: Vec::new(),
+    })
 }
 
 /// One in-flight (spawned, not yet reaped) attempt process, keyed by its own
@@ -2726,30 +2707,10 @@ mod tests {
         std::fs::remove_dir_all(workspace).expect("cleanup");
     }
 
-    // ---- discovery -----------------------------------------------------
-
-    #[test]
-    fn discover_installed_binary_fails_typed_when_path_has_no_claude_executable() {
-        // SAFETY-adjacent note: this only ever *reads* PATH via a scoped
-        // override for the duration of this single-threaded assertion; it
-        // does not spawn a process or touch any other environment variable.
-        let previous = std::env::var_os("PATH");
-        // SAFETY: test-only, single-threaded within this process for the
-        // duration of this scope; restored immediately below.
-        unsafe {
-            std::env::set_var("PATH", "/definitely/not/a/real/path/at/all");
-        }
-        let outcome = discover_installed_binary();
-        // SAFETY: restores the prior value (or removes the override),
-        // matching the pre-test state.
-        unsafe {
-            match &previous {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-        assert!(outcome.is_err());
-    }
+    // Discovery's search logic is pure and lives in `harness::locate`, with
+    // its own tests there (found on PATH, found only in a fallback dir, not
+    // found, non-executable skipped); this file no longer needs a test that
+    // mutates the real process `PATH` to reach the same behavior.
 
     // ---- live, opt-in test against the real installed `claude` ----------
 

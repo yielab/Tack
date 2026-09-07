@@ -408,6 +408,33 @@ difference.
 
 ---
 
+## Where Tack looks for `claude` and `codex`
+
+The Agents page's "harness detected" check, and the runner's own startup probe, resolve
+each binary the same way: the runner process's own `PATH` first, exactly as a shell
+would find it. If that search comes up empty, the runner then checks a fixed list of
+per-user install locations that a shell-launched terminal usually has on `PATH` but a
+desktop launcher (a `.desktop` entry, Finder, the Start menu) or `tack service` under
+systemd's user manager usually does not, since both start from a minimal session
+`PATH`:
+
+- `~/.local/bin`
+- `~/.cargo/bin`
+- `~/.bun/bin`
+- `~/.npm-global/bin` and `~/.npm/bin`
+- every installed Node version's own bin directory under `~/.nvm/versions/node/`
+- `/opt/homebrew/bin` and `/usr/local/bin` (Homebrew)
+- on Windows, `%APPDATA%\npm` and `%LOCALAPPDATA%\nvm`
+
+This list is fixed, not configurable — there is no `TACK_*` variable for it. A machine
+whose shell can already see the install is unaffected: `PATH` is always searched first,
+and the first match wins. If neither search finds the binary, the reported error names
+every directory it actually checked, so "not installed" always comes with a way to
+confirm it — install the harness anywhere on that list, or make sure it is on the
+`PATH` the runner process actually inherits.
+
+---
+
 ## Local credential handling
 
 - The enrollment token is a bearer secret; the durable credential the runner receives

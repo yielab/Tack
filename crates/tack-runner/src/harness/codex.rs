@@ -128,12 +128,15 @@ fn toml_quoted(value: &str) -> String {
 /// Where to find the `codex` executable.
 #[derive(Clone)]
 enum CodexLocator {
-    /// Searches `search_dirs` (a snapshot of `PATH`, taken once at
-    /// construction) for `program_name`, never cached across calls beyond
-    /// that snapshot. Production default via [`CodexAdapter::discover`].
+    /// A snapshot of the runner process's own `PATH` and home directory,
+    /// taken once at construction (see `crate::harness::locate::snapshot`)
+    /// and re-searched — `PATH` first, then the shared well-known install
+    /// locations — on every [`CodexLocator::resolve`] call. Production
+    /// default via [`CodexAdapter::discover`].
     Search {
         program_name: String,
-        search_dirs: Vec<PathBuf>,
+        path: Option<std::ffi::OsString>,
+        home: Option<PathBuf>,
     },
     /// A fixed program plus prefix args — how every fake-binary test in this
     /// file points the adapter at `crate::harness::fixtures::fake_harness_command`
@@ -159,42 +162,13 @@ impl CodexLocator {
             } => Ok((program.clone(), prefix_args.clone())),
             Self::Search {
                 program_name,
-                search_dirs,
-            } => locate_in_dirs(program_name, search_dirs)
+                path,
+                home,
+            } => super::locate::locate(program_name, path.as_deref(), home.as_deref())
                 .map(|program| (program, Vec::new()))
-                .ok_or_else(|| format!("`{program_name}` was not found on PATH")),
+                .map_err(|error| error.to_string()),
         }
     }
-}
-
-fn system_path_dirs() -> Vec<PathBuf> {
-    std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect())
-        .unwrap_or_default()
-}
-
-/// Dependency-free `PATH` search (mirrors why `harness/process.rs` declares
-/// `kill(2)` via a bare `extern "C"` instead of adding a crate: this is one
-/// small, stable, well-understood piece of logic that does not need the
-/// `which` crate). On Unix, an entry must also carry an executable bit;
-/// non-Unix has no such notion and accepts any regular file match.
-fn locate_in_dirs(program_name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
-    for dir in dirs {
-        let candidate = dir.join(program_name);
-        if !candidate.is_file() {
-            continue;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            match std::fs::metadata(&candidate) {
-                Ok(metadata) if metadata.permissions().mode() & 0o111 != 0 => {}
-                _ => continue,
-            }
-        }
-        return Some(candidate);
-    }
-    None
 }
 
 /// Strict `X.Y[.Z]` numeric-only check against one whitespace-delimited
@@ -372,10 +346,12 @@ impl CodexAdapter<crate::SystemClock> {
         artifact_staging_root: PathBuf,
         secrets: crate::secrets::SecretStore,
     ) -> Self {
+        let (path, home) = super::locate::snapshot();
         Self::with_clock(
             CodexLocator::Search {
                 program_name: CODEX_PROGRAM_NAME.to_owned(),
-                search_dirs: system_path_dirs(),
+                path,
+                home,
             },
             process_limits,
             DEFAULT_PROBE_TIMEOUT,
@@ -1300,8 +1276,15 @@ mod tests {
         let scratch = temp_dir("artifacts-unresolvable");
         let adapter = CodexAdapter::with_clock(
             CodexLocator::Search {
-                program_name: "codex".to_owned(),
-                search_dirs: vec![empty_dir.to_path_buf()],
+                // Not the real `codex` program name: the well-known fallback
+                // list includes fixed system directories (Homebrew's
+                // `/usr/local/bin`) this test cannot isolate the way it
+                // isolates `PATH`, so a name no real installer would ever
+                // use keeps this test deterministic regardless of what is
+                // actually installed on the machine running it.
+                program_name: "tack-test-fixture-nonexistent-codex".to_owned(),
+                path: Some(std::env::join_paths([empty_dir]).expect("join paths")),
+                home: None,
             },
             generous_limits(),
             Duration::from_secs(1),
@@ -1683,8 +1666,15 @@ mod tests {
         let scratch = temp_dir("artifacts-absent");
         let adapter = CodexAdapter::with_clock(
             CodexLocator::Search {
-                program_name: "codex".to_owned(),
-                search_dirs: vec![empty_dir.to_path_buf()],
+                // Not the real `codex` program name: the well-known fallback
+                // list includes fixed system directories (Homebrew's
+                // `/usr/local/bin`) this test cannot isolate the way it
+                // isolates `PATH`, so a name no real installer would ever
+                // use keeps this test deterministic regardless of what is
+                // actually installed on the machine running it.
+                program_name: "tack-test-fixture-nonexistent-codex".to_owned(),
+                path: Some(std::env::join_paths([empty_dir]).expect("join paths")),
+                home: None,
             },
             generous_limits(),
             Duration::from_secs(1),
@@ -2049,7 +2039,7 @@ mod tests {
     #[ignore = "opt-in: requires a real `codex` binary on PATH; run with \
                 `cargo nextest run --workspace --run-ignored ignored-only -E 'test(/codex::tests::live_/)'`"]
     async fn live_probe_and_artifact_staging_against_a_real_codex_binary_when_present() {
-        if locate_in_dirs(CODEX_PROGRAM_NAME, &system_path_dirs()).is_none() {
+        if super::super::locate::locate_installed(CODEX_PROGRAM_NAME).is_err() {
             eprintln!("skipping live codex test: `codex` not found on PATH");
             return;
         }
@@ -2122,7 +2112,7 @@ mod tests {
             );
             return;
         }
-        if locate_in_dirs(CODEX_PROGRAM_NAME, &system_path_dirs()).is_none() {
+        if super::super::locate::locate_installed(CODEX_PROGRAM_NAME).is_err() {
             eprintln!("skipping live codex gateway test: `codex` not found on PATH");
             return;
         }
