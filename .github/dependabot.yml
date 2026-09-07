@@ -46,6 +46,13 @@ updates:
       cargo-security:
         applies-to: security-updates
         patterns: ["*"]
+    ignore:
+      # sqlx's 0.9 line requires Rust 1.94, above the 1.89 dependency floor
+      # this repo pins (Cargo.toml `rust-version`, CI's MSRV job). Landing it
+      # means raising the floor, which is a deliberate call, not a routine
+      # bump — remove this ignore once the floor rises to 1.94 or higher.
+      - dependency-name: "sqlx"
+        update-types: ["version-update:semver-major"]
 
   # tack-desktop is its own workspace (see the `exclude` in the root Cargo.toml),
   # so its lockfile is invisible to the entry above and needs its own.

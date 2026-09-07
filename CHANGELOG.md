@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`toml` 0.8 → 1.1 and `validator` 0.20 → 0.21.** No behavior a user can observe:
+  config parsing (`tack.toml`, the runner's journal, `AttemptJournal` round-trips) and
+  every `#[validate(...)]` field rule compile and pass unchanged. `sqlx` stays at 0.8 —
+  its 0.9 line raises the crate's own `rust-version` to 1.94.0, above this repo's pinned
+  1.89 floor, so raising it is out of scope here and Dependabot no longer proposes it
+  (`.github/dependabot.yml`'s `ignore` on `sqlx`'s major updates).
+
 - **The comment gate now scans the E2E suite.** `scripts/check-comments.sh` covered only
   `crates/` and `frontend/src`; `frontend/e2e` is now a third default root. Fixing it
   required a real bug in the "pointers to files that do not exist" check first: a
