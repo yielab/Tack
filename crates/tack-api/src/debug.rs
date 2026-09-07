@@ -95,7 +95,7 @@ async fn get_table_counts(state: &AppState) -> serde_json::Value {
 
     for table in tables {
         let query = format!("SELECT COUNT(*) FROM {table}");
-        let count: i64 = sqlx::query_scalar(&query)
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
             .fetch_one(state.repo.pool())
             .await
             .unwrap_or(0);

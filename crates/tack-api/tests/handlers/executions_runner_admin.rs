@@ -671,7 +671,7 @@ async fn seed_noise_rows(
           permission_policy, created_at, updated_at) VALUES {}",
         rows.join(",")
     );
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql))
         .execute(repo.pool())
         .await
         .expect("seed noise rows");

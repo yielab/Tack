@@ -1,4 +1,4 @@
-use sqlx::{Row, SqlitePool};
+use sqlx::{AssertSqlSafe, Row, SqlitePool};
 use tracing::{info, instrument};
 
 /// A migration is either ordinary, all of whose SQL runs in one transaction, or
@@ -376,12 +376,12 @@ async fn apply_migrations(
 async fn apply_ordinary_migration(
     pool: &SqlitePool,
     migration: Migration,
-    statements: &[&str],
+    statements: &'static [&'static str],
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     let result = async {
         for statement in statements {
-            sqlx::query(statement).execute(&mut *tx).await.map_err(|error| {
+            sqlx::query(*statement).execute(&mut *tx).await.map_err(|error| {
                 tracing::error!(migration = migration.name, statement, error = %error, "Migration failed");
                 error
             })?;
@@ -414,7 +414,7 @@ async fn apply_rebuild_migration(
             .await?;
         for (step, statement) in spec.statements.iter().enumerate() {
             inject_failure(failure, migration.name, step)?;
-            sqlx::query(statement).execute(&mut *tx).await.map_err(|error| {
+            sqlx::query(*statement).execute(&mut *tx).await.map_err(|error| {
                 tracing::error!(migration = migration.name, statement, error = %error, "Rebuild migration failed");
                 error
             })?;
@@ -460,12 +460,18 @@ async fn verify_copy(
     migration: &str,
     spec: RebuildMigration,
 ) -> Result<(), sqlx::Error> {
-    let source_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", spec.source))
-        .fetch_one(&mut **tx)
-        .await?;
-    let staging_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", spec.staging))
-        .fetch_one(&mut **tx)
-        .await?;
+    let source_count: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM {}",
+        spec.source
+    )))
+    .fetch_one(&mut **tx)
+    .await?;
+    let staging_count: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM {}",
+        spec.staging
+    )))
+    .fetch_one(&mut **tx)
+    .await?;
     if source_count != staging_count {
         return Err(sqlx::Error::Protocol(format!(
             "rebuild migration {migration} copy verification failed: {} has {source_count} rows, \
@@ -480,7 +486,7 @@ async fn verify_copy(
         spec.staging_projection,
         spec.source_projection
     );
-    let differences: i64 = sqlx::query_scalar(&difference_sql)
+    let differences: i64 = sqlx::query_scalar(AssertSqlSafe(difference_sql))
         .fetch_one(&mut **tx)
         .await?;
     if differences != 0 {

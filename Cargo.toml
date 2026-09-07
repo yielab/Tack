@@ -18,7 +18,7 @@ exclude = ["crates/tack-desktop"]
 [workspace.package]
 version = "0.1.0-beta.7"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.94"
 license = "MIT"
 authors = ["Tack Contributors"]
 repository = "https://github.com/yielab/tack"
@@ -38,7 +38,7 @@ tower-http = { version = "0.7", features = ["cors", "trace", "fs", "compression-
 validator = { version = "0.21", features = ["derive"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::{QueryBuilder, Sqlite};
+use sqlx::{AssertSqlSafe, QueryBuilder, Sqlite};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
@@ -261,7 +261,7 @@ impl Repository {
         query.push_str(&format!(" LIMIT {per_page} OFFSET {offset}"));
 
         // Build the query dynamically
-        let mut q = sqlx::query_as::<_, ItemRow>(&query);
+        let mut q = sqlx::query_as::<_, ItemRow>(AssertSqlSafe(query));
         for bind in &binds {
             q = q.bind(bind);
         }
@@ -281,7 +281,7 @@ impl Repository {
     ) -> Result<i64, sqlx::Error> {
         let (where_clause, binds) = item_filter_clause(project_id, filter);
         let query = format!("SELECT COUNT(*) FROM items{where_clause}");
-        let mut q = sqlx::query_scalar::<_, i64>(&query);
+        let mut q = sqlx::query_scalar::<_, i64>(AssertSqlSafe(query));
         for bind in &binds {
             q = q.bind(bind);
         }

@@ -39,7 +39,7 @@ pub async fn get_backup(State(state): State<AppState>) -> ApiResult<Response> {
     let temp_path = std::env::temp_dir().join(format!("tack-backup-{}.db", Uuid::new_v4()));
     let path_str = temp_path.to_string_lossy().replace('\'', "''");
 
-    sqlx::query(&format!("VACUUM INTO '{path_str}'"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{path_str}'")))
         .execute(state.pool())
         .await?;
 

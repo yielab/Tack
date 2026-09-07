@@ -642,7 +642,10 @@ struct GoldenRows {
 /// declared-`INTEGER` column as `Option<String>` outright rather than
 /// coercing, so without this branch every scenario that touches `orch_runs`
 /// panics on the first row).
-async fn fetch_table(pool: &SqlitePool, sql: &str) -> Vec<BTreeMap<String, serde_json::Value>> {
+async fn fetch_table(
+    pool: &SqlitePool,
+    sql: &'static str,
+) -> Vec<BTreeMap<String, serde_json::Value>> {
     let rows = sqlx::query(sql)
         .fetch_all(pool)
         .await

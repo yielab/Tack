@@ -46,13 +46,6 @@ updates:
       cargo-security:
         applies-to: security-updates
         patterns: ["*"]
-    ignore:
-      # sqlx's 0.9 line requires Rust 1.94, above the 1.89 dependency floor
-      # this repo pins (Cargo.toml `rust-version`, CI's MSRV job). Landing it
-      # means raising the floor, which is a deliberate call, not a routine
-      # bump — remove this ignore once the floor rises to 1.94 or higher.
-      - dependency-name: "sqlx"
-        update-types: ["version-update:semver-major"]
 
   # tack-desktop is its own workspace (see the `exclude` in the root Cargo.toml),
   # so its lockfile is invisible to the entry above and needs its own.
@@ -134,11 +127,11 @@ updates:
         update-types: ["major"]
     ignore:
       # dtolnay/rust-toolchain's "version" isn't an action release — it's the
-      # Rust channel/version each job's `uses:` line selects (@stable,
-      # @1.89.0 for the MSRV floor). Dependabot bumped the MSRV job's pin to
-      # @1.100.0 as a routine "minor" action bump and auto-merged it,
-      # silently defeating that job's entire purpose (testing the documented
-      # floor in Cargo.toml/README/CONTRIBUTING, not the latest). This pin
-      # only ever changes as a deliberate, coordinated decision — never
-      # automated.
+      # Rust channel/version each job's `uses:` line selects (@stable, or the
+      # exact patch pinned for the MSRV floor). Dependabot once bumped the
+      # MSRV job's pin to a much newer Rust as a routine "minor" action bump
+      # and auto-merged it, silently defeating that job's entire purpose
+      # (testing the documented floor in Cargo.toml/README/CONTRIBUTING, not
+      # the latest). This pin only ever changes as a deliberate, coordinated
+      # decision — never automated.
       - dependency-name: "dtolnay/rust-toolchain"

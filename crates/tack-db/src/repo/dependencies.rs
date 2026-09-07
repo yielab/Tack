@@ -131,7 +131,7 @@ impl Repository {
              WHERE source_item_id IN ({placeholders}) OR target_item_id IN ({placeholders})
              ORDER BY created_at"
         );
-        let mut q = sqlx::query_as::<_, DepRow>(&query);
+        let mut q = sqlx::query_as::<_, DepRow>(sqlx::AssertSqlSafe(query));
         for id in item_ids {
             q = q.bind(id.to_string());
         }
