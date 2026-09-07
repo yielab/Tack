@@ -428,9 +428,11 @@ pub async fn create_bundle(
         gen_val,
     )?;
 
-    // TODO(phase-28.6): optional symmetric bundle encryption would wrap
-    // `tar_bytes` here (before zstd or after) using an in-memory/env passphrase.
-    // Deferred to keep the binary-size budget and avoid a crypto dependency.
+    // Bundles are not encrypted. Optional symmetric encryption would wrap
+    // `tar_bytes` here, before or after zstd, from an in-memory or env
+    // passphrase; it is left out to keep the binary-size budget and avoid a
+    // crypto dependency. Until it exists, the bucket's own access control and
+    // server-side encryption are the only protection a snapshot has.
 
     let compressed = zstd::encode_all(Cursor::new(&tar_bytes), 3)
         .map_err(|e| BackupError::Zstd(e.to_string()))?;

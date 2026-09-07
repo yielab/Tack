@@ -33,7 +33,7 @@ test.describe('Execution tab — real attempts/decisions/artifacts against the p
 
     // Enroll the target runner BEFORE creating the request — `createExecution`
     // uses an `exact_runner` selector naming it (see that helper's own doc
-    // comment for why: no `agent_fleet_members` write route exists yet).
+    // comment for why).
     const { runnerId, credential } = await enrollRunner(request, `F4 Runner ${Date.now()}`, modelId);
     const requestId = await createExecution(request, itemId, runnerId, profileId, modelId);
 

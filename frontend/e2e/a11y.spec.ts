@@ -1146,11 +1146,10 @@ test('item detail Execution tab (with a real request) has no accessibility viola
   // repeated runs instead of giving this test its own clean state.
   const itemId = await createFreshItem(request, projectId, `A11y RWA detail ${Date.now()}`);
   const profileId = await createAgentProfile(request, `A11y Profile ${Date.now()}`);
-  // An exact runner, not a fleet: `agent_fleet_members` has no write route
-  // on any API surface, so a fleet created here would always have zero
-  // members and the live-capability gate would refuse to submit against it
-  // forever — the same constraint `scheduler-e2e.spec.ts` documents at
-  // length and works around the same way.
+  // An exact runner, not a fleet: naming the runner directly is the shortest
+  // setup that leaves the Execution tab populated for the scan, without a
+  // fleet and a membership write first. Same choice, same reason, as
+  // `scheduler-e2e.spec.ts`.
   const modelId = `opaque/model-a11y-${Date.now()}`;
   const { runnerId } = await enrollRunner(request, `A11y RWA Runner ${Date.now()}`, modelId);
 

@@ -563,12 +563,13 @@ export async function submitRunnerArtifact(
  *  Field-for-field the same body `shared/runWithAgent/shared.ts#buildCreateExecutionInput`
  *  sends.
  *
- *  Uses an `exact_runner` selector, not `fleet` — `agent_fleet_members`
- *  still has no write route on any API surface, so a `fleet`-selector
- *  request can never be claimed in an E2E environment; `scheduler-e2e.spec.ts`
- *  hit the same constraint and made the identical choice. Callers must
- *  enroll the target runner (`enrollRunner`) BEFORE calling this, so its id
- *  is known. */
+ *  Uses an `exact_runner` selector, not `fleet` — naming the runner directly
+ *  is the shortest setup that makes a request claimable, and it reaches the
+ *  same downstream scheduler eligibility code. A fleet selector would need a
+ *  fleet and a membership write before the test could assert anything, and
+ *  fleet-selector eligibility is proven against the database instead, in
+ *  `crates/tack-orch/tests/scheduling/wiring.rs`. Callers must enroll the
+ *  target runner (`enrollRunner`) BEFORE calling this, so its id is known. */
 export async function createExecution(
   request: APIRequestContext,
   itemId: string,

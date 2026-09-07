@@ -104,8 +104,8 @@ pub const LEGACY_DOCKET_COMPATIBILITY_LABEL: &str = "legacy-docket:maintained-br
 /// for direct embedding in operator-facing documentation without
 /// paraphrasing the module doc's "Decision: maintain" section.
 pub const LEGACY_DOCKET_COMPATIBILITY_POLICY: &str = "Docket is maintained as an optional legacy bridge (TACK_ORCH_ENABLE, default off). \
-     It is never the owner of a new runner-v1 execution request; runner-v1 is this \
-     cycle's plan-of-record scheduler. An item with an active runner-v1 execution \
+     It is never the owner of a new runner-v1 execution request; runner-v1 is the \
+     plan-of-record scheduler. An item with an active runner-v1 execution \
      request refuses legacy Docket dispatch (one scheduling owner). Docket-origin work \
      is identified with a provider-scoped id (`docket:<remote_task_id>`), distinct from \
      any runner-v1 attempt or opaque model id.";

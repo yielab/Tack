@@ -22,11 +22,11 @@ import {
 // scenarios exercise (see `helpers.ts#enrollRunner`'s own comment).
 //
 // **Why "exact runner," not "fleet," selects the runner in every scenario
-// below:** `agent_fleet_members` (the fleet-membership join table) has no
-// write route through any API surface, so a `fleet`-selector request would
-// have zero eligible members forever — there is no way to place a runner
-// into a fleet via HTTP. Fleet membership eligibility (including the
-// previously-unenforced `concurrency_limit`) is proven directly against the
+// below:** naming the runner directly is the shortest setup that makes a
+// request claimable — a fleet selector would need a fleet created and a
+// member added before any of these scenarios could assert anything about
+// scheduling. Fleet membership eligibility (including the
+// `concurrency_limit`) is proven directly against the
 // database in `crates/tack-orch/tests/scheduling/wiring.rs`
 // (`an_unsaturated_fleet_still_allows_a_member_to_claim`/
 // `a_saturated_fleet_concurrency_limit_blocks_a_fleet_selector_request`);
