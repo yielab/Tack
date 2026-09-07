@@ -92,7 +92,7 @@ jobs:
           tool: cargo-cyclonedx
       - name: Generate Rust SBOM (workspace dependencies)
         run: cargo cyclonedx --format json --all
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -110,7 +110,7 @@ jobs:
           # cargo-cyclonedx writes <crate>.cdx.json next to each crate manifest.
           find . -name '*.cdx.json' -not -path './sbom/*' -exec cp {} sbom/ \;
           ls -la sbom/
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: sbom/
@@ -153,7 +153,7 @@ jobs:
       - name: Compute a filesystem-safe ref name for staging directories
         run: echo "SAFE_REF_NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -308,7 +308,7 @@ jobs:
           Compress-Archive -Path $runnerStage -DestinationPath "$runnerStage.zip"
           "RUNNER_ASSET=$runnerStage.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.platform }}
           path: |
@@ -348,7 +348,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -455,7 +455,7 @@ jobs:
             -exec cp {} dist-desktop/ \;
           ls -la dist-desktop
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.platform }}
           path: dist-desktop/*
@@ -481,7 +481,7 @@ jobs:
       # and downloading it here failed outright once (unrelated to anything
       # actually being released).
       - name: Download release artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
@@ -507,7 +507,7 @@ jobs:
             dist/*.zip
 
       - name: Create release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*
           generate_release_notes: true
@@ -542,9 +542,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -574,7 +574,7 @@ jobs:
       # manifest would need the Dockerfile to select the Rust target from
       # $TARGETARCH first.
       - name: Build and push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: true
