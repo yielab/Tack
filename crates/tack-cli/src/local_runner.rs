@@ -1383,9 +1383,12 @@ mod tests {
     // The acceptance proof for two servers each seeing only their own
     // runner's enrollment lives in `tests/embedded_runner_state_scoping.rs`
     // as a real two-subprocess test, not here: `tack_api::server::serve_inner`
-    // installs a process-global `tracing` subscriber once per process
-    // (`init_tracing`'s `.init()` panics on a second call), so this crate's
-    // own unit tests — which all share one test binary process per test
-    // function, not per server — can boot at most one real embedded server
-    // each. Two genuinely separate `tack` processes have no such conflict.
+    // installs a process-global `tracing` subscriber via `try_init`, so only
+    // the first call in a process actually configures it — a second call is
+    // a silent no-op rather than a crash, but a second embedded server in
+    // that same process would still run under the first one's logging
+    // config instead of its own. So this crate's own unit tests — which all
+    // share one test binary process per test function, not per server —
+    // still test at most one real embedded server each. Two genuinely
+    // separate `tack` processes have no such conflict.
 }

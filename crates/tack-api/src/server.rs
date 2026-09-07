@@ -344,16 +344,23 @@ fn init_tracing(config: &AppConfig) {
         .with_file(true)
         .with_line_number(true);
 
+    // `try_init` rather than `init`: this process may call `serve_inner` more
+    // than once (multiple in-process servers under one test binary, e.g. under
+    // `cargo llvm-cov`, which runs all tests as one process rather than
+    // nextest's one-process-per-test). Only the first call can ever install
+    // the global subscriber; a `Err` here means one already is installed, which
+    // is exactly the outcome this call wanted, so it is not a failure to log or
+    // propagate.
     if config.log_json {
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer.json())
-            .init();
+            .try_init();
     } else {
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
-            .init();
+            .try_init();
     }
 }
 
