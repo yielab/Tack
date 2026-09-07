@@ -305,9 +305,21 @@ fn default_allowed_origins() -> Vec<String> {
 /// (a browser `Origin` header's host) so both recognize the same set of
 /// "this machine" names.
 pub fn is_loopback_host(host: &str) -> bool {
-    matches!(host, "127.0.0.1" | "::1" | "localhost")
-        || host.starts_with("127.")
-        || host.eq_ignore_ascii_case("::ffff:127.0.0.1")
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // Only a parsed address counts: a DNS name that merely begins with
+    // `127.` (`127.attacker.example`) is somebody else's host, and a browser
+    // `Origin` can carry exactly that. IPv6 literals arrive bracketed from a
+    // URL host and bare from a bind address; both forms are accepted.
+    let literal = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    match literal.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback(),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
+        Err(_) => false,
+    }
 }
 
 impl AppConfig {
@@ -599,6 +611,16 @@ mod tests {
             ..AppConfig::default()
         };
         assert!(config_with_flag_set.validate_security().is_ok());
+    }
+
+    #[test]
+    fn a_loopback_host_is_an_address_or_localhost_never_a_name_that_starts_like_one() {
+        for host in ["127.0.0.1", "127.9.9.9", "::1", "[::1]", "::ffff:127.0.0.1", "localhost", "LOCALHOST"] {
+            assert!(is_loopback_host(host), "{host} names this machine");
+        }
+        for host in ["127.attacker.example", "127", "localhost.attacker.example", "10.0.0.1", "::2", ""] {
+            assert!(!is_loopback_host(host), "{host} must not pass as loopback");
+        }
     }
 
     #[test]

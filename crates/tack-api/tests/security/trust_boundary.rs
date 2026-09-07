@@ -292,6 +292,26 @@ async fn board_live_handshake_from_the_vite_dev_origin_is_authorized_on_a_loopba
     );
 }
 
+/// A hostname that merely begins with `127.` is a remote page, and a
+/// bracketed IPv6 loopback literal is a local one — the host is judged as an
+/// address, never as a string prefix.
+#[tokio::test]
+async fn board_live_handshake_judges_the_origin_host_as_an_address_not_a_prefix() {
+    let (app, _) = common::test_app().await;
+    let response = board_live_handshake_response(app, Some("http://127.attacker.example:5173")).await;
+    assert!(
+        !response.starts_with("HTTP/1.1 101"),
+        "a name that starts with 127. is not this machine: {response}"
+    );
+
+    let (app, _) = common::test_app().await;
+    let response = board_live_handshake_response(app, Some("http://[::1]:5173")).await;
+    assert!(
+        response.starts_with("HTTP/1.1 101"),
+        "an IPv6 loopback origin is this machine: {response}"
+    );
+}
+
 /// The same loopback `Origin` gets no special treatment once the server
 /// itself is not loopback-bound — proving the fix widens only what a
 /// loopback bind accepts, never what `TACK_ALLOWED_ORIGINS` means for a
