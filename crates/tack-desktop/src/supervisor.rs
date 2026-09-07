@@ -112,14 +112,35 @@ pub enum Outcome<P> {
 }
 
 /// Minimal process-control surface the supervisor needs: enough to shut a
-/// spawned server down, nothing else. Implemented once for the real
-/// `tauri_plugin_shell` sidecar and once for a plain `std::process::Child` in
-/// tests.
+/// spawned server down and notice it exiting on its own, nothing else.
+/// Implemented once for the real `tauri_plugin_shell` sidecar and once for a
+/// plain `std::process::Child` in tests.
 pub trait SidecarHandle {
     fn pid(&self) -> u32;
     /// Hard-kill. Consuming `self` matches `tauri_plugin_shell`'s
     /// `CommandChild::kill`, which does the same.
     fn kill(self) -> std::io::Result<()>;
+    /// Non-blocking: `None` while the process is still running. Once this
+    /// returns `Some`, later calls may keep returning `None` — the caller is
+    /// expected to stop asking once it has consumed the report.
+    fn exited(&mut self) -> Option<ExitReport>;
+}
+
+/// How a watched process ended, as reported by [`SidecarHandle::exited`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExitReport {
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
+impl std::fmt::Display for ExitReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.code, self.signal) {
+            (Some(code), _) => write!(f, "code {code}"),
+            (None, Some(signal)) => write!(f, "signal {signal}"),
+            (None, None) => write!(f, "unknown"),
+        }
+    }
 }
 
 /// Spawns the bundled `tack` binary as `serve --with-runner` with the given
@@ -250,10 +271,114 @@ pub fn shutdown<P: SidecarHandle>(process: P) -> std::io::Result<()> {
     process.kill()
 }
 
+/// Consecutive missed health polls an attached server gets before the watch
+/// treats it as unresponsive rather than a single dropped poll.
+pub const MISSED_TICKS_BEFORE_UNRESPONSIVE: u8 = 5;
+
+/// Which of the two watch behaviours applies this tick — derived by the
+/// caller from whatever [`Outcome`] the supervisor settled on, since a
+/// server this app started is watched by its process exiting and one this
+/// app attached to is watched by its health answering. `Unknown` covers the
+/// window before that outcome is known (the tray's poll loop starts before
+/// [`attach_or_start`] resolves).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerKind {
+    Unknown,
+    Started,
+    Attached,
+}
+
+/// What the watch has observed so far, carried by the caller from one tick
+/// to the next. Not tied to [`ServerKind`] itself — the caller re-derives the
+/// kind every tick — so `Unknown` ticks reset it rather than leaving stale
+/// counters behind from before the kind was known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WatchState {
+    missing_streak: u8,
+    notified: bool,
+}
+
+/// Something the watch decided this tick that the caller must act on once:
+/// update the tray's status line and show its one dialog. Every other tick
+/// returns `None` — most of them, since a healthy server changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchEvent {
+    /// A server this app started has exited. Fires exactly once per exit.
+    StartedExited(ExitReport),
+    /// A server this app attached to has missed
+    /// [`MISSED_TICKS_BEFORE_UNRESPONSIVE`] consecutive health polls. Fires
+    /// once per unresponsive episode.
+    AttachedUnresponsive,
+    /// An attached server that had gone unresponsive answered health again.
+    AttachedRecovered,
+}
+
+/// Pure: given what the watch believed last tick, which kind of server this
+/// tick is watching, whether this tick's health poll answered, and (for a
+/// started server) whether the child has exited, returns what to remember
+/// next tick and what changed, if anything. Touches no network, dialog or
+/// timer — the caller supplies all three inputs from its own poll loop and
+/// acts on the event this returns.
+pub fn watch_tick(
+    previous: WatchState,
+    kind: ServerKind,
+    health_answered: bool,
+    child_exit: Option<ExitReport>,
+) -> (WatchState, Option<WatchEvent>) {
+    match kind {
+        ServerKind::Unknown => (WatchState::default(), None),
+        ServerKind::Started => {
+            if previous.notified {
+                return (previous, None);
+            }
+            match child_exit {
+                Some(report) => (
+                    WatchState {
+                        notified: true,
+                        ..previous
+                    },
+                    Some(WatchEvent::StartedExited(report)),
+                ),
+                None => (previous, None),
+            }
+        }
+        ServerKind::Attached => {
+            if health_answered {
+                if previous.notified {
+                    (WatchState::default(), Some(WatchEvent::AttachedRecovered))
+                } else {
+                    (WatchState::default(), None)
+                }
+            } else {
+                let streak = previous.missing_streak.saturating_add(1);
+                if !previous.notified && streak >= MISSED_TICKS_BEFORE_UNRESPONSIVE {
+                    (
+                        WatchState {
+                            missing_streak: streak,
+                            notified: true,
+                        },
+                        Some(WatchEvent::AttachedUnresponsive),
+                    )
+                } else {
+                    (
+                        WatchState {
+                            missing_streak: streak,
+                            notified: previous.notified,
+                        },
+                        None,
+                    )
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
     use std::process::{Child, Command, Stdio};
 
     /// A `std::process::Child`-backed [`SidecarHandle`] for tests.
@@ -274,6 +399,19 @@ mod tests {
             self.0.kill()?;
             self.0.wait()?;
             Ok(())
+        }
+
+        fn exited(&mut self) -> Option<ExitReport> {
+            match self.0.try_wait() {
+                Ok(Some(status)) => Some(ExitReport {
+                    code: status.code(),
+                    #[cfg(unix)]
+                    signal: status.signal(),
+                    #[cfg(not(unix))]
+                    signal: None,
+                }),
+                _ => None,
+            }
         }
     }
 
@@ -488,19 +626,22 @@ http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
     async fn refuses_to_spawn_when_the_port_is_held_by_something_else() {
         let tmp = tempfile::tempdir().unwrap();
         let script = write_fake_sidecar(tmp.path(), "0.0.0-fake");
-        let port = free_port();
-        let base_url = format!("http://127.0.0.1:{port}");
         let client = reqwest::Client::new();
 
         // Something that is not Tack: a bare TCP listener that never answers
-        // HTTP at all, let alone `/api/health`. Held for the rest of the test
-        // and never `accept()`-ed — the kernel completes the handshake for
-        // any number of connections up to the backlog on its own, which is
-        // exactly the "port is open but nothing Tack-shaped is behind it"
-        // case this guards. Calling `accept()` here would service one
-        // connection and then, on thread exit, close the listening socket
-        // out from under the second probe.
-        let _raw_listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        // HTTP at all, let alone `/api/health`. Bound directly to port 0 and
+        // held for the rest of the test, never `accept()`-ed — the kernel
+        // completes the handshake for any number of connections up to the
+        // backlog on its own, which is exactly the "port is open but nothing
+        // Tack-shaped is behind it" case this guards. Calling `accept()` here
+        // would service one connection and then, on thread exit, close the
+        // listening socket out from under the second probe. Binding directly
+        // here (rather than `free_port()` followed by a second bind to the
+        // same number) avoids a race on a busy host where something else
+        // takes the port in the gap between the two binds.
+        let raw_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = raw_listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{port}");
 
         let launcher = ScriptLauncher {
             script,
@@ -619,5 +760,97 @@ http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
             check_server_version("0.1.0-beta.7", "also-not-a-version"),
             VersionCheck::Unknown
         );
+    }
+
+    #[test]
+    fn started_server_exit_is_reported_exactly_once() {
+        let report = ExitReport {
+            code: Some(1),
+            signal: None,
+        };
+        let (state, event) = watch_tick(
+            WatchState::default(),
+            ServerKind::Started,
+            true,
+            Some(report),
+        );
+        assert_eq!(event, Some(WatchEvent::StartedExited(report)));
+
+        // The child keeps reporting the same exit (or the caller keeps
+        // asking) — already notified, so nothing fires a second time.
+        let (_, event) = watch_tick(state, ServerKind::Started, true, Some(report));
+        assert_eq!(event, None);
+    }
+
+    #[test]
+    fn started_server_that_keeps_answering_changes_nothing() {
+        let mut state = WatchState::default();
+        for _ in 0..10 {
+            let (next, event) = watch_tick(state, ServerKind::Started, true, None);
+            assert_eq!(event, None);
+            state = next;
+        }
+        assert_eq!(state, WatchState::default());
+    }
+
+    #[test]
+    fn four_missed_attached_polls_do_not_trigger_unresponsive() {
+        let mut state = WatchState::default();
+        for _ in 0..4 {
+            let (next, event) = watch_tick(state, ServerKind::Attached, false, None);
+            assert_eq!(event, None);
+            state = next;
+        }
+    }
+
+    #[test]
+    fn five_missed_attached_polls_trigger_unresponsive() {
+        let mut state = WatchState::default();
+        let mut fired = None;
+        for _ in 0..5 {
+            let (next, event) = watch_tick(state, ServerKind::Attached, false, None);
+            state = next;
+            if event.is_some() {
+                fired = event;
+            }
+        }
+        assert_eq!(fired, Some(WatchEvent::AttachedUnresponsive));
+    }
+
+    #[test]
+    fn attached_server_recovers_after_failure_without_a_second_dialog() {
+        let mut state = WatchState::default();
+        for _ in 0..5 {
+            let (next, _) = watch_tick(state, ServerKind::Attached, false, None);
+            state = next;
+        }
+        let (recovered_state, event) = watch_tick(state, ServerKind::Attached, true, None);
+        assert_eq!(event, Some(WatchEvent::AttachedRecovered));
+        assert_eq!(recovered_state, WatchState::default());
+
+        // A later, fresh episode of missing polls still only needs five
+        // ticks to fire again -- recovery must not have left the streak
+        // counter or the notified flag stuck.
+        let mut state = recovered_state;
+        let mut fired = None;
+        for _ in 0..5 {
+            let (next, event) = watch_tick(state, ServerKind::Attached, false, None);
+            state = next;
+            if event.is_some() {
+                fired = event;
+            }
+        }
+        assert_eq!(fired, Some(WatchEvent::AttachedUnresponsive));
+    }
+
+    #[test]
+    fn unknown_kind_resets_any_carried_state() {
+        let dirty = WatchState {
+            missing_streak: 3,
+            notified: true,
+        };
+        let (state, event) = watch_tick(dirty, ServerKind::Unknown, false, None);
+        assert_eq!(state, WatchState::default());
+        assert_eq!(event, None);
     }
 }

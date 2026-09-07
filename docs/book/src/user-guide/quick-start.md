@@ -8,7 +8,7 @@ Two ways to get Tack running: **install the binary** (the fast path — no build
 
 Tack is a single self-contained binary — the web UI, REST API, and SQLite engine are all inside one file. No runtime, database server, or container required. Choose any one of the methods below.
 
-**Prefer an app you open instead of a command you run?** Download the desktop app from the [releases page](https://github.com/yielab/tack/releases) — the `.AppImage` or `.deb` on Linux, the `.msi` on Windows (macOS isn't built yet). Opening it starts the same server this page describes, inside its own window, with an icon in your system tray: closing the window leaves it running, and the tray's **Quit** is what actually stops it. Skip to [First use](#first-use) once it's open.
+**Prefer an app you open instead of a command you run?** Download the desktop app from the [releases page](https://github.com/yielab/tack/releases) — the `.AppImage` or `.deb` on Linux, the `.msi` on Windows (macOS isn't built yet). Opening it starts the same server this page describes, inside its own window, with an icon in your system tray: closing the window leaves it running, and the tray's **Quit** is what actually stops it. If the server it started stops on its own, the tray tells you once — the status line reads "Server stopped" with the exit reason, and reopening the app starts it again; if the app is instead pointed at a server it did not start and that server goes quiet, the tray says so after a few seconds rather than staying silent. Skip to [First use](#first-use) once it's open.
 
 | Platform | Install → first agent attempt |
 |---|---|

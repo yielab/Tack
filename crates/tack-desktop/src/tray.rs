@@ -6,13 +6,18 @@
 use std::time::Duration;
 
 use tauri::AppHandle;
+use tauri::Manager;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::lifecycle;
 use crate::paths::DataPaths;
-use crate::supervisor::DEFAULT_PORT;
+use crate::supervisor::{
+    DEFAULT_PORT, ServerKind, SidecarHandle, WatchEvent, WatchState, watch_tick,
+};
+use crate::{DesktopState, ServerMode};
 
 const MENU_ID_OPEN: &str = "open";
 const MENU_ID_AGENT_EXECUTION: &str = "agent_execution";
@@ -156,15 +161,81 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .build(app)?;
 
     let poll_target = agent_execution_item;
+    let app_for_watch = app.clone();
     tauri::async_runtime::spawn(async move {
         let base_url = resolve_base_url();
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
+        let mut watch = WatchState::default();
+        // Overrides the poll-derived label once the watch has something more
+        // specific to say than "Agent execution: ..." — a server that has
+        // exited or gone unresponsive. Cleared on recovery; permanent once a
+        // started server has exited, since there is nothing left to poll.
+        let mut sticky_label: Option<String> = None;
+
         loop {
             let status = poll_once(&client, &base_url).await;
-            if let Err(err) = poll_target.set_text(status.label()) {
+            let health_answered = !matches!(status, AgentExecutionStatus::ServerNotAnswering);
+
+            let (kind, child_exit) = match app_for_watch.try_state::<DesktopState>() {
+                Some(state) => {
+                    let mut guard = state.0.lock().unwrap();
+                    match &mut *guard {
+                        Some(ServerMode::Attached) => (ServerKind::Attached, None),
+                        Some(ServerMode::Started(process)) => {
+                            (ServerKind::Started, process.exited())
+                        }
+                        // Already reported; the `Started` arm above already
+                        // set `notified` so this behaves as a no-op tick.
+                        Some(ServerMode::Stopped) => (ServerKind::Started, None),
+                        None => (ServerKind::Unknown, None),
+                    }
+                }
+                None => (ServerKind::Unknown, None),
+            };
+
+            let (next_watch, event) = watch_tick(watch, kind, health_answered, child_exit);
+            watch = next_watch;
+
+            match event {
+                Some(WatchEvent::StartedExited(report)) => {
+                    if let Some(state) = app_for_watch.try_state::<DesktopState>() {
+                        *state.0.lock().unwrap() = Some(ServerMode::Stopped);
+                    }
+                    sticky_label = Some(format!("Server stopped (exit {report})"));
+                    app_for_watch
+                        .dialog()
+                        .message(format!(
+                            "The Tack server stopped ({report}). Reopening Tack starts it \
+                             again."
+                        ))
+                        .title("Tack")
+                        .kind(MessageDialogKind::Warning)
+                        .blocking_show();
+                }
+                Some(WatchEvent::AttachedUnresponsive) => {
+                    sticky_label = Some("Server not responding".to_string());
+                    app_for_watch
+                        .dialog()
+                        .message(
+                            "Tack attached to a server it did not start, and that server has \
+                             stopped responding. If you started it yourself, check on it \
+                             directly.",
+                        )
+                        .title("Tack")
+                        .kind(MessageDialogKind::Warning)
+                        .blocking_show();
+                }
+                Some(WatchEvent::AttachedRecovered) => {
+                    sticky_label = None;
+                }
+                None => {}
+            }
+
+            let label = sticky_label.as_deref().unwrap_or_else(|| status.label());
+            if let Err(err) = poll_target.set_text(label) {
                 tracing::error!(error = %err, "failed to update the agent-execution tray label");
             }
             tokio::time::sleep(POLL_INTERVAL).await;
