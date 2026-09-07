@@ -1,16 +1,15 @@
 //! Shared executable locator for both harness adapters.
 //!
-//! Both `claude_code.rs` and `codex.rs` used to carry a private copy of the
-//! same `PATH`-search loop. That loop is correct when the runner is started
-//! from an interactive shell, and wrong for the two ways Part VII starts it:
-//! a desktop launcher (`.desktop` entry, Finder, the Start menu) and `tack
-//! service` under systemd's user manager. Both inherit a minimal session
-//! `PATH` that does not contain where `claude` and `codex` actually live on
-//! most machines, so a real install reads as "not installed".
+//! A plain `PATH` search is correct when the runner is started from an
+//! interactive shell, and wrong for the two other ways it starts: the
+//! desktop app launched from a `.desktop` entry, Finder or the Start menu,
+//! and `tack service` under systemd's user manager. Both inherit a minimal
+//! session `PATH` that does not contain where `claude` and `codex` actually
+//! live on most machines, so a real install reads as "not installed".
 //!
-//! [`locate`] fixes this by searching `PATH` first (unchanged behavior for a
-//! shell-launched runner) and then a fixed, documented list of per-user
-//! install locations. It is pure over its arguments — no `std::env` read —
+//! [`locate`] searches `PATH` first (so a shell-launched runner behaves as a
+//! shell would) and then a fixed, documented list of per-user install
+//! locations. It is pure over its arguments — no `std::env` read —
 //! so tests exercise it without touching the process environment; the only
 //! process-environment read in this crate for this purpose is
 //! [`locate_installed`], the thin impure wrapper both adapters call.
@@ -76,15 +75,15 @@ pub fn locate(
 
     if let Some(path) = path {
         for dir in std::env::split_paths(path) {
-            // An empty `PATH` entry (a leading/trailing/doubled `:`, or the
-            // whole variable being empty) means "the current directory" by
-            // POSIX convention, same as a shell resolves it; render it as
-            // `.` rather than an empty, confusing gap in the error text.
-            let dir = if dir.as_os_str().is_empty() {
-                PathBuf::from(".")
-            } else {
-                dir
-            };
+            // An empty `PATH` entry (a leading, trailing or doubled `:`, or
+            // the whole variable being empty) means "the current directory"
+            // to a shell. It is skipped here on purpose: the runner's working
+            // directory is not a place an operator installs a harness, and
+            // resolving an executable from it would let whatever sits there
+            // stand in for one.
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
             if let Some(found) = check_dir(&dir, program) {
                 return Ok(found);
             }

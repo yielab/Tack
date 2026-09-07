@@ -167,3 +167,19 @@ relative to §VI.0's surface map, and touches no UI surface.
 ## Amendments
 
 None yet.
+
+### 2026-09-07 — integrator amendment
+
+Two edits landed on `develop` after the merge, neither changing the card's claims:
+
+- An empty `PATH` entry (a leading, trailing or doubled `:`, or an empty variable) is now
+  **skipped**, not searched as `.`. The shell convention the original comment cited is
+  real, but the runner's working directory is not a place an operator installs a harness,
+  and resolving an executable from it would let whatever sits there stand in for one. The
+  `probe_error` transcripts above therefore no longer show a leading `.` in the searched
+  list; everything else in them is unchanged.
+- The module comment named the Part VII board as the reason the launcher's `PATH` is
+  minimal; it now names the two entry points themselves (the desktop app and `tack
+  service`), which is what a reader with the code but not the board can use.
+
+Both re-verified with the runner crate's suite (269/269).
