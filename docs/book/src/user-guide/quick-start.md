@@ -10,6 +10,12 @@ Tack is a single self-contained binary — the web UI, REST API, and SQLite engi
 
 **Prefer an app you open instead of a command you run?** Download the desktop app from the [releases page](https://github.com/yielab/tack/releases) — the `.AppImage` or `.deb` on Linux, the `.msi` on Windows (macOS isn't built yet). Opening it starts the same server this page describes, inside its own window, with an icon in your system tray: closing the window leaves it running, and the tray's **Quit** is what actually stops it. Skip to [First use](#first-use) once it's open.
 
+| Platform | Install → first agent attempt |
+|---|---|
+| Linux | `measured` |
+| macOS | `not_measured` |
+| Windows | `not_measured` |
+
 **One line (Linux / macOS):**
 
 ```sh
