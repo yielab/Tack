@@ -841,7 +841,21 @@ pub async fn create_execution(
             &request_clock,
         )
         .await
-        .map_err(|_| {
+        .map_err(|err| {
+            // `err` is a driver-level `sqlx::Error` (a constraint name, a
+            // SQLite status message, or one of `execution.rs`'s own fixed
+            // `snapshot_error` strings) — never a bound value, credential or
+            // request body, so it is safe to log verbatim. Without this, an
+            // enqueue failure that the server itself could name (a fenced-
+            // out FK reference, a contended write, a snapshot mismatch)
+            // reaches the client as an undifferentiated `internal_error`
+            // with no trace of which of those it was.
+            tracing::warn!(
+                item_id = %item_id,
+                request_id = %request_id,
+                error = %err,
+                "enqueue_execution failed"
+            );
             error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 StableErrorCode::InternalError,
