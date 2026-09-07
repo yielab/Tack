@@ -64,13 +64,27 @@
 | A browser deep link into an SPA route (e.g. `/projects/abc`) still gets `index.html` with `200` | `curl -i http://127.0.0.1:4177/projects/abc` → `HTTP/1.1 200`, `content-type: text/html`, same body as `/` |
 | The fix is load-bearing — the two tests fail exactly this way without it | `git stash` on `router.rs` alone, re-ran `cargo nextest ... --features embed-spa -E 'package(tack-api)'` → `503 tests run: 501 passed, 2 failed`, both failures `left: 200 / right: 404` at `local_runner.rs:126` and `:143`, matching the pre-fix report byte-for-byte; `git stash pop` restored the fix |
 | The default (non-`embed-spa`) build is unaffected and stays green | `cargo nextest run --workspace --build-jobs 4 --test-threads 4 -E 'package(tack-api)'` → `500 tests run: 500 passed, 0 skipped` |
+| CI's own "Embed SPA (single-binary packaging)" required check is green on this branch | `gh workflow run ci.yml --ref agent/vi-c34-spa-fallback-scope` → run `34118184132`, job green in 10m19s |
 
 ## Measured numbers
 
 - `cargo nextest run --workspace --build-jobs 4 --test-threads 4 --features embed-spa -E 'package(tack-api)'` → `503 tests run: 503 passed, 0 skipped` (11.275s reported by nextest).
 - `cargo nextest run --workspace --build-jobs 4 --test-threads 4 -E 'package(tack-api)'` → `500 tests run: 500 passed, 0 skipped` (28.066s reported by nextest).
 - Revert proof (fix removed): `503 tests run: 501 passed, 2 failed, 0 skipped` (20.810s), the 2 failures being exactly the two tests this card owns.
-- `./.githooks/pre-push` from the worktree root: exit 0 (`✓ pre-push checks passed`).
+- `./.githooks/pre-push` from the worktree root: exit 0 (`✓ pre-push checks passed`); it
+  also ran automatically as this branch's own pre-push hook and passed before the push
+  went through.
+- `gh workflow run ci.yml --ref agent/vi-c34-spa-fallback-scope` → run
+  `34118184132` (`https://github.com/yielab/tack/actions/runs/34118184132`), watched to
+  completion. **Embed SPA (single-binary packaging): green** (10m19s) — Clippy, `cargo
+  nextest run -p tack-api --features embed-spa`, the release single-binary build, and the
+  binary-size budget all passed. Every other job is green except **Coverage**, which is
+  red for the reason `docs/agent-handoffs/deps/actions-major.md` already recorded before
+  this card started: `cargo llvm-cov -p tack-api --fail-under-lines 70` panics at
+  `server::tests::serve_with_ready_signals_the_real_bound_address` inside
+  `tracing-subscriber-0.3.23/src/util.rs:94` — confirmed on this run's own log, same test
+  name and same panic site as the prior report, i.e. unrelated to this card's change and
+  not newly introduced by it.
 
 ## What a stranger still cannot do
 
@@ -121,6 +135,14 @@ against the API's own documented contract, not a load-bearing side effect anywhe
   (it does not enumerate SPA routes), so verifying it did not require reading the SPA's
   own route table.
 - Read-list lines that were wrong: none noted.
+
+## Proposed board row
+
+VI-C34 — done. `agent/vi-c34-spa-fallback-scope` @ `2325d7b2ab1539c07c94d5ba0a9343d3d62a2850`
+(final commit on the branch: `882b34d`, a follow-up handoff-only edit). Both feature sets
+of `tack-api`'s suite green, "Embed SPA (single-binary packaging)" green on
+`workflow_dispatch` run `34118184132`; Coverage still red for VI-C33's pre-existing,
+unrelated reason.
 
 ## Amendments
 
