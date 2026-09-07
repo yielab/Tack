@@ -22,6 +22,7 @@ accepted by the user before Wave 15 opens. The story every doc reuses is §VI.0'
 | 15 | VI-B1 → VI-B2 → (VI-B3 ∥ VI-B4) → VI-B5 | **partly** — B3 and B4 ran in parallel and integrated 2026-09-05 at `03df038`; B5 is sequential and next | ADR 0061 accepted (2026-09-03, `VI-A2.md` amendments) | **B2 branches from the 2026-09-04 integration tip — pin it with `git rev-parse --short develop`, do not reuse a SHA from this row.** B1 was dispatched 2026-09-03 from `2958e9e`; — the 2026-09-03 planning commit; branch from the `develop` tip. Decision 1 refined 2026-09-03 (keychain first, file fallback) — B1's block below already matches |
 | 16 | VI-C3 · VI-C4 first; then VI-C1; then VI-C2 | C3 ∥ C4 (may start during Wave 15); C1 after B2+B3; C2 after C3 | see each block | **C2, C3 and C4 integrated 2026-09-04.** C1 is the only one left and still needs B2 + B3; it branches from the Wave 15 integration SHA |
 | 17 | VI-D2 → VI-D1 | no | D2: C1, C2 and Part V's V-C2 landed; D1: everything | Wave 16 integration SHA |
+| 18 | VI-C41 · VI-C42 · VI-C43 | all three (two at a time under the load cap) | nothing — every earlier card is on `develop` | the `develop` tip at dispatch, pinned in each prompt; **dispatched 2026-09-07** |
 
 **Integration line: `develop`.** Every card branches from it as `agent/vi-<card>-<slug>`
 (`agent/vi-a1-docs-path`, `agent/vi-b2-vercel-gateway`, …) and never merges itself.
@@ -799,6 +800,83 @@ produced on a clean container with the release binary.
 **Handoff extras:** the surface map with every Target marked reached / not reached and
 why; the re-measured §VI.0 evidence table; the stranger transcript; vocabulary check on
 the docs you amended.
+
+---
+
+## Wave 18 — Loose ends
+
+Three findings the last stranger walks left on the board, none of them a card until now. They
+share no file and no type; two run at a time under the machine's load cap. Every gate command
+carries `CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VI-<ID>`, `--build-jobs 4` and
+`--test-threads 4`.
+
+### VI-C41 — Harness discovery beyond the launcher's `PATH` (needs nothing)
+
+**Branch:** `agent/vi-c41-harness-locate`.
+
+**Read (≈ 14k):** your card; `docs/agent-handoffs/part-vii/VII-D1.md` — its "What a stranger
+still cannot do" section only; `crates/tack-runner/src/harness/claude_code.rs` lines 175–215
+(`discover_installed_binary`) and 260–300 (`discover`), and the test at `grep -n
+"discover_installed_binary_fails" claude_code.rs`; `crates/tack-runner/src/harness/codex.rs`
+lines 125–200 (`CodexLocator`, `system_path_dirs`, `locate_in_dirs`) and 360–385
+(`discover`); `grep -n "locate_in_dirs\|system_path_dirs" codex.rs` for the two `#[ignore]`
+tests that use them; `grep -n "pub mod\|mod " crates/tack-runner/src/harness/mod.rs` to add
+the module; `grep -n -i "not installed\|on PATH\|on \`PATH\`" docs/book/src/user-guide/agent-runners.md`
+for the guidance you amend.
+
+**Do not read:** either adapter beyond those ranges (2,242 and 3,081 lines — ~60k tokens
+together); `doctor.rs` (VI-C42 is editing it); `bootstrap.rs`; the contract fixtures.
+
+**Gate:** `cargo nextest run --workspace -E 'package(tack-runner)' --build-jobs 4 --test-threads 4`,
+then `-E 'binary(runner_contract)'`, then the full suite once, then `.githooks/pre-push`.
+
+**Handoff extras:** the well-known list as shipped, with the installer each entry serves; the
+`probe_error` text for an absent binary, verbatim.
+
+### VI-C42 — A bound on the platform secret store's answer (needs nothing)
+
+**Branch:** `agent/vi-c42-secret-store-bound`.
+
+**Read (≈ 12k):** your card; `docs/agent-handoffs/part-vi/VI-C32.md` — its "Known
+limitations" section only (`sed -n '/^## Known limitations/,/^## /p'`); `docs/adr/0061-*.md`
+decision 1 only (grep `Decision 1`, read that range); `crates/tack-runner/src/secrets.rs`
+whole (494 lines, ~6k) — the `open`/`platform_store`/`with_store` trio and the test module's
+mock-store pattern are what you extend; the backend line in `crates/tack-cli/src/doctor.rs`
+(`grep -n "backend" doctor.rs`, read those ranges); `grep -n -i "secret store\|keychain\|owner-only" docs/CONFIG.md`.
+
+**Do not read:** `bootstrap.rs`, `local_runner.rs` (both call `open` and stay untouched), the
+harness files, the keyring crates' sources beyond the one `Store::new` signature you need
+(`cargo doc` is not needed; `grep -rn "pub fn new" ~/.cargo/registry/src/*/zbus-secret-service-keyring-store-*/src/` answers it).
+
+**Gate:** `cargo nextest run --workspace -E 'package(tack-runner) | package(tack-cli)' --build-jobs 4 --test-threads 4`,
+then the full suite once, then `.githooks/pre-push`. The load-bearing proof: remove the bound,
+run only the timeout test, watch nextest report it slow/timed out, restore, record.
+
+**Handoff extras:** the bound chosen and why; the split-brain paragraph (file on one boot,
+keychain on the next) stated plainly; `doctor`'s new output line verbatim.
+
+### VI-C43 — The fleet-member routes get their UI caller (needs nothing)
+
+**Branch:** `agent/vi-c43-fleet-roster`.
+
+**Read (≈ 12k):** your card; `docs/agent-handoffs/part-vi/VI-D1.md` — its "What a stranger
+still cannot do" section only; `frontend/src/features/agents/runnerFleet/FleetsPanel.tsx` and
+`FleetsPanel.test.tsx` whole; `frontend/src/shared/execution/api.ts` lines 1–60 and the
+`fleetsApi`/`runnersApi` objects (`grep -n "export const"`); the matching cases in
+`api.test.ts`; `grep -n "fleet_ids\|FleetMemberResponse\|AddFleetMember" -A6
+frontend/src/shared/api/schema.gen.ts`; `RunnerHealthCard.tsx` for the chip you reuse
+(`grep -n "HealthChip\|export" RunnerHealthCard.tsx`).
+
+**Do not read:** `schema.gen.ts` beyond those greps (it is generated and large); any crate;
+`features/fleet/**` (an older, different roster — the panel's own header says so).
+
+**Gate:** `cd frontend && npm run type-check && npx vitest run`, then `npx playwright test
+agents-page a11y --project=chromium --workers=2` headless against your own server on the suite's
+ports (start the API as `make e2e` does; you are the only card of this wave on 3399/5199), then
+`.githooks/pre-push`.
+
+**Handoff extras:** a screenshot is not required; the Vitest names that prove each of the four
+behaviours; the deleted header paragraph quoted, with what replaced it.
 
 ---
 

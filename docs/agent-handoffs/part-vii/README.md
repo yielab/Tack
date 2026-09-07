@@ -23,6 +23,7 @@ decision of record is `docs/adr/0062-desktop-app-and-background-service.md`, acc
 | 20 | VII-C1 → VII-C2 | no | C1: B2 + B3; C2: C1 **and Part VI's VI-C1** | Wave 19 is integrated; pin the tip with `git rev-parse --short develop` at dispatch. C1 also owns collapsing the two first-run signals Wave 19 left in the data root (B2's `.autostart-initialized` marker and B3's `settings.json`) |
 | 20b | VII-C3 | — | VII-C1 merged |  `develop` tip at dispatch |
 | 21 | VII-D1 | — | everything, VII-C3 included | Wave 20 integration SHA — `03df038`. **It inherits a live finding:** the built Linux app starts and never shows a window, and the supervisor's catch-all error arm calls `handle.exit(1)` with no dialog, so any failure but the two named ones is silent. The silence is a defect on its own, whatever triggered it |
+| 23 | VII-B5 | — | VII-D1 integrated (done) | the `develop` tip at dispatch, pinned in the prompt; **dispatched 2026-09-07** |
 
 **Integration line: `develop`.** Every card branches from it as `agent/vii-<card>-<slug>`
 (`agent/vii-a2-service`, `agent/vii-b1-desktop-skeleton`, …) and never merges itself.
@@ -420,6 +421,44 @@ integrator once.
 **Stop if:** a clean user account cannot be created on this machine — use a wiped
 `XDG_DATA_HOME` and `XDG_CONFIG_HOME` in a temp dir and say the account isolation is
 `not_measured`.
+
+---
+
+### VII-B5 — The app notices when the server it shows has gone
+
+**Branch:** `agent/vii-b5-server-watch` from the `develop` tip at dispatch.
+
+**Read (≈ 14k):** the board prelude's vocabulary section and your card;
+`docs/agent-handoffs/part-vii/VII-C3.md` — "What a stranger still cannot do" only;
+`docs/agent-handoffs/part-vii/VII-B4.md` — the section describing the six tray states (grep
+`states`); `crates/tack-desktop/src/supervisor.rs` whole (623 lines, ~7k — the `SidecarHandle`
+trait, `attach_or_start`, `shutdown` and the test doubles are what you extend);
+`crates/tack-desktop/src/tray.rs` lines 1–60 and 150–180 (the poll loop); `crates/tack-desktop/src/main.rs`
+lines 60–80 and 120–244 (`ServerMode`, `DesktopState`, the `ExitRequested` arm); `grep -n
+"try_wait\|pub fn kill\|pub fn pid" ~/.cargo/registry/src/*/tauri-plugin-shell-*/src/process/*.rs`.
+
+**Do not read:** `lifecycle.rs`, `first_run.rs`, `paths.rs`; any Part VI file; the Tauri
+crates beyond that grep.
+
+**Gate — the desktop crate is its own workspace and CI runs exactly these three:**
+
+```bash
+cd crates/tack-desktop
+CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VII-B5 cargo test --jobs 4
+CARGO_TARGET_DIR=/var/tmp/tack-agent-targets/VII-B5 cargo clippy --all-targets --jobs 4 -- -D warnings
+cargo fmt --all --check
+```
+
+then `.githooks/pre-push` from the repository root. **Never** `make desktop`, `cargo tauri
+build|dev`, or any command that opens a window — the user is at the machine. The live
+behaviour is `not_measured`; write the manual recipe (kill the sidecar's pid, watch the tray)
+into the handoff for the integrator to run when the display is free.
+
+**Known before you start:** `CommandChild` (tauri-plugin-shell 2.3.6) has `pid`, `write`
+and `kill` but no `try_wait`; the exit reaches you only as `CommandEvent::Terminated` on the
+receiver `spawn` returns, which `main.rs` drops today. **Stop if:** keeping that receiver
+needs a type outside the three files you own — record it and fall back to health polling
+with the exit status `not_measured`.
 
 ---
 
