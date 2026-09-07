@@ -133,3 +133,11 @@ Not applicable — this card is not `A3`/`C1`/`C2`/`D1`/`D2`.
 
 *(Appended by later readers, dated. The original text above is never rewritten — the
 history of what was believed and later falsified is the point.)*
+
+**2026-09-07, integrator, at merge.** `is_loopback_host` matched the host by string prefix
+(`starts_with("127.")`), inherited from the bind-address check where it was harmless; applied
+to a browser `Origin` it would have trusted a remote page at `http://127.attacker.example`.
+Rewritten to parse the host as an IP address (IPv4 loopback /8, IPv6 `::1`, IPv4-mapped, with
+or without brackets) or match `localhost`; the bind check shares the rule. Pinned by a unit
+test on the helper and a handshake test that refuses the prefix name and accepts `[::1]`.
+Security binary 21/21 after the change.
