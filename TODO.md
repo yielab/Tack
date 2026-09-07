@@ -2705,6 +2705,89 @@ the app and stop.
 
 ---
 
+### VI-C38 — graphite's `on-accent` goes white: the design decision VI-C26 escalated, taken
+
+**Needs nothing.** Wave 17. **Decided by the user 2026-09-07: option 1 of VI-C26's handoff — `on-accent` white.**
+
+**Owns:** graphite's tokens in `frontend/src/index.css` (`--color-primary-600`, `--color-on-accent`
+and whichever siblings the handoff names), `Sidebar.tsx`'s hardcoded swatch preview, the
+`Button.tsx` comment that explains the dark on-accent, the graphite/light scan in
+`frontend/e2e/a11y.spec.ts`, and the handoff.
+
+VI-C26 proved no value of `primary-600` alone clears both of its roles in graphite/light (text on
+white needs `L <= 0.1833`, background under `#1a2e05` needs `L >= 0.2733`) and stopped, as its
+card told it to, because the only shape that clears both flips `on-accent` to white and changes
+what the palette is. The user has taken that decision: graphite becomes dark olive with white text
+on it, the way teal and clay already pair a dark primary with a white on-accent.
+
+**Tasks:** pick the dark `primary-600` (the handoff suggests the `#3f6a0c`–`#4d7c0f` range; keep
+graphite's hue), flip `on-accent` to white, walk every pairing VI-C26's table measured and re-measure
+it with the same `contrast.js` command, update the swatch preview and the `Button.tsx` comment so
+neither describes the old identity, and check graphite/**dark** still passes — its tokens may share
+`on-accent`. Then remove `GRAPHITE_LIGHT_KNOWN_ISSUES` and fold graphite/light into
+`OTHER_MODES_AND_PALETTES`, so all six cells are unsuppressed gates.
+
+**Acceptance:** the graphite/light scan, unsuppressed, fails on the old tokens and passes on the new
+ones — prove both in that order; every changed pair's ratio is in the handoff with the command that
+measured it; the full chromium suite passes; no raw hex enters a component (tokens only). The
+handoff says in one line what graphite looks like now versus before.
+
+**Stop if:** graphite/dark breaks in a way that needs its own identity decision.
+
+---
+
+### VI-C39 — Raise the dependency floor to Rust 1.94 and land `sqlx` 0.9
+
+**Needs nothing.** Wave 17. **Decided by the user 2026-09-07: the floor rises to the lowest version
+the latest stable `sqlx` needs, not to the newest Rust.**
+
+**Owns:** `rust-version` in `Cargo.toml` and `crates/tack-desktop/Cargo.toml`, the MSRV job in
+`.github/workflows/ci.yml` (name, action pin, `RUSTUP_TOOLCHAIN`, its comment), the README badge and
+line 152, `CONTRIBUTING.md`'s table, the `sqlx` line in `Cargo.toml` and everything in `tack-db`,
+`tack-api` and `tack-orch` its 0.9 changes touch, the `sqlx` ignore in `.github/dependabot.yml`,
+`CHANGELOG.md`, and the handoff.
+
+`sqlx` 0.9.0 (stable, 2026-05-21) declares `rust-version = 1.94.0`; the floor here is 1.89. The
+user's rule: the newest *stable* line of the dependency, on the *lowest* Rust that supports it, so
+the floor never runs ahead of what the rest of the graph is known to build on.
+
+**Tasks:** install the 1.94 toolchain (`rustup toolchain install 1.94`), read `sqlx`'s 0.9 changelog
+and migration notes, bump the workspace dependency, fix what breaks (SQLite pool options, `query!`
+macros, `Error` variants, `FromRow` derives — whatever 0.9 renamed), and prove the whole workspace
+builds `--locked` on 1.94 exactly as the MSRV job will:
+`RUSTUP_TOOLCHAIN=1.94.x cargo build --workspace --locked`. Then move every floor reference listed
+above in the same commit, delete the Dependabot ignore, and update the MSRV job's comment to say
+which dependency now sets the floor. Run the full suite on the pinned 1.98 toolchain as well.
+
+**Acceptance:** `cargo build --workspace --locked` succeeds under `RUSTUP_TOOLCHAIN=1.94.x` and fails
+under 1.89 (show the error, so the new floor is proven real, not nominal); `cargo nextest run
+--workspace` green; `.githooks/pre-push` green; no `1.89` remains anywhere but `TODO.md`,
+`CHANGELOG.md` and the handoffs (`grep -rn "1\.89" --exclude-dir=target --exclude-dir=node_modules`).
+The handoff names every `sqlx` API that changed and what it was replaced with.
+
+**Stop if:** `sqlx` 0.9 needs a migration-runner change (one `ALTER` per migration, no wrapping
+transaction — see `CLAUDE.md`) or changes SQLite's journal/WAL behaviour; say what and stop.
+
+---
+
+### VI-C40 — CI moves to Node 22 LTS, and `jsdom` 30 follows
+
+**Needs nothing.** Wave 17. **Decided by the user 2026-09-07: Node 22 LTS.**
+
+**Owns:** every `node-version` in `.github/workflows/{ci,release,scheduled-audit}.yml`, the `jsdom`
+ignore in `.github/dependabot.yml`, `jsdom` in `frontend/package.json` and the lockfile,
+`CONTRIBUTING.md`'s prerequisites row if it names Node, and the handoff.
+
+`jsdom` 30 needs Node `^22.22.2 || ^24.15.0 || >=26`; CI pins `20` in eight places. The user chose
+22 LTS: the current maintenance line, not the newest major.
+
+**Acceptance:** `npm run type-check`, `npx vitest run` and the e2e suite green on Node 22.22+;
+Dependabot's ignore for `jsdom` gone; CI green on the card branch. The handoff records the Node
+version the local machine runs (22.17.1 today, below `jsdom` 30's floor) and what that means for
+a developer who has not upgraded.
+
+---
+
 ## §VI.5 Definition of done, and deliberate exclusions
 
 | Claim | Proof |
