@@ -185,6 +185,17 @@ Building from source instead needs [Rust 1.94+](https://rustup.rs/) and
 
 ## Run it
 
+**Do you need the runner?** Only if you want an item's **Run with agent** button to do
+something. Those are two different things: **Run with agent** is the button on an
+item; `--with-runner` (or the **Agents** page toggle — same switch, no restart) is what
+gives that button a runner to run against. Without either one, `tack` is still the
+full project manager — board, timeline, dashboard, everything in
+[Features](#features) except agent execution — and clicking **Run with agent** shows
+"Agent execution is off" instead of a form; nothing silently queues forever waiting for
+a runner that never shows up. Turn it on when you're ready to let Codex or Claude Code
+touch real work: at startup with `--with-runner`, or later from the **Agents** page, no
+restart either way.
+
 **Get the app** — download it, open it, the board is a window on your machine, the
 same server underneath:
 
@@ -247,13 +258,12 @@ Open **`http://localhost:3210`**. Project data lives in `tack.db`; attachments l
 
 `--with-runner` self-provisions an agent runner inside the same process — no second
 binary, no token to copy anywhere — so a board item assigned to `claude-code` or
-`codex` (whichever of those you have installed and logged in) actually
-executes. It's off by default and loopback-only; see
+`codex` (whichever of those you have installed and logged in) actually executes. It
+refuses to start on anything but loopback, since it executes arbitrary agent
+processes on the machine serving the UI; see
 [Agent Runners](docs/book/src/user-guide/agent-runners.md#standalone-mode-tack-serve---with-runner)
-and [`docs/CONFIG.md`](docs/CONFIG.md#embedded-runner-tack-serve---with-runner). Plain
-`tack` (no flag) starts just the server and board UI, with no runner running yet — turn
-it on, see what harness it found, and set a provider key or a default model from the
-**Agents** page in the UI, no flag or restart required.
+and [`docs/CONFIG.md`](docs/CONFIG.md#embedded-runner-tack-serve---with-runner) for
+credential storage, the capability matrix, and what a runner can honestly promise.
 
 > The binary is not code-signed yet. On macOS, right-click **Open** the first time
 > (or run `xattr -d com.apple.quarantine tack`). On Windows, use

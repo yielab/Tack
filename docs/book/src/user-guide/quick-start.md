@@ -68,6 +68,15 @@ Ready to put it on a network or add a token? See [Administration & Security](adm
 
 ## Run an item with an agent
 
+By default, nothing here executes anything: the server you started above is a full
+project manager with agent execution off, and clicking an item's **Run with agent**
+button shows "Agent execution is off" instead of a form. **Run with agent** (the
+button) and `--with-runner` (a boot flag, further down) are two different things —
+the button needs *some* runner active to do anything, and `--with-runner` is one way
+to get one. The two paths below are alternatives, not sequential steps: pick the UI
+path if a server is already running (no restart needed), or the CLI path if you're
+starting fresh from a terminal.
+
 **The UI-first path.** Open the **Agents** page from the sidebar (`/agents`). Four
 steps, top to bottom, each one a switch or a form field — no terminal, no id to copy:
 
