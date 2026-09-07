@@ -285,6 +285,18 @@ fn runner_protocol_routes(state: &AppState) -> Router<AppState> {
         .with_artifact_storage_root(format!("{}/execution-artifacts", state.config.storage_dir));
     runner_protocol::routes(runner_state, state.config.max_body_size_bytes)
         .with_state::<AppState>(())
+        .fallback(api_not_found)
+}
+
+/// The 404 an unmatched path under `/api` or `/api/runner/v1` gets, with or
+/// without `embed-spa`. Set as each nest's own `fallback` (never the
+/// top-level one) so axum scopes it to that prefix — see
+/// `build_router`'s `outer.fallback(spa::serve_spa)` comment for why the
+/// two must stay structurally distinct: an operator or runner client that
+/// mistypes a route must see this, never the SPA's `index.html` with a
+/// misleading `200`.
+async fn api_not_found() -> axum::http::StatusCode {
+    axum::http::StatusCode::NOT_FOUND
 }
 
 /// Build the full Axum router with all routes, middleware, and state.
@@ -528,7 +540,13 @@ pub fn build_router(state: AppState) -> Router {
         // comment for why this is a `merge`, not a `nest`. ───────────────
         .merge(operator_execution_routes(&state))
         // ─── Auth token gate ──────────────────────────────────────
-        .layer(middleware::from_fn_with_state(state.clone(), require_token));
+        .layer(middleware::from_fn_with_state(state.clone(), require_token))
+        // ─── Unmatched-route 404 — added after the auth layer above
+        // so it is never itself gated behind a token (an unmatched path
+        // was never a real route to authenticate against). `nest` below
+        // carries this fallback along scoped to `/api`, which is what
+        // keeps it out of reach of `outer`'s own SPA fallback. ─────────
+        .fallback(api_not_found);
 
     let outer = Router::new()
         .nest("/api", api)
@@ -539,6 +557,15 @@ pub fn build_router(state: AppState) -> Router {
         // comment. ──────────────────────────────────────────────────────
         .nest("/api/runner/v1", runner_protocol_routes(&state));
 
+    // A fallback set directly on `api` or on `runner_protocol_routes`
+    // travels with it through `nest` (axum scopes a nested router's own
+    // fallback to that prefix), so it already wins over this one for
+    // anything under `/api` or `/api/runner/v1` — this fallback only ever
+    // sees paths outside both. That is what keeps a mistyped or
+    // not-yet-implemented API path answering the API's own 404 instead of
+    // the SPA's `index.html`, on every build: the two auth surfaces stay
+    // structurally separate from the SPA the same way they stay separate
+    // from each other.
     #[cfg(feature = "embed-spa")]
     let outer = outer.fallback(spa::serve_spa);
 

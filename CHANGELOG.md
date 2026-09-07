@@ -106,6 +106,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A mistyped or not-yet-implemented API path on the single binary now answers `404`
+  instead of a misleading `200`.** The release build embeds the web UI and serves it as
+  a catch-all fallback for any unmatched route so a browser deep link (`/projects/abc`)
+  still gets `index.html`; that fallback used to catch `/api/...` and
+  `/api/runner/v1/...` paths too, so a typo'd or unimplemented endpoint returned the
+  SPA's `200` HTML page — a response every client in this tree already reads as "the
+  request worked." Both API surfaces now carry their own fallback, scoped to their own
+  prefix ahead of the SPA's, so an unmatched path under either still gets the API's
+  genuine `404`; deep links for the SPA's own routes are unaffected.
 - **A developer following the quick-start's own steps now sees live board events.**
   `tack serve`, then `npm run dev`, then opening `http://localhost:5173` — the
   documented developer path — used to open a socket the server silently refused: the
