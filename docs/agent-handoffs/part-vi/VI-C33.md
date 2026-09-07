@@ -43,6 +43,17 @@
   Part VII card's owned files. No conflicts expected.
 - Checklist: no unowned files, no live secret, no panic stub, no blind retry.
 
+## CI runs
+
+One `workflow_dispatch` run of the card branch, completed:
+
+| Run | Coverage job | Other jobs |
+|---|---|---|
+| 34118406757 | green — all five Rust per-crate steps and the frontend Vitest thresholds step passed | every other job green except **Embed SPA**, which failed at its "Test with embed-spa" step — the pre-existing `local_runner` 200-vs-404 gap carded as VI-C34, not this card's `init_tracing` change |
+
+`gh run view 34118406757 --json conclusion,status,jobs`: overall `conclusion: failure`
+(driven entirely by Embed SPA); `Coverage (llvm-cov + Vitest thresholds): success`.
+
 ## Claim → evidence
 
 | Claim (user-visible, added or kept) | Evidence — command, test name, or transcript |
@@ -53,6 +64,7 @@
 | The workspace test suite is unaffected | `cargo nextest run --workspace --build-jobs 4 --test-threads 4` → `1463 tests run: 1463 passed, 7 skipped`, exit 0 |
 | `.githooks/pre-push` passes from the worktree root | `nice -n 19 ./.githooks/pre-push` → `✓ pre-push checks passed`, exit 0 |
 | The other four Coverage-job Rust steps are unaffected and green | see Measured numbers below |
+| The Coverage job is green in real CI, not just locally | `gh workflow run ci.yml --ref agent/vi-c33-tracing-init-once` → run 34118406757; `gh run view 34118406757 --json conclusion,status,jobs` → `Coverage (llvm-cov + Vitest thresholds): success` |
 
 ## Measured numbers
 
@@ -98,6 +110,20 @@ the same as before this card.
   use, not waste.
 - Read-list lines that were wrong: none noted — the card's read list matched what was
   actually needed.
+
+## Proposed board row
+
+VI-C33 — done. `init_tracing` (`crates/tack-api/src/server.rs`) called `.init()`
+unconditionally on the global `tracing` subscriber, which panics on any second call in the
+same process; `cargo llvm-cov` (the Coverage CI job) runs every test in one process rather
+than nextest's one-per-test, so the `tack-api` coverage step panicked on every pull request.
+Fixed by switching to `try_init()` and discarding the "already installed" error — the first
+server in a process still configures logging from `TACK_LOG_LEVEL`/`TACK_LOG_JSON`, and any
+later one in the same process now runs under it instead of crashing. Reproduced the panic
+against `develop`'s tip first, confirmed gone after, reverted once to re-confirm the panic
+returns. All five Coverage-job Rust per-crate `llvm-cov` commands and the full workspace
+`nextest` suite are green locally; CI run 34118406757 confirms the Coverage job green in
+the real pipeline. Embed SPA still fails on that same run — VI-C34's gap, not this card's.
 
 ## Amendments
 
