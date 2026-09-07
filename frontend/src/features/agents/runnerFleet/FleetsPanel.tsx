@@ -1,8 +1,9 @@
 import { type Component, For, Show, createResource, createSignal } from 'solid-js';
-import { Badge, Button, EmptyState, Field, Skeleton } from '../../../shared/ui';
+import { Badge, Button, EmptyState, Field, Select, Skeleton } from '../../../shared/ui';
 import { toast } from '../../../shared/ui/toast';
-import { fleetsApi, type FleetSummary } from '../../../shared/execution';
+import { fleetsApi, runnersApi, type FleetSummary, type RunnerSummary } from '../../../shared/execution';
 import { parseOptionalJsonObject } from './format';
+import { runnerStateBadge } from './RunnerHealthCard';
 
 /**
  * Create/list UI for `agent_fleets` (`GET`/`POST /runner-fleets`,
@@ -13,19 +14,17 @@ import { parseOptionalJsonObject } from './format';
  * control-plane roster) — see that file's own header comment; nothing here
  * imports from it.
  *
- * **This panel has no membership roster view or editor.** The API can add
- * or remove a fleet member (`POST`/`DELETE /runner-fleets/{fleet_id}/
- * members[/{runner_id}]`), but nothing here calls either, and no endpoint
- * returns a fleet's current roster directly — only `RunnerSummary.fleet_ids`
- * (from `GET /runners`) shows which fleets a given runner belongs to.
- * Rather than build a membership editor with no roster to read back, this
- * panel states the gap once, next to the field it would occupy — the same
- * "unsupported is typed, unknown is explicit" discipline `RunnerHealthCard.tsx`
- * applies to health, not a client-side membership list that would silently
- * do nothing on submit.
+ * No endpoint returns a fleet's roster directly — `POST`/`DELETE
+ * /runner-fleets/{fleet_id}/members[/{runner_id}]` write membership, and
+ * `RunnerSummary.fleet_ids` (`GET /runners`) is the read-back: a fleet's
+ * roster is every runner whose `fleet_ids` contains it. This panel fetches
+ * the full runner list once and filters it per fleet, so an add/remove
+ * always renders the server's own roster afterward, never an optimistic
+ * client-side guess.
  */
 const FleetsPanel: Component = () => {
   const [fleets, { refetch, mutate }] = createResource(() => fleetsApi.list());
+  const [runners, { refetch: refetchRunners }] = createResource(() => runnersApi.list());
 
   const [showForm, setShowForm] = createSignal(false);
   const [name, setName] = createSignal('');
@@ -33,7 +32,49 @@ const FleetsPanel: Component = () => {
   const [defaultPolicyRaw, setDefaultPolicyRaw] = createSignal('');
   const [saving, setSaving] = createSignal(false);
 
+  const [selectedRunner, setSelectedRunner] = createSignal<Record<string, string>>({});
+  const [busyKey, setBusyKey] = createSignal<string | null>(null);
+
   const rows = (): FleetSummary[] => fleets()?.data.data ?? [];
+  const allRunners = (): RunnerSummary[] => runners()?.data.data ?? [];
+  const membersOf = (fleetId: string): RunnerSummary[] =>
+    allRunners().filter((r) => r.fleet_ids.includes(fleetId));
+  const nonMembersOf = (fleetId: string): RunnerSummary[] =>
+    allRunners().filter((r) => !r.fleet_ids.includes(fleetId));
+
+  const addMember = async (fleetId: string) => {
+    const runnerId = selectedRunner()[fleetId];
+    if (!runnerId) return;
+    const runnerName = allRunners().find((r) => r.runner_id === runnerId)?.name ?? runnerId;
+    setBusyKey(`add:${fleetId}`);
+    try {
+      const result = await fleetsApi.addMember(fleetId, runnerId);
+      if (result.state === 'already_member') {
+        toast.info(`${runnerName} is already a member of this fleet`);
+      } else {
+        toast.success(`Added ${runnerName} to the fleet`);
+      }
+      setSelectedRunner((prev) => ({ ...prev, [fleetId]: '' }));
+      await refetchRunners();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add runner to fleet');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const removeMember = async (fleetId: string, runnerId: string, runnerName: string) => {
+    setBusyKey(`remove:${fleetId}:${runnerId}`);
+    try {
+      await fleetsApi.removeMember(fleetId, runnerId);
+      toast.success(`Removed ${runnerName} from the fleet`);
+      await refetchRunners();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove runner from fleet');
+    } finally {
+      setBusyKey(null);
+    }
+  };
 
   const submit = async (e: Event) => {
     e.preventDefault();
@@ -112,9 +153,85 @@ const FleetsPanel: Component = () => {
                       {fleet.concurrency_limit === null ? 'no concurrency cap' : `cap ${fleet.concurrency_limit}`}
                     </Badge>
                   </div>
-                  <p class="mt-1 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                    This page can't show or edit which runners belong to this fleet yet.
-                  </p>
+                  <div class="mt-2">
+                    <p class="text-xs font-semibold" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Members
+                    </p>
+                    <Show
+                      when={!runners.loading}
+                      fallback={
+                        <p class="mt-1 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                          Loading runners…
+                        </p>
+                      }
+                    >
+                      <Show
+                        when={membersOf(fleet.fleet_id).length > 0}
+                        fallback={
+                          <p class="mt-1 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                            No members yet.
+                          </p>
+                        }
+                      >
+                        <ul class="mt-1 space-y-1">
+                          <For each={membersOf(fleet.fleet_id)}>
+                            {(runner) => (
+                              <li class="flex items-center gap-2">
+                                <span class="text-xs" style={{ color: 'var(--color-text-primary)' }}>
+                                  {runner.name}
+                                </span>
+                                <Badge tone={runnerStateBadge(runner.state).tone}>
+                                  {runnerStateBadge(runner.state).label}
+                                </Badge>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  class="ml-auto"
+                                  loading={busyKey() === `remove:${fleet.fleet_id}:${runner.runner_id}`}
+                                  disabled={busyKey() !== null}
+                                  onClick={() => void removeMember(fleet.fleet_id, runner.runner_id, runner.name)}
+                                >
+                                  Remove
+                                </Button>
+                              </li>
+                            )}
+                          </For>
+                        </ul>
+                      </Show>
+
+                      <Show
+                        when={nonMembersOf(fleet.fleet_id).length > 0}
+                        fallback={
+                          <p class="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                            No other runners available to add.
+                          </p>
+                        }
+                      >
+                        <div class="mt-2 flex items-end gap-2">
+                          <Select
+                            label="Add runner"
+                            value={selectedRunner()[fleet.fleet_id] ?? ''}
+                            onInput={(e) => {
+                              const value = e.currentTarget.value;
+                              setSelectedRunner((prev) => ({ ...prev, [fleet.fleet_id]: value }));
+                            }}
+                            options={[
+                              { value: '', label: 'Select a runner' },
+                              ...nonMembersOf(fleet.fleet_id).map((r) => ({ value: r.runner_id, label: r.name })),
+                            ]}
+                          />
+                          <Button
+                            size="sm"
+                            loading={busyKey() === `add:${fleet.fleet_id}`}
+                            disabled={!selectedRunner()[fleet.fleet_id] || busyKey() !== null}
+                            onClick={() => void addMember(fleet.fleet_id)}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      </Show>
+                    </Show>
+                  </div>
                 </li>
               )}
             </For>

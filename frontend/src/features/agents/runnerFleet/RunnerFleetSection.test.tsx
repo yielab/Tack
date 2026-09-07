@@ -49,12 +49,21 @@ describe('RunnerFleetSection — tabs', () => {
   });
 
   it('switches to the Fleets tab on click and loads fleets', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(
-        JSON.stringify({ protocol_version: 1, data: [{ fleet_id: 'f1', name: 'my-fleet', concurrency_limit: null, default_policy: {} }] }),
-        { status: 200 },
-      ),
-    );
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/runner-fleets')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              protocol_version: 1,
+              data: [{ fleet_id: 'f1', name: 'my-fleet', concurrency_limit: null, default_policy: {} }],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ protocol_version: 1, data: [] }), { status: 200 }));
+    });
     const { container } = mount();
     await flush();
 

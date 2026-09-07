@@ -194,6 +194,27 @@ describe('fleetsApi', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/runner-fleets');
     expect(result.fleet_id).toBe('fleet_1');
   });
+
+  it('addMember() POSTs to /api/runner-fleets/{fleet_id}/members with the runner id', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ protocol_version: 1, fleet_id: 'fleet_1', runner_id: 'runr_1', state: 'added' }),
+    );
+    const result = await fleetsApi.addMember('fleet_1', 'runr_1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/runner-fleets/fleet_1/members');
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ runner_id: 'runr_1' });
+    expect(result.state).toBe('added');
+  });
+
+  it('removeMember() DELETEs /api/runner-fleets/{fleet_id}/members/{runner_id}', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ protocol_version: 1, fleet_id: 'fleet_1', runner_id: 'runr_1', state: 'removed' }),
+    );
+    const result = await fleetsApi.removeMember('fleet_1', 'runr_1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/runner-fleets/fleet_1/members/runr_1');
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
+    expect(result.state).toBe('removed');
+  });
 });
 
 describe('agentProfilesApi', () => {
