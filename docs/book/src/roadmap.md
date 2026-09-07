@@ -3534,6 +3534,9 @@ The decision record is [ADR 0062](https://github.com/yielab/tack/blob/develop/do
 `TODO.md` (top of the file) and the dispatch plan is
 `docs/agent-handoffs/part-vii/README.md`; both were created from this section. **Wave 18
 (VII-A2, VII-B1) was dispatched 2026-09-03.**
+**The board closed 2026-09-07** with VII-D1: a stranger reached a finished attempt from a
+downloaded AppImage without a terminal. What shipped, and the two limits it states, are on
+the Part VII board in `TODO.md`, not here.
 
 ## Why this phase exists
 
