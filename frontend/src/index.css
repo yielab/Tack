@@ -303,14 +303,20 @@
   /* faint tier darkened for WCAG AA (design #868d97 fails on the light bg). */
   --color-text-tertiary: #595f68;
 
-  --color-on-accent: #1a2e05;
+  --color-on-accent: #ffffff;
   --color-accent-soft: #eef7dc;
   --color-accent-line: #d2e9a4;
   --color-accent-ink: #4d7c0f;
   --color-accent2: #475569;
   --color-accent2-soft: #eceff3;
 
-  --color-primary-600: #84cc16;
+  /* dark olive, not the earlier bright lime: that value could not clear AA as
+     both foreground text on the light surfaces below AND the background under
+     white on-accent text at once (two dark colors don't contrast with each
+     other). #3f6a0c keeps the palette's hue (~87°) and clears every role:
+     6.41:1 on bg-base, 5.66:1 on bg-sidebar, 5.61:1 on bg-subtle, 5.97:1 on
+     bg-app, 6.41:1 under white on-accent text. */
+  --color-primary-600: #3f6a0c;
 
   --color-success-600: #157a37;
   --color-success-100: #e7f5ec;

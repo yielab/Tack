@@ -58,8 +58,13 @@ test('board view has no accessibility violations', async ({ page, request }) => 
 // (light/dark) × palette (teal/clay/graphite) — six combinations, and every
 // scan above always runs under the one combination Playwright's default
 // color scheme plus no stored palette produces: teal/light. The other five
-// were never scanned by anything, ever, and a hand probe found one of them
-// badly broken (see the graphite/light case below).
+// were never scanned by anything, ever, until this file added them; a hand
+// probe found one of them (graphite/light) genuinely broken at the time —
+// `--color-primary-600` used directly as text on light surfaces, a role only
+// safe when the token is dark. Fixed at the token level (graphite's
+// `primary-600` darkened, `on-accent` flipped to white, matching how
+// teal/clay already pair a dark primary with white on-accent text) rather
+// than worked around here, so all six cells below are unsuppressed gates.
 //
 // Scanning every existing page in every combination would multiply this
 // file's cost six-fold for very little marginal signal — nearly every scan
@@ -79,6 +84,7 @@ const OTHER_MODES_AND_PALETTES: Array<['teal' | 'clay' | 'graphite', 'light' | '
   ['clay', 'light'],
   ['clay', 'dark'],
   ['graphite', 'dark'],
+  ['graphite', 'light'],
 ];
 
 for (const [palette, mode] of OTHER_MODES_AND_PALETTES) {
@@ -91,40 +97,6 @@ for (const [palette, mode] of OTHER_MODES_AND_PALETTES) {
     expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
   });
 }
-
-// graphite/light is the one combination this probe found genuinely broken:
-// `--color-primary-600` (#84cc16, a bright lime) is used directly as
-// foreground text on light surfaces in several places (WorkTabs' active tab,
-// Breadcrumb's current-section label, among others) — a role only safe when
-// the token is dark, which every other palette's primary-600 already is.
-// Darkening graphite's primary-600 enough to fix that (down to roughly the
-// palette's own already-dark `--color-accent-ink`, ~#4d7c0f) does NOT close
-// this cleanly: `--color-on-accent` for graphite is deliberately dark
-// (`#1a2e05` — see `Button.tsx`'s "primary" variant comment on why), so every
-// place primary-600 is a *background* with on-accent text on top (the
-// sidebar's brand mark, every primary `<Button>`) depends on primary-600
-// staying bright. Measured directly (darkening only, on-accent left alone):
-// on-accent-on-darkened-primary drops from 7.40:1 to 2.92:1 — a NEW failure,
-// not a fix. The only value shape that clears both roles is on-accent
-// becoming light (matching how teal/clay already pair a dark primary-600
-// with a white on-accent) — which changes graphite's primary from "bright
-// lime, dark text on it" to "dark olive, white text on it": a different
-// palette identity, not a contrast correction, so it isn't made here.
-// Tracking this one rule, scoped to only this one scan, keeps every other
-// combination above (5 of 6) an unsuppressed, real gate.
-const GRAPHITE_LIGHT_KNOWN_ISSUES = ['color-contrast'];
-
-test('board view (graphite/light) has no accessibility violations other than the tracked, known one', async ({
-  page,
-  request,
-}) => {
-  const projectId = await getOrCreateProject(request);
-  await setPaletteAndTheme(page, 'graphite', 'light');
-  await page.goto(`/projects/${projectId}/board`);
-  await waitForApp(page);
-  const violations = await scan(page, GRAPHITE_LIGHT_KNOWN_ISSUES);
-  expect(violations, JSON.stringify(violations.map((v) => v.id), null, 2)).toEqual([]);
-});
 
 // No other fixture in this file sets an `assignee`, so `<Avatar>`
 // (`shared/ui/Avatar.tsx`) — initials over a per-name `hsl()` chip, with

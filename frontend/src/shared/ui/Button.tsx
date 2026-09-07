@@ -47,8 +47,9 @@ function variantStyle(variant: ButtonVariant): JSX.CSSProperties {
       };
     case 'primary':
     default:
-      // on-accent (not text-inverse): palette-aware so bright accents like the
-      // Graphite lime get dark text instead of unreadable white.
+      // on-accent (not text-inverse): palette-aware, so a future palette
+      // pairing a light accent with dark text still gets readable text
+      // instead of a single hardcoded white.
       return {
         'background-color': 'var(--color-primary-600)',
         color: 'var(--color-on-accent)',
