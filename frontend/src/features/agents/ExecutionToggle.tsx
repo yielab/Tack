@@ -56,16 +56,12 @@ const ExecutionToggle: Component = () => {
 
       <Show when={unavailable()}>
         <p class="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          Not available from this screen — this server is not running on this machine's own
-          loopback address (or this build has no embedded runner). Start one from a terminal on
-          the runner's own machine instead:
+          Not available from this screen — this is a remote-runner deployment (this server
+          isn't bound to its own loopback address, or this build has no embedded runner
+          wired in), so it can never run one here for security reasons. Enroll a runner on
+          a separate machine that has your code and credentials instead — see{' '}
+          <strong>Advanced</strong> below.
         </p>
-        <pre
-          class="overflow-x-auto rounded-lg border p-3 font-mono text-xs"
-          style={{ 'border-color': 'var(--color-border-light)', color: 'var(--color-text-primary)' }}
-        >
-          tack serve --with-runner
-        </pre>
       </Show>
 
       <Show when={loadFailed()}>

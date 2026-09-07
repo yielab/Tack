@@ -185,16 +185,43 @@ Building from source instead needs [Rust 1.94+](https://rustup.rs/) and
 
 ## Run it
 
-**Do you need the runner?** Only if you want an item's **Run with agent** button to do
-something. Those are two different things: **Run with agent** is the button on an
-item; `--with-runner` (or the **Agents** page toggle — same switch, no restart) is what
-gives that button a runner to run against. Without either one, `tack` is still the
-full project manager — board, timeline, dashboard, everything in
-[Features](#features) except agent execution — and clicking **Run with agent** shows
-"Agent execution is off" instead of a form; nothing silently queues forever waiting for
-a runner that never shows up. Turn it on when you're ready to let Codex or Claude Code
-touch real work: at startup with `--with-runner`, or later from the **Agents** page, no
-restart either way.
+### Do you need a runner?
+
+Only if you want an item's **Run with agent** button to do something. Tack is two
+things in one binary — a project manager that always runs, and an agent executor
+that's off until something turns it on:
+
+| Works with zero runners | | Needs an active runner | |
+|---|---|---|---|
+| Board, timeline, dashboard, list, calendar | ✅ | An item's **Run with agent** button | ❌ "Agent execution is off" |
+| Items, comments, search, attachments | ✅ | Codex or Claude Code actually running | ❌ nothing to run it |
+| CLI, REST API, `tack mcp`, webhooks, GitHub sync | ✅ | | |
+
+Nothing silently queues forever — the button says there's no runner to give the
+request to, instead of accepting one that no runner will ever claim.
+
+**The analogy, if you've used a CI runner (GitHub Actions, GitLab):** the board is the
+pipeline and its history, always there whether or not anything executes it. The
+runner is the worker that attaches to it, runs eligible work near your own code and
+credentials, and reports back. Zero runners attached is a normal working state, not a
+broken one.
+
+**Three ways to attach one**, in order of effort — the first two are the *same*
+runner, just switched on at a different moment:
+
+1. **`tack serve --with-runner`** — embedded, on from the first second. What every
+   command below uses.
+2. **The Agents page → Turn on** — same embedded runner, flipped on later with no
+   restart, if you started plain `tack serve` instead.
+3. **A separate `tack-runner` process**, enrolled against this board — **required for
+   Docker** or any deployment not bound to `127.0.0.1`: an embedded runner refuses to
+   start there on purpose, since it would execute arbitrary agent processes on a
+   machine reachable from outside. See
+   [Agent Runners](docs/book/src/user-guide/agent-runners.md#do-you-need-a-runner).
+
+**"Run with agent"** (the button) and **`--with-runner`** (the flag) are two different
+things that sound alike: the button always exists; the flag is one of three ways to
+give it something to run against.
 
 **Get the app** — download it, open it, the board is a window on your machine, the
 same server underneath:
@@ -252,6 +279,24 @@ tar xzf tack-*.tar.gz && cd tack-*/
 ```
 
 **Windows:** extract the zip and run `tack.exe serve --with-runner`.
+
+**Or run it in Docker** — build the image locally from the checked-in
+[`Dockerfile`](Dockerfile); a published `ghcr.io` image isn't pullable yet, so build
+from source until it is:
+
+```bash
+docker build -t tack:latest .
+docker run --rm -p 3210:3210 -v tack-data:/data tack:latest
+```
+
+The container binds `0.0.0.0` internally so the host can reach it — which means
+**`--with-runner` won't apply here**: the embedded runner refuses to start on any
+non-loopback bind, container or not (see [Do you need a
+runner?](#do-you-need-a-runner) above). Agent execution in a containerized board comes
+from a separate `tack-runner` process enrolled against it, run on whatever machine
+actually has your code and credentials — see [Enrolling a
+runner](docs/book/src/user-guide/agent-runners.md#enrolling-a-runner). Everything
+else — the board, its API, the CLI, MCP — works exactly the same as any other install.
 
 Open **`http://localhost:3210`**. Project data lives in `tack.db`; attachments live in
 `storage/`. Back up both.

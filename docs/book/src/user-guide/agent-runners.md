@@ -27,6 +27,49 @@ proves it.
 
 ---
 
+## Do you need a runner?
+
+Only if you want an item's **Run with agent** button to do something. Tack is two
+things bundled into one binary: a project manager that always runs, and an agent
+executor that is off until something turns it on. Nothing below requires a runner:
+
+| Works with zero runners | |
+|---|---|
+| Board, timeline, dashboard, list, calendar views | ✅ |
+| Creating, moving, commenting on, searching items | ✅ |
+| The CLI, REST API, and `tack mcp` for everything above | ✅ |
+| Webhooks, GitHub sync, backups | ✅ |
+
+| Needs an active runner (embedded or remote) | |
+|---|---|
+| Clicking **Run with agent** on an item | ❌ shows "Agent execution is off" instead of a form |
+| Codex or Claude Code actually running against your code | ❌ nothing to run it |
+
+Nothing silently queues forever: the button tells you there's no runner to give the
+request to, rather than accepting one that no runner will ever claim.
+
+**The analogy, if you've used a CI runner (GitHub Actions, GitLab):** the board is the
+pipeline definition and its history — it always exists, whether or not anything is
+attached to run it. **The runner is the runner** — a separate worker that polls for
+eligible work, executes it near your own code and credentials, and reports back. Zero
+runners attached is a normal, fully working state: the board just has nothing to hand
+work to yet.
+
+Three ways to attach one, in order of effort:
+
+| | How | When |
+|---|---|---|
+| **Embedded, from the first second** | `tack serve --with-runner` | One developer, one machine — the fastest path to a completed attempt. |
+| **Embedded, turned on later, no restart** | Agents page (`/agents`) → **Turn on** | You started plain `tack serve` and changed your mind. Same runner as above, same process, flipped on live — a flag and this toggle are two doors to the identical on/off switch. |
+| **A separate `tack-runner` process, enrolled against this board** | [Enrolling a runner](#enrolling-a-runner) below | **Required** for Docker, or any deployment not bound to `127.0.0.1` — an embedded runner refuses to start there on purpose. Executing arbitrary agent processes on a machine reachable from outside the loopback interface is the one thing this product refuses to do silently; see [Non-loopback and security posture](#non-loopback-and-security-posture). |
+
+**"Run with agent"** (the button on an item) and **`--with-runner`** (the boot flag) are
+two different things that happen to sound alike: the button always exists; the flag —
+or the Agents-page toggle, or a separate `tack-runner` — is what gives it something to
+run against.
+
+---
+
 ## Concepts
 
 | Term | What it is |

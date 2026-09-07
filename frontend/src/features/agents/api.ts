@@ -20,9 +20,11 @@
 // executes arbitrary agent processes on the host serving the UI, so it must
 // not even be discoverable from outside the machine it runs on.
 // `isLocalRunnerUnavailable` below is the one place that 404 is
-// interpreted — both panels render the console-only fallback the card
-// describes (`tack serve --with-runner` / `tack runner secret set`) when it
-// fires, rather than a bare error.
+// interpreted — both panels explain this is a remote-runner deployment
+// instead of a bare error: `ExecutionToggle.tsx` points at the Advanced
+// section's enrollment flow, `ProviderKeyPanel.tsx` at the console-only
+// `tack runner secret set`, since a provider key genuinely is set on the
+// runner's own machine regardless of embedded vs. remote.
 //
 // ── The `GET/PUT /api/local-runner` contract ────────────────────────────
 //

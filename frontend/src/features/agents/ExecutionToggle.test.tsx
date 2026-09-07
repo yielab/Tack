@@ -67,12 +67,12 @@ describe('ExecutionToggle', () => {
     expect(container.textContent).toContain('Turn off');
   });
 
-  it('renders the console command instead of an error on a genuine 404', async () => {
+  it('renders the remote-runner explanation instead of an error on a genuine 404', async () => {
     mockFetch(STOPPED_STATUS, { status: 404 });
     const { container } = mount();
     await flush();
 
-    expect(container.textContent).toContain('tack serve --with-runner');
+    expect(container.textContent).toContain('remote-runner deployment');
     expect(container.textContent).not.toContain('Turn on');
   });
 
@@ -82,6 +82,6 @@ describe('ExecutionToggle', () => {
     await flush();
 
     expect(container.textContent).toContain("Couldn't load");
-    expect(container.textContent).not.toContain('tack serve --with-runner');
+    expect(container.textContent).not.toContain('remote-runner deployment');
   });
 });

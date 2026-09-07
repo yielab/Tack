@@ -1,9 +1,8 @@
 // Every console-step command string these steps introduce, in one place —
 // so a docs page can cite this file instead of a string embedded in JSX.
-// `ExecutionToggle.tsx` and `ProviderKeyPanel.tsx` still hold their own two
-// command strings inline (`tack serve --with-runner`,
-// `tack runner secret set {name}`) — this file does not re-export theirs,
-// only the ones these steps add.
+// `ProviderKeyPanel.tsx` still holds its own command string inline
+// (`tack runner secret set {name}`) — this file does not re-export it, only
+// the ones these steps add.
 
 /** Per-harness vendor install command, shown when step 2's probe reports the
  *  binary absent from `PATH`. Verified against the vendor's own published
