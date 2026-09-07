@@ -201,3 +201,17 @@ change: `34 passed; 0 failed` + `3 passed; 0 failed`, `cargo clippy` and `cargo 
 ## Amendments
 
 *(none yet)*
+
+### 2026-09-07 — integrator amendment
+
+`TauriSidecarHandle::exited` no longer reads the plugin's event receiver itself. As merged,
+the receiver was kept and polled with `try_recv` once per tray tick. `tauri-plugin-shell`
+2.3.6 creates that channel with capacity 1 and its stdout/stderr reader threads `block_on`
+every send, so a receiver drained every three seconds would have held the child's output
+pipe, and behind it `tack serve`, for as long as the server had anything to print — the
+opposite of what dropping the receiver did before this card (a closed channel fails each
+send instantly and the reader keeps reading). On `develop` the launcher now spawns one task
+that drains the receiver continuously, discards output events and stores the `Terminated`
+payload in an `Arc<Mutex<Option<ExitReport>>>` the handle reads. The transition function,
+its tests and the tray are unchanged; 34 + 3 tests, clippy and fmt re-run on the merged tree.
+The live proof is still `not_measured`, for the reason above.

@@ -8,7 +8,7 @@ mod paths;
 mod supervisor;
 mod tray;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -20,13 +20,17 @@ use supervisor::{
     ExitReport, Outcome, SidecarHandle, SidecarLauncher, SupervisorError, attach_or_start, shutdown,
 };
 
-/// [`SidecarHandle`] backed by the real Tauri sidecar child. Keeps the event
-/// receiver `spawn` returns alongside the child so [`exited`](Self::exited)
-/// can drain it for the `Terminated` event — `CommandChild` alone has no
-/// `try_wait`.
+/// [`SidecarHandle`] backed by the real Tauri sidecar child. `CommandChild`
+/// has no `try_wait`; the exit arrives as a `Terminated` event on the
+/// receiver `spawn` returns. That receiver is drained continuously by a task
+/// spawned in [`TauriLauncher::spawn`], never polled lazily here: the
+/// plugin's channel holds one event and its stdout/stderr reader threads
+/// block on every send, so a receiver read only every few seconds would
+/// stall the child's own output pipe and, behind it, the server. The task
+/// keeps only the terminated payload, in `exit`.
 struct TauriSidecarHandle {
     child: CommandChild,
-    events: tauri::async_runtime::Receiver<CommandEvent>,
+    exit: Arc<Mutex<Option<ExitReport>>>,
 }
 
 impl SidecarHandle for TauriSidecarHandle {
@@ -41,20 +45,7 @@ impl SidecarHandle for TauriSidecarHandle {
     }
 
     fn exited(&mut self) -> Option<ExitReport> {
-        loop {
-            match self.events.try_recv() {
-                Ok(CommandEvent::Terminated(payload)) => {
-                    return Some(ExitReport {
-                        code: payload.code,
-                        signal: payload.signal,
-                    });
-                }
-                // Stdout/stderr/error events are noise for this watch; drain
-                // past them rather than stopping on the first one.
-                Ok(_) => continue,
-                Err(_) => return None,
-            }
-        }
+        *self.exit.lock().unwrap()
     }
 }
 
@@ -80,10 +71,26 @@ impl SidecarLauncher for TauriLauncher {
         for (key, value) in env {
             command = command.env(key, value);
         }
-        let (events, child) = command
+        let (mut events, child) = command
             .spawn()
             .map_err(|e| SupervisorError::SpawnFailed(e.to_string()))?;
-        Ok(TauriSidecarHandle { child, events })
+        let exit = Arc::new(Mutex::new(None));
+        let exit_for_drain = Arc::clone(&exit);
+        tauri::async_runtime::spawn(async move {
+            // Stdout and stderr lines are dropped here on purpose: the
+            // server writes its own log, and this app only needs to know
+            // when the process ends. The loop ends when the plugin drops its
+            // sender, which happens after `Terminated`.
+            while let Some(event) = events.recv().await {
+                if let CommandEvent::Terminated(payload) = event {
+                    *exit_for_drain.lock().unwrap() = Some(ExitReport {
+                        code: payload.code,
+                        signal: payload.signal,
+                    });
+                }
+            }
+        });
+        Ok(TauriSidecarHandle { child, exit })
     }
 }
 
