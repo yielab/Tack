@@ -223,6 +223,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is unaffected — it is never selected as the response protocol). A `curl`-shaped check
   of the handshake status line could not have caught this; only a real browser client
   enforces the rule the fix depends on.
+- **A harness installed where the runner process's own `PATH` cannot see it no longer
+  reads as "not installed."** Both the desktop app (launched from a `.desktop` entry,
+  Finder, or the Start menu) and `tack service` under systemd's user manager inherit a
+  minimal session `PATH` that commonly excludes nvm, npm's global prefix, `~/.local/bin`,
+  `~/.cargo/bin`, `~/.bun/bin`, and Homebrew. Both harness adapters now fall back to that
+  fixed, documented list of per-user install locations after an ordinary `PATH` search
+  comes up empty, and the "not found" error names every directory it actually searched.
 
 ### Removed
 
