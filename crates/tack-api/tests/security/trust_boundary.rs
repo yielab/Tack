@@ -298,7 +298,8 @@ async fn board_live_handshake_from_the_vite_dev_origin_is_authorized_on_a_loopba
 #[tokio::test]
 async fn board_live_handshake_judges_the_origin_host_as_an_address_not_a_prefix() {
     let (app, _) = common::test_app().await;
-    let response = board_live_handshake_response(app, Some("http://127.attacker.example:5173")).await;
+    let response =
+        board_live_handshake_response(app, Some("http://127.attacker.example:5173")).await;
     assert!(
         !response.starts_with("HTTP/1.1 101"),
         "a name that starts with 127. is not this machine: {response}"
