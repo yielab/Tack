@@ -109,19 +109,18 @@ jobs:
           git diff --exit-code crates/tack-orch/tests/golden/
 
   msrv:
-    name: MSRV (Rust 1.89 — dependency floor)
+    name: MSRV (Rust 1.94 — dependency floor)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # Edition 2024 sets a 1.85 language floor, but the dependency graph sets a
-      # higher one: object_store -> crc-fast needs 1.89, tracing-appender -> time
-      # needs 1.88, and the idna/icu stack needs 1.86. The pin is the real floor,
-      # not the language's. Bump policy: the MSRV may be raised in a minor release
-      # when a dependency or language feature requires it; update this pin, the
-      # README/CONTRIBUTING badges, and `rust-version` in Cargo.toml together.
-      # Verify with `cargo +<pin> build --workspace --locked` before changing it.
-      - uses: dtolnay/rust-toolchain@1.89.0
+      # sqlx 0.9's own `rust-version` is the real floor now: it sits above
+      # every other floor the rest of the dependency graph asks for. Bump
+      # policy: the MSRV may be raised in a minor release when a dependency or
+      # language feature requires it; update this pin, the README/CONTRIBUTING
+      # badges, and `rust-version` in Cargo.toml together. Verify with `cargo
+      # +<pin> build --workspace --locked` before changing it.
+      - uses: dtolnay/rust-toolchain@1.94.1
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           key: msrv
@@ -132,7 +131,7 @@ jobs:
       - name: Build on MSRV
         run: cargo build --workspace --locked
         env:
-          RUSTUP_TOOLCHAIN: 1.89.0
+          RUSTUP_TOOLCHAIN: 1.94.1
 
   desktop:
     name: Desktop app (tack-desktop workspace)

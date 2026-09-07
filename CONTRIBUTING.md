@@ -39,7 +39,7 @@ Skipping the setup leaves you with git's ordinary text merge on those files. Tha
 
 | Tool | Version | Install |
 | --- | --- | --- |
-| Rust | 1.89+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| Rust | 1.94+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | Node.js | 20+ | [nodejs.org](https://nodejs.org/) |
 | Git | 2.x | system package manager |
 | curl | any | pre-installed on most systems |

@@ -63,10 +63,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`toml` 0.8 → 1.1 and `validator` 0.20 → 0.21.** No behavior a user can observe:
   config parsing (`tack.toml`, the runner's journal, `AttemptJournal` round-trips) and
-  every `#[validate(...)]` field rule compile and pass unchanged. `sqlx` stays at 0.8 —
-  its 0.9 line raises the crate's own `rust-version` to 1.94.0, above this repo's pinned
-  1.89 floor, so raising it is out of scope here and Dependabot no longer proposes it
-  (`.github/dependabot.yml`'s `ignore` on `sqlx`'s major updates).
+  every `#[validate(...)]` field rule compile and pass unchanged.
+- **The dependency floor rises to Rust 1.94, and `sqlx` lands on 0.9.0.** `sqlx` 0.9's
+  own `rust-version` is 1.94.0, above this repo's former 1.89 floor — the floor now
+  moves with it rather than holding it back (`Cargo.toml` `rust-version` in both
+  workspaces, CI's MSRV job, the README badge, and `CONTRIBUTING.md`'s table all move
+  together; the Dependabot `ignore` on `sqlx`'s major updates is gone). `sqlx` 0.9's new
+  `SqlSafeStr` trait requires every `query`/`query_as`/`query_scalar` call to take a
+  `&'static str` or an explicit `AssertSqlSafe(..)` — every dynamic SQL string built in
+  this tree (all from compile-time-constant column lists or `?`-placeholder counts,
+  never from unescaped user input) now carries that wrapper. No behavior a user can
+  observe: the migration runner here is fully hand-rolled (never `sqlx::migrate!` or
+  `sqlx::Migrator`) and SQLite's journal mode is set by an explicit `PRAGMA
+  journal_mode=WAL`, so neither of 0.9's `Migrate`-trait or SQLite-driver breaking
+  changes touch this codebase.
 - **Frontend dependency bumps: `@solidjs/router` 0.16.3 → 1.0.0, `@types/node`
   24.13.3 → 26.4.1.** Both are dev-time/type-only or internal-only changes —
   nothing a user of the running app can notice. `typescript` and `jsdom` stay on

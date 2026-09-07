@@ -153,9 +153,9 @@ impl Repository {
 
     #[instrument(skip(self))]
     pub async fn get_control_plane(&self, id: Uuid) -> Result<ControlPlane, sqlx::Error> {
-        let row: ControlPlaneRow = sqlx::query_as(&format!(
+        let row: ControlPlaneRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {CONTROL_PLANE_COLUMNS} FROM control_planes WHERE id = ?"
-        ))
+        )))
         .bind(id.to_string())
         .fetch_one(self.pool())
         .await?;
@@ -165,9 +165,9 @@ impl Repository {
 
     #[instrument(skip(self))]
     pub async fn list_control_planes(&self) -> Result<Vec<ControlPlane>, sqlx::Error> {
-        let rows: Vec<ControlPlaneRow> = sqlx::query_as(&format!(
+        let rows: Vec<ControlPlaneRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {CONTROL_PLANE_COLUMNS} FROM control_planes ORDER BY name"
-        ))
+        )))
         .fetch_all(self.pool())
         .await?;
 
@@ -401,9 +401,9 @@ impl Repository {
 
     #[instrument(skip(self))]
     pub async fn get_orch_link(&self, project_id: Uuid) -> Result<Option<OrchLink>, sqlx::Error> {
-        let row: Option<OrchLinkRow> = sqlx::query_as(&format!(
+        let row: Option<OrchLinkRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_LINK_COLUMNS} FROM orch_links WHERE project_id = ?"
-        ))
+        )))
         .bind(project_id.to_string())
         .fetch_optional(self.pool())
         .await?;
@@ -418,10 +418,10 @@ impl Repository {
         &self,
         control_plane_id: Uuid,
     ) -> Result<Vec<OrchLink>, sqlx::Error> {
-        let rows: Vec<OrchLinkRow> = sqlx::query_as(&format!(
+        let rows: Vec<OrchLinkRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_LINK_COLUMNS} FROM orch_links WHERE control_plane_id = ? \
              ORDER BY remote_project"
-        ))
+        )))
         .bind(control_plane_id.to_string())
         .fetch_all(self.pool())
         .await?;
@@ -587,9 +587,9 @@ impl Repository {
         item_id: Uuid,
         remote_task_id: &str,
     ) -> Result<Option<OrchTask>, sqlx::Error> {
-        let row: Option<OrchTaskRow> = sqlx::query_as(&format!(
+        let row: Option<OrchTaskRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_TASK_COLUMNS} FROM orch_tasks WHERE item_id = ? AND remote_task_id = ?"
-        ))
+        )))
         .bind(item_id.to_string())
         .bind(remote_task_id)
         .fetch_optional(self.pool())
@@ -603,9 +603,9 @@ impl Repository {
         &self,
         item_id: Uuid,
     ) -> Result<Vec<OrchTask>, sqlx::Error> {
-        let rows: Vec<OrchTaskRow> = sqlx::query_as(&format!(
+        let rows: Vec<OrchTaskRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_TASK_COLUMNS} FROM orch_tasks WHERE item_id = ? ORDER BY attempt DESC"
-        ))
+        )))
         .bind(item_id.to_string())
         .fetch_all(self.pool())
         .await?;
@@ -623,10 +623,10 @@ impl Repository {
         &self,
         remote_task_id: &str,
     ) -> Result<Option<OrchTask>, sqlx::Error> {
-        let row: Option<OrchTaskRow> = sqlx::query_as(&format!(
+        let row: Option<OrchTaskRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_TASK_COLUMNS} FROM orch_tasks WHERE remote_task_id = ? \
              ORDER BY dispatched_at DESC LIMIT 1"
-        ))
+        )))
         .bind(remote_task_id)
         .fetch_optional(self.pool())
         .await?;
@@ -846,9 +846,9 @@ impl Repository {
 
     #[instrument(skip(self))]
     pub async fn get_orch_run(&self, run_id: &str) -> Result<Option<OrchRun>, sqlx::Error> {
-        let row: Option<OrchRunRow> = sqlx::query_as(&format!(
+        let row: Option<OrchRunRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_RUN_COLUMNS} FROM orch_runs WHERE external_run_id = ?"
-        ))
+        )))
         .bind(run_id)
         .fetch_optional(self.pool())
         .await?;
@@ -861,9 +861,9 @@ impl Repository {
         &self,
         item_id: Uuid,
     ) -> Result<Vec<OrchRun>, sqlx::Error> {
-        let rows: Vec<OrchRunRow> = sqlx::query_as(&format!(
+        let rows: Vec<OrchRunRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_RUN_COLUMNS} FROM orch_runs WHERE item_id = ? ORDER BY created_at DESC"
-        ))
+        )))
         .bind(item_id.to_string())
         .fetch_all(self.pool())
         .await?;
@@ -990,10 +990,10 @@ impl Repository {
         item_id: Uuid,
         limit: Option<i64>,
     ) -> Result<Vec<OrchEvent>, sqlx::Error> {
-        let rows: Vec<OrchEventRow> = sqlx::query_as(&format!(
+        let rows: Vec<OrchEventRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_EVENT_COLUMNS} FROM orch_events WHERE item_id = ? \
              ORDER BY occurred_at ASC LIMIT ?"
-        ))
+        )))
         .bind(item_id.to_string())
         .bind(limit.unwrap_or(i64::MAX))
         .fetch_all(self.pool())
@@ -1131,9 +1131,9 @@ impl Repository {
         &self,
         token: &str,
     ) -> Result<Option<OrchApproval>, sqlx::Error> {
-        let row: Option<OrchApprovalRow> = sqlx::query_as(&format!(
+        let row: Option<OrchApprovalRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_APPROVAL_COLUMNS} FROM orch_approvals WHERE token = ?"
-        ))
+        )))
         .bind(token)
         .fetch_optional(self.pool())
         .await?;
@@ -1151,10 +1151,10 @@ impl Repository {
         &self,
         item_id: Uuid,
     ) -> Result<Vec<OrchApproval>, sqlx::Error> {
-        let rows: Vec<OrchApprovalRow> = sqlx::query_as(&format!(
+        let rows: Vec<OrchApprovalRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_APPROVAL_COLUMNS} FROM orch_approvals WHERE item_id = ? \
              ORDER BY requested_at DESC"
-        ))
+        )))
         .bind(item_id.to_string())
         .fetch_all(self.pool())
         .await?;
@@ -1167,10 +1167,10 @@ impl Repository {
     /// Includes uncorrelated (`item_id IS NULL`) records.
     #[instrument(skip(self))]
     pub async fn list_pending_orch_approvals(&self) -> Result<Vec<OrchApproval>, sqlx::Error> {
-        let rows: Vec<OrchApprovalRow> = sqlx::query_as(&format!(
+        let rows: Vec<OrchApprovalRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ORCH_APPROVAL_COLUMNS} FROM orch_approvals WHERE state = 'pending' \
              ORDER BY requested_at ASC"
-        ))
+        )))
         .fetch_all(self.pool())
         .await?;
 
@@ -1579,7 +1579,7 @@ impl Repository {
             // commit is the load-bearing property, not just statement order.
             let placeholders = vec!["?"; ids.len()].join(",");
             let sql = format!("DELETE FROM orch_events WHERE id IN ({placeholders})");
-            let mut q = sqlx::query(&sql);
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for id in &ids {
                 q = q.bind(id);
             }
@@ -1721,7 +1721,7 @@ impl Repository {
             // above, not a separately-committed follow-up.
             let placeholders = vec!["?"; ids.len()].join(",");
             let sql = format!("DELETE FROM orch_metrics WHERE id IN ({placeholders})");
-            let mut q = sqlx::query(&sql);
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for id in &ids {
                 q = q.bind(id);
             }

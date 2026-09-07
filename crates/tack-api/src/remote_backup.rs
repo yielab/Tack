@@ -376,7 +376,7 @@ async fn snapshot_db(pool: &SqlitePool, db_path: &Path) -> Result<Vec<u8>, Backu
     let temp = std::env::temp_dir().join(format!("tack-snap-{}.db", Uuid::new_v4()));
     let temp_str = temp.to_string_lossy().replace('\'', "''");
 
-    sqlx::query(&format!("VACUUM INTO '{temp_str}'"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{temp_str}'")))
         .execute(pool)
         .await?;
 

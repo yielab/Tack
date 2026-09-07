@@ -3,7 +3,7 @@
 //! their example prefixes.  All runner-owned writes are fenced in SQL.
 
 use chrono::{DateTime, Duration, Utc};
-use sqlx::Row;
+use sqlx::{AssertSqlSafe, Row};
 use tracing::instrument;
 
 use super::Repository;
@@ -2517,7 +2517,7 @@ impl Repository {
                  FROM execution_requests WHERE item_id IN ({placeholders}) \
              ) WHERE rn = 1"
         );
-        let mut q = sqlx::query(&query);
+        let mut q = sqlx::query(AssertSqlSafe(query));
         for id in item_ids {
             q = q.bind(id);
         }
@@ -3143,7 +3143,7 @@ impl Repository {
             query.push('?');
         }
         query.push(')');
-        let mut built = sqlx::query(&query);
+        let mut built = sqlx::query(AssertSqlSafe(query));
         for id in ids {
             built = built.bind(id);
         }
@@ -3203,7 +3203,7 @@ impl Repository {
             query.push('?');
         }
         query.push(')');
-        let mut built = sqlx::query(&query);
+        let mut built = sqlx::query(AssertSqlSafe(query));
         for id in ids {
             built = built.bind(id);
         }
@@ -3355,7 +3355,7 @@ impl Repository {
                 let select_sql = format!(
                     "SELECT rowid FROM {table} WHERE {ts_col} < ? ORDER BY {ts_col} ASC LIMIT ?"
                 );
-                let ids: Vec<i64> = sqlx::query_scalar(&select_sql)
+                let ids: Vec<i64> = sqlx::query_scalar(AssertSqlSafe(select_sql))
                     .bind(&cutoff_str)
                     .bind(batch_size)
                     .fetch_all(&mut *tx)
@@ -3368,7 +3368,7 @@ impl Repository {
 
                 let placeholders = vec!["?"; ids.len()].join(",");
                 let delete_sql = format!("DELETE FROM {table} WHERE rowid IN ({placeholders})");
-                let mut q = sqlx::query(&delete_sql);
+                let mut q = sqlx::query(AssertSqlSafe(delete_sql));
                 for id in &ids {
                     q = q.bind(id);
                 }
@@ -3445,7 +3445,7 @@ impl Repository {
 
             let placeholders = vec!["?"; ids.len()].join(",");
             let delete_sql = format!("DELETE FROM execution_events WHERE id IN ({placeholders})");
-            let mut q = sqlx::query(&delete_sql);
+            let mut q = sqlx::query(AssertSqlSafe(delete_sql));
             for id in &ids {
                 q = q.bind(id);
             }

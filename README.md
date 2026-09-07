@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/yielab/tack/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/yielab/tack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.94%2B-orange.svg)](https://www.rust-lang.org/)
 [![Beta](https://img.shields.io/badge/status-beta-yellow.svg)](CHANGELOG.md)
 
 **A self-hosted project board that dispatches its items to coding agents — Claude Code
@@ -149,7 +149,7 @@ the single `tack` binary — no Docker, no database server, no separate frontend
 | **Browser** | Any current Chrome, Firefox, Safari, or Edge |
 | **Footprint** | 10.3 MiB binary (UI embedded), ~11.7 MiB idle memory — measured in [Benchmarks](docs/BENCHMARKS.md) |
 
-Building from source instead needs [Rust 1.89+](https://rustup.rs/) and
+Building from source instead needs [Rust 1.94+](https://rustup.rs/) and
 [Node.js 20+](https://nodejs.org/).
 
 ## Run it

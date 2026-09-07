@@ -69,7 +69,7 @@ async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> bool {
 /// only reliable way to ask SQLite "does this column exist" without attempting
 /// a query against it and pattern-matching the error text.
 async fn column_exists(pool: &sqlx::SqlitePool, table: &str, column: &str) -> bool {
-    sqlx::query(&format!("PRAGMA table_info({table})"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({table})")))
         .fetch_all(pool)
         .await
         .expect("query table_info")
@@ -751,9 +751,9 @@ async fn test_migration_037_rebuild_preserves_every_row_and_field_equality() {
          item_id, remote_project, source, state, started_at, ended_at, error, created_at, \
          updated_at";
 
-    let attributed: Row = sqlx::query_as(&format!(
+    let attributed: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM orch_runs WHERE external_run_id = 'run-attributed'"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("fetch attributed run");
@@ -829,9 +829,9 @@ async fn test_migration_037_rebuild_preserves_every_row_and_field_equality() {
         attributed.updated_at
     );
 
-    let cli_run: Row = sqlx::query_as(&format!(
+    let cli_run: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM orch_runs WHERE external_run_id = 'run-cli'"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("fetch cli run");
