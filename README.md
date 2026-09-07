@@ -150,7 +150,7 @@ the single `tack` binary — no Docker, no database server, no separate frontend
 | **Footprint** | 10.3 MiB binary (UI embedded), ~11.7 MiB idle memory — measured in [Benchmarks](docs/BENCHMARKS.md) |
 
 Building from source instead needs [Rust 1.89+](https://rustup.rs/) and
-[Node.js 20+](https://nodejs.org/).
+[Node.js 22+](https://nodejs.org/).
 
 ## Run it
 
