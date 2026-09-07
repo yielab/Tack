@@ -7,7 +7,7 @@
 [package]
 name = "tack-desktop"
 description = "Desktop app that supervises the tack server as a background process"
-version = "0.1.0-beta.7"
+version = "0.1.0-beta.8"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"

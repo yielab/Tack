@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.1.0-beta.8] - 2026-09-07
+
 ### Added
 
 - **An Agents page** (`/agents`) is the one screen that owns the whole path from an
@@ -47,8 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness adapter dropped the reference with a warning, so a run looked healthy while the
   key never arrived.
 - **`tack service install|uninstall|status`** registers the board as a per-user background
-  service — systemd user units, launchd, or a Windows scheduled task — so work outlives the
-  window that started it. No root on any platform.
+  service — a systemd user unit on Linux, a launchd agent on macOS — so work outlives the
+  window that started it. No root, and no Windows implementation: there, the desktop app is
+  the answer.
 - **An attempt's artifacts and decisions are listable**: `GET
   /api/executions/{request_id}/attempts/{attempt_number}/artifacts` and `.../decisions`,
   operator-gated and read-only. The decision inbox and artifact panel fetch these instead of
@@ -56,11 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`tack-desktop`**, a Tauri shell that owns a window and a desktop icon and supervises
   `tack` as a bundled sidecar — attaching to a server that already answers, starting one
   only when none does. Built with `make desktop`.
-- **Downloadable desktop app bundles for Linux and Windows**: `.AppImage` and `.deb` on
-  Linux, `.msi` on Windows, built by a new `release.yml` job alongside the existing
-  archives. Unsigned, like the archives, so the release notes carry the same two
-  first-run warnings. macOS bundles aren't produced yet — blocked on two pre-existing
-  cross-compile issues unrelated to the desktop app itself.
+- **Downloadable desktop app bundles**: `.AppImage` and `.deb` on Linux, `.dmg` for both
+  macOS architectures, `.msi` on Windows, built by a new `release.yml` job alongside the
+  existing archives. Unsigned, like the archives, so the release notes carry the same two
+  first-run warnings. The Linux and Windows bundles have been produced by a real run; the
+  macOS ones are in the matrix but have not yet been observed to build.
 
 ### Changed
 
@@ -119,6 +126,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Editing a sprint saves.** The sprint editor sent `PATCH /api/sprints/{id}`, which the
+  router never registered — every edit answered `405` and the dialog reported a failure with
+  no way forward. The route exists now and replaces a sprint's name, goal and dates as a
+  unit, so clearing a field in the form clears it in the database. `status` still moves
+  through `PATCH /api/sprints/{id}/status`, which is what fires the lifecycle webhooks.
+- **`TACK_LOG_FILE` writes a log file.** The variable was parsed and then ignored: nothing
+  ever built a file writer, so logs went only to stdout. Both `tack service install` and the
+  desktop app set this variable, which meant the two surfaces least likely to have a terminal
+  attached were the two whose logs went nowhere a person could read them. Logs now go to the
+  file *and* stdout, in whichever format `TACK_LOG_JSON` selects.
 - **The Coverage CI job no longer fails on every pull request.** `cargo llvm-cov` runs
   every test in one process, and the server's tracing setup called `.init()`
   unconditionally on the global subscriber — fine under the normal test runner, where
@@ -1217,22 +1234,21 @@ Built with:
 
 ---
 
-## Version Numbering
+## Version numbering
 
-**Format:** MAJOR.MINOR.PATCH
-
-- **MAJOR:** Breaking API changes
-- **MINOR:** New features, backward-compatible
-- **PATCH:** Bug fixes, backward-compatible
-
-**Current Version:** 1.0.0 (Production Release)
+`MAJOR.MINOR.PATCH`, per [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
+breaking API changes bump MAJOR, backward-compatible features bump MINOR, backward-compatible
+fixes bump PATCH. While the version carries a `-beta.N` suffix the API is not yet stable, and
+a beta bump may include a breaking change — each one is called out under **Changed** above.
+The workspace version in `Cargo.toml` is the single source of truth; a release tag that does
+not match it fails its own first job.
 
 ---
 
 ## Links
 
-- **Repository:** https://github.com/user/tack (example)
-- **Documentation:** [README.md](README.md)
-- **API Reference:** [docs/API-REFERENCE.md](docs/API-REFERENCE.md)
-- **Deployment Guide:** [docs/DEPLOYMENT-GUIDE.md](docs/DEPLOYMENT-GUIDE.md)
-- **Quick Reference:** [QUICK-REFERENCE.md](QUICK-REFERENCE.md)
+- **Repository:** https://github.com/yielab/tack
+- **Documentation:** https://yielab.github.io/tack/
+- **API reference:** [docs/API-REFERENCE.md](docs/API-REFERENCE.md)
+- **Deployment guide:** [docs/DEPLOYMENT-GUIDE.md](docs/DEPLOYMENT-GUIDE.md)
+- **Security policy:** [SECURITY.md](SECURITY.md)
