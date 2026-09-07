@@ -2916,7 +2916,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["update_sprint"];
         trace?: never;
     };
     "/api/sprints/{id}/dispatch": {
@@ -5230,6 +5230,21 @@ export interface components {
             name?: string | null;
             vocabulary?: null | components["schemas"]["HashMap"];
             workflow?: null | components["schemas"]["WorkflowConfig"];
+        };
+        /**
+         * @description A full replacement of a sprint's editable fields. Every field is written as
+         *     given, so an omitted `goal`, `start_date` or `end_date` clears the stored
+         *     value rather than leaving it alone — the edit form always sends all four,
+         *     and an empty box there means the user cleared it. `status` is not here: it
+         *     moves through its own route, which fires the lifecycle webhooks.
+         */
+        UpdateSprint: {
+            /** Format: date-time */
+            end_date?: string | null;
+            goal?: string | null;
+            name: string;
+            /** Format: date-time */
+            start_date?: string | null;
         };
         UpdateSprintStatus: {
             status: components["schemas"]["SprintStatus"];
@@ -8818,6 +8833,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Sprint"];
+                };
+            };
+            /** @description Sprint not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_sprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sprint ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSprint"];
+            };
+        };
+        responses: {
+            /** @description The updated sprint */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sprint"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Sprint not found */

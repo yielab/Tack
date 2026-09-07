@@ -11,7 +11,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.1.0-beta.7"
+    "version": "0.1.0-beta.8"
   },
   "paths": {
     "/api/agent-profiles": {
@@ -6128,6 +6128,66 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "sprints"
+        ],
+        "operationId": "update_sprint",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Sprint ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSprint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The updated sprint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sprint"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Sprint not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/sprints/{id}/dispatch": {
@@ -12030,6 +12090,38 @@
                 "$ref": "#/components/schemas/WorkflowConfig"
               }
             ]
+          }
+        }
+      },
+      "UpdateSprint": {
+        "type": "object",
+        "description": "A full replacement of a sprint's editable fields. Every field is written as\ngiven, so an omitted `goal`, `start_date` or `end_date` clears the stored\nvalue rather than leaving it alone — the edit form always sends all four,\nand an empty box there means the user cleared it. `status` is not here: it\nmoves through its own route, which fires the lifecycle webhooks.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "end_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "goal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },

@@ -858,6 +858,7 @@ impl OpenApi for ExecutionOperatorExtrasApiDoc {
         handlers::sprints::create_sprint,
         handlers::sprints::list_sprints,
         handlers::sprints::get_sprint,
+        handlers::sprints::update_sprint,
         handlers::sprints::update_sprint_status,
         // ── Roles ─────────────────────────────────────────────────────────
         handlers::roles::create_role,
@@ -978,6 +979,7 @@ impl OpenApi for ExecutionOperatorExtrasApiDoc {
         ItemDetail,
         handlers::boards_multi::BoardViewResponse,
         handlers::boards_multi::BoardColumnWithItems,
+        tack_core::models::UpdateSprint,
         handlers::sprints::UpdateSprintStatus,
         handlers::templates::CreateProjectFromTemplate,
         handlers::templates::SaveAsTemplateRequest,

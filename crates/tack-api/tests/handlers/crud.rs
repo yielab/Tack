@@ -1083,6 +1083,94 @@ async fn sprint_status_transitions_to_active() {
     assert_eq!(s["status"], "active");
 }
 
+#[tokio::test]
+async fn editing_a_sprint_rewrites_its_fields_and_clears_the_ones_left_out() {
+    use axum::body::to_bytes;
+    let (app, _) = common::test_app().await;
+    let pid = make_project(&app).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/projects/{pid}/sprints"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"Sprint A","goal":"Ship the MVP","start_date":"2026-01-01T00:00:00Z"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = to_bytes(res.into_body(), 65536).await.unwrap();
+    let sprint: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let sid = sprint["id"].as_str().unwrap().to_owned();
+
+    // The edit form sends every editable field it holds, so a goal and a start
+    // date the user emptied arrive omitted and must end up NULL — not left at
+    // their old values.
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!("/api/sprints/{sid}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"name":"Sprint A, renamed"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+
+    let get = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/sprints/{sid}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = to_bytes(get.into_body(), 65536).await.unwrap();
+    let s: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(s["name"], "Sprint A, renamed");
+    assert!(
+        s["goal"].is_null(),
+        "an omitted goal must clear, got {}",
+        s["goal"]
+    );
+    assert!(
+        s["start_date"].is_null(),
+        "an omitted start_date must clear, got {}",
+        s["start_date"]
+    );
+    // The edit route leaves the lifecycle alone; only the status route moves it.
+    assert_eq!(s["status"], "planning");
+}
+
+#[tokio::test]
+async fn editing_a_sprint_that_does_not_exist_is_a_404() {
+    let (app, _) = common::test_app().await;
+    let missing = uuid::Uuid::new_v4();
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!("/api/sprints/{missing}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"name":"Nowhere"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
 // ─── Role CRUD ────────────────────────────────────────────────────────────────
 
 #[tokio::test]

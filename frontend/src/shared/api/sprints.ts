@@ -20,9 +20,9 @@ export const sprints = {
       body: JSON.stringify(data),
     }),
 
-  // NOTE: the backend currently only exposes PATCH /sprints/{id}/status
-  // (see router.rs). A full-sprint edit endpoint does not exist yet; this
-  // preserves the existing page behavior until a full edit endpoint exists.
+  // A full replacement of the editable fields: whatever the edit form holds
+  // is written, so an empty box clears the stored value. Status moves through
+  // `setStatus` instead, which is what fires the lifecycle webhooks.
   update: (id: string, data: SprintInput) =>
     request<Sprint>(`/sprints/${id}`, {
       method: 'PATCH',

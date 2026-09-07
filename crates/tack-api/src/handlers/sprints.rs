@@ -4,7 +4,7 @@ use chrono::Utc;
 use tracing::instrument;
 use uuid::Uuid;
 
-use tack_core::models::{CreateSprint, SprintStatus};
+use tack_core::models::{CreateSprint, SprintStatus, UpdateSprint};
 use validator::Validate;
 
 use crate::error::{ApiError, ApiResult};
@@ -78,6 +78,52 @@ pub async fn get_sprint(
         .get_sprint(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Sprint {id} not found")))?;
+    Ok(Json(serde_json::to_value(sprint).unwrap()))
+}
+
+#[instrument(skip(state))]
+#[utoipa::path(
+    patch,
+    path = "/api/sprints/{id}",
+    tag = "sprints",
+    params(
+        ("id" = Uuid, Path, description = "Sprint ID"),
+    ),
+    request_body = tack_core::models::UpdateSprint,
+    responses(
+        (status = 200, description = "The updated sprint", body = tack_core::models::Sprint),
+        (status = 400, description = "Validation error", body = crate::openapi::ErrorEnvelope),
+        (status = 404, description = "Sprint not found", body = crate::openapi::ErrorEnvelope),
+    ),
+)]
+pub async fn update_sprint(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateSprint>,
+) -> ApiResult<Json<serde_json::Value>> {
+    input
+        .validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    let sprint = state
+        .repo
+        .update_sprint(id, input)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Sprint {id} not found")))?;
+
+    if let Some(wh) = &state.webhook {
+        wh.fire(
+            "sprint.updated",
+            serde_json::json!({
+                "event": "sprint.updated",
+                "timestamp": Utc::now().to_rfc3339(),
+                "project_id": sprint.project_id,
+                "sprint_id": id,
+                "sprint_name": sprint.name,
+            }),
+        );
+    }
+
     Ok(Json(serde_json::to_value(sprint).unwrap()))
 }
 

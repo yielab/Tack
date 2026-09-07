@@ -2,7 +2,7 @@ use chrono::Utc;
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
-use tack_core::models::{CreateSprint, Sprint, SprintStatus};
+use tack_core::models::{CreateSprint, Sprint, SprintStatus, UpdateSprint};
 
 use super::Repository;
 
@@ -71,6 +71,36 @@ impl Repository {
         .await?;
 
         Ok(rows.into_iter().map(|r| r.into_sprint()).collect())
+    }
+
+    /// Replaces a sprint's editable fields and returns the stored row, or
+    /// `None` when no sprint has that id. `status` is untouched here.
+    #[instrument(skip(self))]
+    pub async fn update_sprint(
+        &self,
+        id: Uuid,
+        input: UpdateSprint,
+    ) -> Result<Option<Sprint>, sqlx::Error> {
+        let now = Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "UPDATE sprints SET name = ?, goal = ?, start_date = ?, end_date = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&input.name)
+        .bind(&input.goal)
+        .bind(input.start_date.map(|d| d.to_rfc3339()))
+        .bind(input.end_date.map(|d| d.to_rfc3339()))
+        .bind(&now)
+        .bind(id.to_string())
+        .execute(self.pool())
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+
+        debug!(sprint_id = %id, "Sprint updated");
+        self.get_sprint(id).await
     }
 
     #[instrument(skip(self))]

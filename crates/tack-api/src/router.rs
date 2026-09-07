@@ -429,7 +429,10 @@ pub fn build_router(state: AppState) -> Router {
             post(sprints::create_sprint),
         )
         .route("/projects/{project_id}/sprints", get(sprints::list_sprints))
-        .route("/sprints/{id}", get(sprints::get_sprint))
+        .route(
+            "/sprints/{id}",
+            get(sprints::get_sprint).patch(sprints::update_sprint),
+        )
         .route("/sprints/{id}/status", patch(sprints::update_sprint_status))
         // ─── Roles ───────────────────────────────────────────────────────
         .route("/projects/{project_id}/roles", post(roles::create_role))

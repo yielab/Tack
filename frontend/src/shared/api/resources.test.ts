@@ -76,6 +76,12 @@ describe('api.sprints (Sprints)', () => {
     await api.sprints.create('p1', { name: 'Sprint 1' });
     expect(lastCall()).toMatchObject({ url: '/api/projects/p1/sprints', method: 'POST' });
   });
+  it('update → PATCH /api/sprints/{id} with the editable fields', async () => {
+    await api.sprints.update('s1', { name: 'Renamed', goal: 'Ship it' });
+    const c = lastCall();
+    expect(c).toMatchObject({ url: '/api/sprints/s1', method: 'PATCH' });
+    expect(JSON.parse(c.body as string)).toEqual({ name: 'Renamed', goal: 'Ship it' });
+  });
   it('setStatus → PATCH /api/sprints/{id}/status with body', async () => {
     await api.sprints.setStatus('s1', 'active');
     const c = lastCall();

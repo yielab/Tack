@@ -526,6 +526,22 @@ pub struct CreateSprint {
     pub end_date: Option<DateTime<Utc>>,
 }
 
+/// A full replacement of a sprint's editable fields. Every field is written as
+/// given, so an omitted `goal`, `start_date` or `end_date` clears the stored
+/// value rather than leaving it alone — the edit form always sends all four,
+/// and an empty box there means the user cleared it. `status` is not here: it
+/// moves through its own route, which fires the lifecycle webhooks.
+#[derive(Debug, Deserialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct UpdateSprint {
+    #[validate(length(min = 1, max = 200, message = "name must be 1–200 characters"))]
+    pub name: String,
+    #[validate(length(max = 2_000, message = "goal too long (max 2 000 chars)"))]
+    pub goal: Option<String>,
+    pub start_date: Option<DateTime<Utc>>,
+    pub end_date: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Deserialize, Validate)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CreateRole {
