@@ -328,6 +328,27 @@ fn security_preflight(config: &AppConfig) -> anyhow::Result<()> {
     config.validate_security()
 }
 
+/// Splits a configured log-file path into the directory and file name a file
+/// appender needs, creating the directory if it is missing. Returns `None`
+/// when the path names no file, or when its directory cannot be created —
+/// logging to stdout is never given up because a file could not be opened.
+fn log_file_target(path: &str) -> Option<(std::path::PathBuf, std::ffi::OsString)> {
+    let path = std::path::Path::new(path);
+    let name = path.file_name()?.to_owned();
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!(
+            "tack: cannot create the log directory {}: {e}; logging to stdout only",
+            dir.display()
+        );
+        return None;
+    }
+    Some((dir, name))
+}
+
 fn init_tracing(config: &AppConfig) {
     use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -344,6 +365,17 @@ fn init_tracing(config: &AppConfig) {
         .with_file(true)
         .with_line_number(true);
 
+    // A configured log file is written *in addition to* stdout, never instead
+    // of it: a service manager captures stdout, and the file is what someone
+    // can open without one. Colour codes are left out — nothing reads this
+    // file through a terminal. The layer itself is built inside each branch
+    // below because a layer is typed by the subscriber it stacks onto, and
+    // the two branches stack onto different ones.
+    let file_target = config.log_file.as_deref().and_then(log_file_target);
+    let file_writer = |(dir, name): (std::path::PathBuf, std::ffi::OsString)| {
+        tracing_appender::rolling::never(dir, name)
+    };
+
     // `try_init` rather than `init`: this process may call `serve_inner` more
     // than once (multiple in-process servers under one test binary, e.g. under
     // `cargo llvm-cov`, which runs all tests as one process rather than
@@ -355,11 +387,26 @@ fn init_tracing(config: &AppConfig) {
         let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer.json())
+            .with(file_target.map(|t| {
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_writer(file_writer(t))
+                    .json()
+            }))
             .try_init();
     } else {
         let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
+            .with(file_target.map(|t| {
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_writer(file_writer(t))
+            }))
             .try_init();
     }
 }
@@ -623,6 +670,63 @@ mod tests {
             .prefix(tag)
             .tempdir()
             .expect("temporary directory")
+    }
+
+    #[test]
+    fn a_configured_log_path_creates_its_directory_and_splits_into_dir_and_name() {
+        let dir_guard = workdir("log-target");
+        let nested = dir_guard.path().join("logs").join("tack.log");
+        assert!(!nested.parent().unwrap().exists());
+
+        let (dir, name) = log_file_target(nested.to_str().unwrap()).expect("a usable target");
+
+        assert_eq!(dir, nested.parent().unwrap());
+        assert_eq!(name, "tack.log");
+        assert!(
+            dir.is_dir(),
+            "the log directory must be created, not assumed"
+        );
+    }
+
+    #[test]
+    fn a_bare_file_name_logs_beside_the_working_directory() {
+        let (dir, name) = log_file_target("tack.log").expect("a usable target");
+        assert_eq!(dir, Path::new("."));
+        assert_eq!(name, "tack.log");
+    }
+
+    #[test]
+    fn a_path_naming_no_file_is_refused_rather_than_guessed() {
+        assert!(log_file_target("/").is_none());
+        assert!(log_file_target("..").is_none());
+    }
+
+    /// The whole point of the setting: after `init_tracing` has read a config
+    /// carrying a log path, a line logged through the global subscriber has to
+    /// land in that file. Asserting that a layer was constructed would have
+    /// passed for the entire time this setting silently did nothing. This test
+    /// installs the process-wide subscriber, so it must stay the only test in
+    /// this binary that does.
+    #[test]
+    fn a_configured_log_file_receives_the_lines_that_are_logged() {
+        let dir_guard = workdir("log-write");
+        let path = dir_guard.path().join("logs").join("tack.log");
+
+        let config = AppConfig {
+            log_file: Some(path.to_string_lossy().into_owned()),
+            log_level: "info".into(),
+            log_json: false,
+            ..AppConfig::default()
+        };
+        init_tracing(&config);
+
+        tracing::error!(marker = "written-to-the-file", "log file smoke line");
+
+        let written = fs::read_to_string(&path).expect("the log file must exist");
+        assert!(
+            written.contains("written-to-the-file"),
+            "the configured log file got no line; it holds: {written:?}"
+        );
     }
 
     /// The DB swap succeeds but the storage swap fails — the whole
