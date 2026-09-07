@@ -1,5 +1,5 @@
 import { type Component, For, Show } from 'solid-js';
-import { Badge } from '../../../shared/ui';
+import { Badge, type BadgeTone } from '../../../shared/ui';
 import { gateFeature, gateFeatureAcrossRunners, type FeatureName } from '../../../shared/execution';
 import type { RunnerCapabilities } from '../../../shared/execution';
 import { formatCapacity, formatLabelChips } from './format';
@@ -35,6 +35,25 @@ const STATUS_TONE: Record<RunnerConnectionStatus, 'neutral' | 'warning' | 'succe
   healthy: 'success',
   unconfigured: 'warning',
 };
+
+/** Badge tone/label for a runner's real `state` field (`GET /runners`,
+ *  `RunnerSummary.state`) — distinct from `RunnerConnectionStatus` above,
+ *  which describes what this browser session's own enrollment history has
+ *  confirmed, not what the server currently records. `state` needs no
+ *  staleness guess: `active`/`pending_enrollment`/`revoked` are exactly
+ *  what the database holds right now. */
+export function runnerStateBadge(state: string): { tone: BadgeTone; label: string } {
+  switch (state) {
+    case 'active':
+      return { tone: 'success', label: 'Active' };
+    case 'pending_enrollment':
+      return { tone: 'neutral', label: 'Pending enrollment' };
+    case 'revoked':
+      return { tone: 'warning', label: 'Revoked' };
+    default:
+      return { tone: 'neutral', label: state };
+  }
+}
 
 const FEATURES: FeatureName[] = ['cancel', 'resume', 'decisions', 'artifacts', 'usage'];
 const FEATURE_LABEL: Record<FeatureName, string> = {

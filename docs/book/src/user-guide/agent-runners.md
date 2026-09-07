@@ -639,20 +639,6 @@ since a reader who remembered the old claim deserves to see it was wrong and why
   by array index (`frontend/src/shared/runWithAgent/RunWithAgentModal.tsx`). Nothing
   in this tree calls `POST /api/model-profiles` from the UI today; the table exists
   and answers, with no caller.
-- **`agent_fleet_members` has a write route; nothing in the UI calls it yet.**
-  `POST /api/runner-fleets/{fleet_id}/members` and `DELETE
-  .../members/{runner_id}` exist and work (`crates/tack-api/src/handlers/runner_admin.rs`)
-  — live-verified for this page:
-  ```sh
-  curl -X POST http://127.0.0.1:3210/api/runner-fleets/<fleet_id>/members \
-    -d '{"runner_id":"<runner_id>"}'
-  ```
-
-  ```text
-  {"protocol_version":1,"fleet_id":"fleet_64ab2a19-...","runner_id":"runr_8fa0dfb9-...","state":"added"}
-  ```
-  but the Fleet panel in the web UI has no control that calls either route — adding a
-  runner to a fleet today means calling the API directly.
 - **`execution_requests` has no real `priority` column.** A `metadata`-convention
   stopgap exists, documented as non-binding.
 - **Webkit could not be evaluated** in this build environment (missing

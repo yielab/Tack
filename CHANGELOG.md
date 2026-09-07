@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   come from the project's own agent settings, and the model list is the target's own
   declared models plus "Project default" — never a runner id or a model string typed
   from memory.
+- **The Fleets panel shows and edits a fleet's roster.** Each fleet lists its current
+  members (derived from `GET /runners`) with an add/remove control — the two
+  membership routes existed with no UI caller before this.
 - **A project can name its own default agent model.** Model choice gains a project tier
   between the agent profile and the fleet default, edited from the Agents panel in project
   settings; a run that takes the value reports `project` as its provenance.

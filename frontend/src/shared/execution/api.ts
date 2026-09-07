@@ -244,6 +244,16 @@ export interface CreateFleetResult {
   name: string;
 }
 
+/** Response to both `POST .../members` and `DELETE .../members/{runner_id}`
+ *  (`crates/tack-api/src/handlers/runner_admin.rs`). `state` is `"added"`,
+ *  `"already_member"` (idempotent re-add — not an error) or `"removed"`. */
+export interface FleetMemberResult {
+  protocol_version: number;
+  fleet_id: string;
+  runner_id: string;
+  state: 'added' | 'already_member' | 'removed' | (string & {});
+}
+
 export const fleetsApi = {
   list: () => requestWithHeaders<FleetListResult>('/runner-fleets'),
   create: (input: CreateFleetInput) =>
@@ -251,6 +261,16 @@ export const fleetsApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  addMember: (fleetId: string, runnerId: string) =>
+    request<FleetMemberResult>(`/runner-fleets/${encodeURIComponent(fleetId)}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ runner_id: runnerId }),
+    }),
+  removeMember: (fleetId: string, runnerId: string) =>
+    request<FleetMemberResult>(
+      `/runner-fleets/${encodeURIComponent(fleetId)}/members/${encodeURIComponent(runnerId)}`,
+      { method: 'DELETE' },
+    ),
 };
 
 // ── Agent profiles ─────────────────────────────────────────────────────────
