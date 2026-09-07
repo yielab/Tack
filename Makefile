@@ -73,9 +73,10 @@ gif: frontend/node_modules ## Capture hero GIF → docs/screenshots/hero.gif (re
 	cd frontend && npx playwright test e2e/hero-gif.spec.ts --config playwright.capture.config.ts --project=chromium --workers=1
 
 # ─── Security & Performance ──────────────────────
-audit: ## Scan Rust + npm dependencies for known CVEs
+audit: ## Scan Rust + npm dependencies for known CVEs (both workspaces + frontend)
 	@command -v cargo-audit >/dev/null 2>&1 || { echo "Installing cargo-audit..."; cargo install cargo-audit --locked; }
 	cargo audit
+	cargo audit --file crates/tack-desktop/Cargo.lock
 	npm --prefix frontend audit --audit-level=high
 
 load: ## Run the k6 load test (requires a running API on :3210 and k6 installed)

@@ -422,6 +422,16 @@ jobs:
           tool: cargo-audit
       - name: Rust dependency audit (honors .cargo/audit.toml)
         run: cargo audit
+      # tack-desktop is a separate workspace with its own Cargo.lock, so the run
+      # above never reads it — `cargo audit` resolves the lockfile from the
+      # working directory, not from the repository. Without this step the
+      # desktop app ships dependencies no gate has ever looked at: its GTK3
+      # binding stack is unmaintained upstream and Dependabot was the only
+      # thing reporting it. `--file` rather than a second `working-directory`
+      # so the root `.cargo/audit.toml` stays out of scope: the two workspaces
+      # justify their exceptions separately.
+      - name: Rust dependency audit (tack-desktop workspace)
+        run: cargo audit --file crates/tack-desktop/Cargo.lock
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
