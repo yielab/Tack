@@ -107,10 +107,11 @@ coverage: ## Rust + frontend coverage against CI's thresholds (see ci.yml's `cov
 		--coverage.thresholds.lines=70 --coverage.thresholds.functions=70 \
 		--coverage.thresholds.statements=70 --coverage.thresholds.branches=60
 
-deny: ## Dependency policy check (policy generated to match ci.yml's `deny` job exactly)
+deny: ## Dependency policy check, both workspaces (policy generated to match ci.yml's `deny` job exactly)
 	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install cargo-deny --locked; }
 	@./scripts/gen-deny-toml.sh
 	cargo deny check
+	cargo deny --manifest-path crates/tack-desktop/Cargo.toml check
 
 # ─── Database ────────────────────────────────────
 reset-db: ## Delete the database (auto-recreated on next run)

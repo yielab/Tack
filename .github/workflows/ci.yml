@@ -257,14 +257,16 @@ jobs:
         run: ./scripts/gen-deny-toml.sh
       - name: cargo deny check
         run: cargo deny check
-      # tack-desktop is a separate workspace, so the run above never sees Tauri's
-      # dependency tree — the largest one in the repository and the one most
-      # likely to introduce an unapproved license. Its advisories stay out of
-      # this gate: Tauri's Linux (GTK/WebKit) bindings alone carry more than a
-      # dozen pre-existing "unmaintained" advisories with no upstream fix, which
-      # is a review of its own, not a duplicate-deps/license check.
+      # tack-desktop is a separate workspace (its own Cargo.lock), so the run
+      # above never sees Tauri's dependency tree — the largest one in the
+      # repository. cargo-deny resolves its config from the manifest-path
+      # directory, so this step reads crates/tack-desktop/deny.toml (also
+      # generated above) rather than the root file, and runs the same
+      # unrestricted check: every one of its unmaintained-advisory findings
+      # is an explained, dated ignore entry rather than a narrowed category
+      # list.
       - name: cargo deny check (tack-desktop workspace)
-        run: cargo deny --manifest-path crates/tack-desktop/Cargo.toml check licenses bans
+        run: cargo deny --manifest-path crates/tack-desktop/Cargo.toml check
 
   frontend:
     name: Frontend (typecheck + build)
