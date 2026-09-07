@@ -13,25 +13,48 @@ use std::sync::Mutex;
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
 use paths::DataPaths;
 use supervisor::{
-    Outcome, SidecarHandle, SidecarLauncher, SupervisorError, attach_or_start, shutdown,
+    ExitReport, Outcome, SidecarHandle, SidecarLauncher, SupervisorError, attach_or_start, shutdown,
 };
 
-/// [`SidecarHandle`] backed by the real Tauri sidecar child.
-struct TauriSidecarHandle(CommandChild);
+/// [`SidecarHandle`] backed by the real Tauri sidecar child. Keeps the event
+/// receiver `spawn` returns alongside the child so [`exited`](Self::exited)
+/// can drain it for the `Terminated` event — `CommandChild` alone has no
+/// `try_wait`.
+struct TauriSidecarHandle {
+    child: CommandChild,
+    events: tauri::async_runtime::Receiver<CommandEvent>,
+}
 
 impl SidecarHandle for TauriSidecarHandle {
     fn pid(&self) -> u32 {
-        self.0.pid()
+        self.child.pid()
     }
 
     fn kill(self) -> std::io::Result<()> {
-        self.0
+        self.child
             .kill()
             .map_err(|e| std::io::Error::other(e.to_string()))
+    }
+
+    fn exited(&mut self) -> Option<ExitReport> {
+        loop {
+            match self.events.try_recv() {
+                Ok(CommandEvent::Terminated(payload)) => {
+                    return Some(ExitReport {
+                        code: payload.code,
+                        signal: payload.signal,
+                    });
+                }
+                // Stdout/stderr/error events are noise for this watch; drain
+                // past them rather than stopping on the first one.
+                Ok(_) => continue,
+                Err(_) => return None,
+            }
+        }
     }
 }
 
@@ -57,20 +80,23 @@ impl SidecarLauncher for TauriLauncher {
         for (key, value) in env {
             command = command.env(key, value);
         }
-        let (_events, child) = command
+        let (events, child) = command
             .spawn()
             .map_err(|e| SupervisorError::SpawnFailed(e.to_string()))?;
-        Ok(TauriSidecarHandle(child))
+        Ok(TauriSidecarHandle { child, events })
     }
 }
 
 /// Holds whatever the supervisor decided so the shutdown path (on app exit)
 /// knows whether there is a child to stop. `None` until the async setup task
 /// resolves; `Attached` is never touched on exit (rule: never stop a server
-/// this app did not start).
+/// this app did not start). `Stopped` replaces `Started` once the tray's
+/// watch has observed the child exit on its own, so the exit-requested
+/// handler below stops matching a process that is already gone.
 enum ServerMode {
     Attached,
     Started(TauriSidecarHandle),
+    Stopped,
 }
 
 struct DesktopState(Mutex<Option<ServerMode>>);

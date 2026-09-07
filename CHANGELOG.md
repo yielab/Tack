@@ -175,6 +175,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rust-toolchain` ecosystem. Three `chunks_exact` sites the newer clippy rejects are
   rewritten as `as_chunks`; the SHA-256 implementation still matches its published test
   vectors.
+- **The desktop app now notices a server it is showing has gone.** A server it started
+  exiting on its own left a zombie child, a window showing a dead page, and a Quit that
+  would try to kill a pid that was already gone; a server it attached to going quiet just
+  sat there as a stale status line with no explanation. The tray now watches both on its
+  existing three-second poll: a started server that exits gets one dialog naming its exit
+  status and its status line reads accordingly, never signalled again on Quit; an attached
+  server missing five consecutive polls gets one dialog explaining this app did not start
+  it, and the line recovers on its own if the server answers again.
 - **The desktop app's first run no longer hangs with no window and no explanation.**
   Its first-run dialog (database path, port) ran on Tauri's own main thread, which the
   dialog plugin's own docs call out as fatal — the call never returned, so an empty data
