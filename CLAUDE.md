@@ -17,7 +17,7 @@ one screen that owns the path from an installed binary to a completed attempt, p
 model choice, Vercel AI Gateway as a runner-side provider — Waves 14–16 integrated, Wave 17
 proof and assets left), **Part V** (Phase 59, adoption + first public release — Wave 13, only
 V-C3 left) and **Part VII** (Phase 61, desktop app + background service — ADR 0062 accepted;
-Waves 18–20 integrated, a corrections wave then the stranger proof left; dispatch plan in
+**done 2026-09-07**, closed by VII-D1's stranger walk; dispatch plan in
 `docs/agent-handoffs/part-vii/README.md`). Part IV (Phase 58, `tack serve --with-runner`) is
 done. **These status lines decay in days — `TODO.md`'s "Which board is live" table is the
 authority, not this paragraph.** Both active Parts branch from `develop` and share `README.md` and
