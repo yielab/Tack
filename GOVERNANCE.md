@@ -34,8 +34,10 @@ process.
 
 Decisions are weighed against the project's core philosophy:
 
-- **Single binary, single file.** Keep Tack a ~10 MB binary with one SQLite file;
-  resist dependencies and features that bloat it.
+- **Single binary, single file.** One binary, one SQLite file, no runtime to install.
+  Binary size is a budget, not a slogan: it is measured in
+  [Benchmarks](docs/BENCHMARKS.md), and a change that moves it is expected to say so
+  and to justify the move.
 - **Universal work tracking with domain-specific vocabulary.** Features should
   serve the solo-developer / small-team use case across diverse domains.
 - **Local-first and honest.** Prefer local, offline-capable behavior; keep docs

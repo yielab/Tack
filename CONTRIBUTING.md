@@ -26,7 +26,7 @@ cargo nextest run --workspace
 
 `scripts/setup-git.sh` wires up two things:
 
-- **`.githooks/pre-push`** runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and a check that `Cargo.lock` and `schema.gen.ts` are not stale. This mirrors CI, so failures are caught locally before they reach GitHub.
+- **`.githooks/pre-push`** runs the comment and test-hygiene checks, `cargo fmt --all --check` for the root workspace *and*, separately, for `crates/tack-desktop` (its own workspace), `cargo clippy --workspace --all-targets -- -D warnings`, and a check that `Cargo.lock` and (when `frontend/node_modules` exists) `schema.gen.ts` are not stale — not the test suite. This mirrors most of what CI's `rust` job checks before the test run, so failures are caught locally before they reach GitHub. See "Pull Request Process" below for the exact command.
 - **The `tack-generated` merge driver** for `Cargo.lock`, `frontend/package-lock.json`, `docs/openapi.json` and `frontend/src/shared/api/schema.gen.ts`. Each is a pure function of sources tracked elsewhere, so hand-merging one is always either busywork or a mistake. The driver resolves them without a conflict and `.githooks/post-merge` regenerates them from the merged sources — staged, never committed for you. `scripts/regen-generated.sh` is the same regeneration, runnable by hand.
 
 `rust-toolchain.toml` pins the exact compiler both you and CI use, and rustup installs it with `rustfmt` and `clippy` the first time you run `cargo` here — you do not need to select a toolchain yourself, and you should not override it. Bumping that pin is a deliberate one-line change that Dependabot proposes monthly; it can surface new clippy lints, which is precisely why it is not left to whatever day upstream ships a release.
@@ -74,7 +74,8 @@ Tack/
 │   ├── tack-db/              # Database layer
 │   │   ├── src/
 │   │   │   ├── lib.rs          # Pool initialization, WAL mode
-│   │   │   ├── migrations.rs   # 18 schema migrations (auto-run on startup)
+│   │   │   ├── migrations.rs   # 62 schema migrations (auto-run on startup; live count is
+│   │   │   │                  #   GET /api/health's migrations_applied)
 │   │   │   ├── repo.rs         # Repository struct
 │   │   │   └── repo/           # One file per entity
 │   │   │       ├── projects.rs
@@ -88,9 +89,22 @@ Tack/
 │   │   │       ├── custom_fields.rs
 │   │   │       └── templates.rs
 │   │   └── tests/
-│   │       ├── repository.rs       # CRUD, retention, concurrency (one binary)
-│   │       ├── migrations.rs       # schema/upgrade tests (one binary)
+│   │       ├── repository/         # CRUD, retention, concurrency
+│   │       ├── migrations/         # schema/upgrade tests
 │   │       └── perf_test.rs        # 50k-item perf test (#[ignore])
+│   ├── tack-orch/            # Agent-fleet ControlPlane client + the neutral runner-v1
+│   │   │                     # execution domain. Depends on core+db only — must never
+│   │   │                     # depend on tack-api (tack-api depends on this crate).
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── reconciler.rs               # Polls each control plane, drives health state
+│   │       ├── adapters/                   # docket adapter + a Prometheus /metrics parser
+│   │       ├── execution/                  # Transport-free runner-v1 protocol types
+│   │       ├── scheduler/                  # Pure runner-selection decision library
+│   │       ├── model_policy/               # Deterministic model-selection precedence
+│   │       ├── execution_retention.rs      # Cancellable stale/terminal-row sweep
+│   │       ├── execution_observability.rs  # Id-free fleet health snapshot + alerts
+│   │       └── usage_provenance.rs         # Requested-vs-actual model + usage economics
 │   ├── tack-api/             # Axum HTTP server + WebSocket
 │   │   ├── src/
 │   │   │   ├── main.rs         # Server entry point + staged restore
@@ -108,7 +122,7 @@ Tack/
 │   │   │       ├── comments.rs
 │   │   │       ├── custom_fields.rs
 │   │   │       ├── dependencies.rs
-│   │   │       ├── export.rs           # JSON/CSV export + import
+│   │   │       ├── export.rs           # JSON/YAML/CSV export + JSON/YAML import
 │   │   │       ├── import_github.rs    # GitHub Issues import
 │   │   │       ├── import_linear.rs    # Linear import
 │   │   │       ├── items.rs
@@ -117,27 +131,52 @@ Tack/
 │   │   │       ├── spa.rs              # SPA fallback (--features embed-spa)
 │   │   │       ├── sprints.rs
 │   │   │       ├── templates.rs
-│   │   │       └── websocket.rs
+│   │   │       ├── websocket.rs
+│   │   │       ├── orch.rs, decisions.rs, executions.rs, runner_admin.rs,
+│   │   │       │   provisioning.rs, economics.rs, settings.rs, attempt_lists.rs,
+│   │   │       │   local_runner.rs   # operator execution/fleet/orchestration surface
+│   │   │       └── runner_protocol.rs + runner_protocol/  # /api/runner/v1, its own
+│   │   │                              # per-handler hashed-credential auth (runner_auth.rs)
 │   │   └── tests/
 │   │       ├── common/mod.rs       # test_app(), test_app_with_config()
-│   │       ├── handlers.rs         # CRUD, routes, economics, provisioning
-│   │       ├── orchestration.rs    # dispatch, approvals, reconciler, fleet
-│   │       ├── runner_protocol.rs  # lifecycle, decisions, artifact events
-│   │       ├── security.rs         # auth surfaces, CORS, write races
-│   │       ├── wiring.rs           # proofs that a seam is load-bearing
+│   │       ├── handlers/           # CRUD, routes, economics, provisioning (one file per area)
+│   │       ├── orchestration/      # dispatch, approvals, reconciler, fleet
+│   │       ├── runner_protocol/    # lifecycle, decisions, artifact events
+│   │       ├── security/           # auth surfaces, CORS, write races
+│   │       ├── wiring/             # proofs that a seam is load-bearing
+│   │       ├── openapi_contract.rs # spec-drift gate — regenerates and diffs docs/openapi.json
 │   │       └── wave2_gate.rs       # named CI gate, kept its own binary
-│   └── tack-cli/             # clap CLI (talks to API over HTTP)
+│   ├── tack-runner/          # Pull-based execution runner — its OWN binary, separate
+│   │   │                     # from `tack`. Owns local credentials, workspace, journal,
+│   │   │                     # and the harness subprocess `tack-api` must never touch.
+│   │   └── src/
+│   │       ├── main.rs, lib.rs
+│   │       ├── engine.rs        # Per-attempt lifecycle driving one HarnessAdapter
+│   │       ├── client.rs        # Polls /api/runner/v1: enroll, claim, heartbeat, …
+│   │       ├── journal.rs       # Owner-only TOML journal written before spawn
+│   │       ├── workspace.rs     # Isolated per-attempt workspace/worktree
+│   │       ├── secrets.rs       # Local vendor credential storage
+│   │       └── harness/         # process.rs, event_sink.rs, redact.rs, artifact.rs, and
+│   │                            # one module per harness: codex.rs, claude_code.rs
+│   └── tack-cli/             # clap CLI (talks to API over HTTP, never opens the DB)
 │       └── src/
-│           ├── main.rs         # All commands
+│           ├── main.rs         # `Commands` enum + dispatch
 │           ├── client.rs       # HTTP client wrapper (reqwest)
 │           ├── config.rs       # ~/.tackrc reader
+│           ├── mcp.rs          # `tack mcp` — MCP server over stdio
+│           ├── service.rs      # `tack service` — systemd/launchd background service
+│           ├── execution.rs    # `tack execution`/`fleet`/`runner` client commands
+│           ├── doctor.rs       # `tack doctor` diagnostics
 │           └── vocab.rs        # Vocabulary-aware output
 ├── frontend/
 │   ├── src/
-│   │   ├── components/         # Reusable UI components
-│   │   ├── pages/              # Board, List, Dashboard, Sprints, Calendar, Timeline, Settings, Templates
-│   │   ├── lib/                # api.ts, vocab.ts, websocket, optimistic UI
-│   │   └── types/              # TypeScript types
+│   │   ├── app/                # Root App/Layout components and routes.tsx
+│   │   ├── features/           # One directory per feature: board, list, sprints, fleet,
+│   │   │                       # agents, provisioning, economics, settings, …
+│   │   ├── shared/              # Cross-feature: api/ (generated client + schema.gen.ts),
+│   │   │                       # realtime/, orch/, execution/, ui/, state/, vocab/
+│   │   └── test/               # Vitest setup
+│   ├── e2e/                    # Playwright specs
 │   └── dist/                   # Built SPA (gitignored; embedded via --features embed-spa)
 └── docs/                       # Documentation
 ```
@@ -151,13 +190,22 @@ tack-core  (pure logic, no I/O)
 tack-db    (depends on core, adds SQLite)
      ^
      |
-tack-api   (depends on core + db, adds HTTP)
+     +-------------------+
+     |                   |
+tack-orch (depends    tack-api   (depends on core + db + orch, adds HTTP;
+  on core + db only;      spawns orch's reconciler and mounts its routes)
+  must never depend
+  on tack-api)
 
-tack-cli   (depends on core only — talks to tack-api over HTTP, no DB)
+tack-cli     (depends on core only — talks to tack-api over HTTP, no DB)
+tack-runner  (its own binary; talks to tack-api's /api/runner/v1 over HTTP,
+             no DB — owns local credentials and the harness subprocess instead)
 ```
 
 **Rule:** `tack-core` must never import `tack-db` or any I/O crate.
-Keep business logic testable without a database. `tack-cli` must never import
+Keep business logic testable without a database. `tack-orch` depends inward on
+`tack-core`/`tack-db` only and must never depend on `tack-api` — `tack-api` depends
+on `tack-orch`, not the reverse. `tack-cli` and `tack-runner` must never import
 `tack-db` — all data access goes through the HTTP API.
 
 ---
@@ -287,7 +335,7 @@ If you're looking for a focused starting point, these areas are self-contained a
 | New custom field type | Add a new type variant with validation logic | `tack-core/src/models.rs` (CustomFieldType + validate_value) |
 | Vocabulary translation | Add a non-English vocabulary pack for an existing project type | `tack-core/src/vocabulary.rs` |
 | CLI output polish | Improve table formatting or add a `--format table\|csv\|json` flag to a command | `tack-cli/src/main.rs` |
-| Frontend view polish | Fix a visual edge case, improve empty-state UX, or add keyboard shortcuts | `frontend/src/pages/` or `frontend/src/components/` |
+| Frontend view polish | Fix a visual edge case, improve empty-state UX, or add keyboard shortcuts | `frontend/src/features/` (the relevant feature) or `frontend/src/shared/ui/` |
 | Test coverage | Add handler tests for an endpoint that only has a smoke test | `crates/tack-api/tests/handlers/` |
 
 The crate layering rule is the main constraint: keep `tack-core` free of I/O and `tack-cli` free of direct DB access (all data goes through the HTTP API). See the Dependency Flow section above.
@@ -299,7 +347,7 @@ The crate layering rule is the main constraint: keep `tack-core` free of I/O and
 ### Adding a New Entity (e.g., "TimeEntry")
 
 1. **Define the model** in `crates/tack-core/src/models.rs`
-2. **Add a migration** in `crates/tack-db/src/migrations.rs` and add it to `run_all()`
+2. **Add a migration** in `crates/tack-db/src/migrations.rs` and add it to `all_migrations()`
 3. **Add a repository module** at `crates/tack-db/src/repo/time_entries.rs`; add `pub mod time_entries;` to `repo.rs`
 4. **Add a handler module** at `crates/tack-api/src/handlers/time_entries.rs`; add it to the `use crate::handlers::{...}` import in `router.rs`
 5. **Add routes** in `crates/tack-api/src/router.rs`
@@ -421,24 +469,35 @@ that may not fit the roadmap.
    change per PR — smaller PRs are reviewed and merged faster.
 3. **Write tests** for any new business logic or bug fix (a regression test that
    fails before your change and passes after). See "Writing Tests" above.
-4. **Run the full local gate before pushing:**
+4. **Run the full local gate before pushing.** Running the hook script directly is the
+   most reliable way — it is the definition CI's `rust` job checks against, so unlike a
+   hand-typed command list it cannot quietly drift from it:
 
    ```bash
-   cargo fmt --all --check
-   cargo clippy --workspace --all-targets -- -D warnings
+   ./.githooks/pre-push
+   ```
+
+   That runs, in order: the comment and test-hygiene checks, `cargo fmt --all --check`
+   for the root workspace *and*, separately, for `crates/tack-desktop` (its own
+   workspace, excluded from the root one), `cargo clippy --workspace --all-targets --
+   -D warnings`, and the lockfile / `schema.gen.ts` freshness checks (the latter only
+   when `frontend/node_modules` exists) — **not the test suite**, on purpose. Run that
+   yourself:
+
+   ```bash
    cargo nextest run --workspace
    ```
 
-   That is the same single run CI does — every Rust test runs exactly once.
-   CI's only extra steps are the two regenerate-and-diff gates (the OpenAPI
-   spec and tack-orch's golden files); `./scripts/regen-generated.sh` covers
-   the first, and docs/TESTING.md lists both.
+   Together these reproduce everything CI's `rust` job checks except two steps that
+   regenerate a committed artifact from the code and diff it, rather than testing
+   something new — the OpenAPI spec and tack-orch's golden files, each rerun through a
+   targeted filter. `./scripts/regen-generated.sh` covers the first; docs/TESTING.md's
+   Continuous Integration section describes both.
 
-   Activating the pre-push hook (`git config core.hooksPath .githooks`) runs the
-   fmt + clippy portion automatically.
+   Activating the hook (`git config core.hooksPath .githooks` — done once by
+   `./scripts/setup-git.sh`) runs it automatically on every `git push`.
 
-   If you touched the frontend, CI's `frontend` job also runs three checks
-   this doesn't:
+   If you touched the frontend, CI's `frontend` job also runs checks the hook doesn't:
 
    ```bash
    cd frontend
@@ -458,8 +517,9 @@ that may not fit the roadmap.
    `docs:`, `refactor:`, `chore:`, `test:`) are appreciated. **No AI-attribution
    lines** (no `Co-Authored-By` bot trailers) in commit messages.
 8. **Review.** The maintainer reviews, may request changes, and merges once CI is
-   green and the change is approved. Green CI is required — all jobs
-   (`rust`, `frontend`, `docs`, `embed-spa`, `security`, `e2e`) must pass.
+   green and the change is approved. Green CI is required — all ten jobs in
+   `.github/workflows/ci.yml` (`rust`, `msrv`, `desktop`, `coverage`, `deny`,
+   `frontend`, `docs`, `embed-spa`, `security`, `e2e`) must pass.
 
 By submitting a pull request, you agree that your contribution is licensed under
 the project's [MIT License](LICENSE).
@@ -477,8 +537,12 @@ Tack uses a simple two-long-lived-branch model:
 | `feat/…`, `fix/…`, `docs/…` | Short-lived topic branches for a single change. |
 
 - **Branch topic branches off `develop`** and open your PR **against `develop`**.
-- `main` receives changes from `develop` when a release is prepared; the release
-  tag triggers `.github/workflows/release.yml` to build and publish artifacts.
+- `main` receives changes from `develop` when a release is prepared; pushing a
+  version tag (`git tag v0.1.0-beta.N && git push origin v0.1.0-beta.N`) triggers
+  `.github/workflows/release.yml`, which builds single-binary distributions for
+  Linux/macOS/Windows and attaches them to a GitHub Release with checksums, SBOMs,
+  and build-provenance attestations. This is a maintainer action, not something a
+  contributor's PR does.
 - CI runs on pushes to `main`, `develop`, and `claude/**` branches, and on every
   pull request.
 - `tack branch <item-id>` (the CLI) can generate a conventional topic-branch name

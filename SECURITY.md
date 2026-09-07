@@ -41,7 +41,7 @@ Please give us a reasonable window to release a fix before any public disclosure
 
 ## Supported Versions
 
-Only the latest release is actively maintained. Fixes land on `main` and ship in
+Only the latest release is actively maintained. Fixes land on `develop` and ship in
 the next release; older tags are not backported.
 
 | Version | Supported |
@@ -57,7 +57,7 @@ not vulnerabilities — but worth understanding when deploying:
 | Area | Notes |
 | --- | --- |
 | Authentication | Optional shared bearer token (`TACK_API_TOKEN`). Not a replacement for network-level controls; no per-user accounts. |
-| Exposure | Binds `127.0.0.1` by default. Binding a non-loopback address without `TACK_API_TOKEN` exposes an unauthenticated read/write API and a full-database download endpoint. |
+| Exposure | Binds `127.0.0.1` by default. Binding a non-loopback address without `TACK_API_TOKEN` is refused at startup; overriding that refusal with `TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1` exposes an unauthenticated read/write API and a full-database download endpoint. |
 | SQLite | Single-file DB, no encryption at rest. |
 | File uploads | Max 50 MB. Stored in `TACK_STORAGE_DIR` with UUID filenames; not executed or served as active content. |
 | CORS | Configurable via `TACK_ALLOWED_ORIGINS`; defaults to localhost only. |

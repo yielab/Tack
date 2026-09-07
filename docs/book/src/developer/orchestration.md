@@ -3,37 +3,34 @@
 This chapter covers the Agent-Factory Control Center: the `tack-orch` crate, the
 `ControlPlane` trait, the reconciler's poll loop, the dispatcher, and the schema
 behind all of it. It assumes you've read the
-[Architecture Overview](README.md) and the [Crate Tour](crate-tour.md) for the four
-original crates — this one adds a fifth.
+[Architecture Overview](README.md) and the [Crate Tour](crate-tour.md), which cover
+this crate alongside the other five in the main workspace.
 
-For the *why* behind this feature and the full multi-phase plan, see
+For the *why* behind this feature, see
 [Roadmap → Agent-Factory Control Center](../roadmap.md#next--agent-factory-control-center-phases-3338-august-2026).
-This page documents what's actually implemented as of the end of that cycle
-(phases 33–38, all shipped) — not an aspirational end state, and not the Phase-33
-read-only snapshot this page originally described. The reciprocal docket-side work
-(the `POST /tasks`, `GET /traces`, `POST /pods` endpoints this crate depends on) is
-tracked as docket's own Phase 22; every one of its cards has shipped as of this
-writing — verify against `~/Sites/rack-cli/src/docket/serve.py` directly if you're
-reading this later, since docket's own `ROADMAP.md` has repeatedly lagged its source
-during this cycle (see [Known staleness traps](#known-staleness-traps-hit-during-this-cycle)).
+This page documents what's actually implemented — not an aspirational end state.
+The reciprocal docket-side work (the `POST /tasks`, `GET /traces`, `POST /pods`
+endpoints this crate depends on) lives in docket, a separate public project.
+Verify docket's HTTP surface against its own source directly rather than its
+`ROADMAP.md`, which has repeatedly lagged what's actually shipped (see
+[docket's `ROADMAP.md` lags its own source](#dockets-roadmapmd-lags-its-own-source)).
 
 ## The one-line architecture
 
 Tack holds desired state, an external agent-fleet backend executes it, and a
-reconciler in a new `tack-orch` crate closes the loop. Unlike the Phase-33
-read-only shape, **both halves of the loop are real**: intent flows **push** (Tack →
-docket, synchronous, returns a task/run id), and progress flows **pull** (a
-jittered poll loop, Kubernetes-style):
+reconciler in the `tack-orch` crate closes the loop. **Both halves of the loop are
+real**: intent flows **push** (Tack → docket, synchronous, returns a task/run id),
+and progress flows **pull** (a jittered poll loop, Kubernetes-style):
 
 ```text
 ┌───────────────────────────── Tack (control center) ──────────────────────────────┐
 │  Fleet · Approvals inbox · Agent Activity · Economics · Provisioning wizard      │
-│  tack-api    POST /api/items/{id}/dispatch            (dispatcher.rs, C1)        │
-│              POST /api/sprints/{id}/dispatch          (sprint_dispatch.rs, C3)   │
+│  tack-api    POST /api/items/{id}/dispatch            (dispatcher.rs)            │
+│              POST /api/sprints/{id}/dispatch          (sprint_dispatch.rs)       │
 │              GET  /api/sprints/{id}/dispatch/dry-run                             │
-│              POST /api/approvals/{token}              (D1, separate token gate)  │
-│              POST /api/templates/{id}/provision        (provisioning.rs, D4)     │
-│              GET  /api/economics/{summary,items}       (economics.rs, D5)        │
+│              POST /api/approvals/{token}              (separate token gate)      │
+│              POST /api/templates/{id}/provision        (provisioning.rs)         │
+│              GET  /api/economics/{summary,items}       (economics.rs)            │
 │                                                                                    │
 │  tack-orch::dispatcher / sprint_dispatch (in tack-api)                           │
 │      item/sprint → enqueue_task → orch_tasks → status_map (workflow engine)      │
@@ -62,8 +59,8 @@ only ever uses `enqueue_task`/`POST /tasks/{project}`. See
 
 ## What docket exposes today
 
-Verified against `~/Sites/rack-cli/src/docket/serve.py` directly, not against
-docket's own `ROADMAP.md` (see the staleness note below).
+Verified against docket's own source directly, not against its `ROADMAP.md` (see
+the note below).
 
 | Route | Auth | Notes |
 |---|---|---|
@@ -77,17 +74,14 @@ docket's own `ROADMAP.md` (see the staleness note below).
 | `POST /approvals/{token}` | Bearer | `{action: "grant"\|"deny"}` → docket's resulting `state`. `channel="tack"` is sent on every decision Tack makes (already a first-class member of docket's `APPROVAL_CHANNELS`). |
 | `POST /pods` | Bearer | `{project, path, blueprint, pod, budget, verifyCmd}` (all but `project` optional) → `201 {ok, project, blueprint, members: [{id, role, model}]}`. Atomic on docket's side — every failure mode either raises before anything is touched (`409` for an existing pod) or tears down everything it started before raising (`500`). **No HTTP route to delete/un-provision a pod exists.** |
 
-### Known staleness traps hit during this cycle
+### docket's `ROADMAP.md` lags its own source
 
-docket's own `ROADMAP.md` marked `POST /tasks`, `GET /traces`, and `POST /pods` as
-`TODO` on multiple occasions **after** they had already shipped in `serve.py` — not
-a timing artifact; in at least one case `ROADMAP.md`'s own last commit postdated the
-shipping commit. Two Tack cards (Wave 3's start, and card D3/D4) were initially
-planned as blocked on endpoints that turned out to already exist. **The lesson this
-cycle re-learned twice: `serve.py` is the authority on what docket exposes over
-HTTP, never docket's `ROADMAP.md` and never a prior card's "blocked" note in this
-file's history.** Re-verify against source before trusting any staleness claim,
-including the ones on this page.
+docket's own `ROADMAP.md` has marked endpoints this crate depends on (`POST
+/tasks`, `GET /traces`, `POST /pods`) as `TODO` after they had already shipped in
+source — not a timing artifact; in at least one case `ROADMAP.md`'s own last commit
+postdated the shipping commit. **docket's source is the authority on what it
+exposes over HTTP, never its `ROADMAP.md`.** Re-verify against source before
+trusting any staleness claim, including the ones on this page.
 
 ## The `ControlPlane` trait
 
@@ -97,6 +91,7 @@ including the ones on this page.
 #[async_trait::async_trait]
 pub trait ControlPlane: Send + Sync {
     fn kind(&self) -> &'static str; // "docket"
+    fn capabilities(&self) -> Capabilities; // static, no I/O — what this adapter can do, independent of whether it's reachable right now
     async fn health(&self) -> Result<Health, OrchError>;
     async fn status(&self) -> Result<FleetStatus, OrchError>;
     async fn metrics(&self) -> Result<Vec<MetricSample>, OrchError>;
@@ -112,37 +107,27 @@ pub trait ControlPlane: Send + Sync {
 }
 ```
 
-**No longer frozen.** The trait was frozen after Wave 0 to stop concurrent agents
-from churning a shared interface mid-cycle — it worked, and then it started
-producing designs worse than the churn it was meant to prevent. Card R1 (§2.1 of
-`TODO.md`) lifted the freeze and immediately used the room to fix the two
-workarounds the freeze had forced (below). **Treat this trait's current shape as
-current, not eternal** — change it again if a real design need shows up, and update
-every implementor/caller in the same change, the way R1 did.
+**Not frozen.** Treat this trait's current shape as current, not eternal — change
+it again if a real design need shows up, and update every implementor and caller
+in the same change.
 
-**Two fixes R1 made once the freeze lifted, worth understanding as the trait's own
-history:**
+**Two design points worth understanding together:**
 
 1. **`traces` returns docket's own opaque cursor, not a client-reconstructed one.**
-   Before R1, `ControlPlane::traces` had nowhere to return docket's real `next`
-   cursor (the frozen return type was `Result<Vec<RemoteEvent>, OrchError>`), so an
-   earlier card reimplemented docket's `"<ts>Z:<n>"` cursor algorithm client-side —
-   correct at the time, and guaranteed to silently drift the moment docket changed
-   that algorithm, with no compile error to catch it. `TracesPage { events,
-   next: Option<String> }` fixes this: `next` is opaque, never parsed or
-   reconstructed by Tack, just persisted and passed back verbatim. Live-verified: a
-   `since` value fed straight back from a real `docket serve` produces zero new
-   events and an unchanged `next` — proof the forwarded cursor is one docket itself
-   re-mints identically.
-2. **`OrchError::PolicyBlocked { policy_id, message }` replaces string-prefix
-   matching.** Before R1, the only way to tell "docket's `pre_input` policy
-   deliberately refused this" apart from a generic transport failure was a
-   `POLICY_BLOCK_PREFIX` constant and `msg.strip_prefix(...)` — a reworded docket
-   error message would have silently turned a policy block into a generic failure.
-   The typed variant carries a real `policy_id`, parsed once
-   (`adapters::docket::parse_policy_block`) with a `"unknown"` fallback if docket's
-   wording ever drifts (never panicking — the same "degrade, don't fail the poll"
-   discipline the remote-state enums already use).
+   `TracesPage { events, next: Option<String> }` — `next` is opaque, never parsed
+   or reconstructed by Tack, just persisted and passed back verbatim. Reimplementing
+   docket's `"<ts>Z:<n>"` cursor algorithm client-side would be correct today and
+   guaranteed to silently drift the moment docket changes that algorithm, with no
+   compile error to catch it. Live-verified: a `since` value fed straight back from
+   a real `docket serve` produces zero new events and an unchanged `next` — proof
+   the forwarded cursor is one docket itself re-mints identically.
+2. **`OrchError::PolicyBlocked { policy_id, message }` distinguishes a deliberate
+   policy refusal from a generic transport failure.** The typed variant carries a
+   real `policy_id`, parsed once (`adapters::docket::parse_policy_block`) with a
+   `"unknown"` fallback if docket's wording ever drifts — never panicking, the same
+   "degrade, don't fail the poll" discipline the remote-state enums use. Matching on
+   a string prefix of the error message (the alternative) would silently turn a
+   reworded docket error into a generic failure instead.
 
 ### `OrchError`
 
@@ -154,9 +139,9 @@ pub enum OrchError {
     NotFound(String),                           // resource doesn't exist on the remote side
     Unavailable(String),                        // plane configured but not currently reachable
     Disabled,                                   // gated behind a flag/config, or a write method the adapter doesn't implement
-    PolicyBlocked { policy_id: String, message: String },  // pre_input refused it, on purpose (card R1)
-    AlreadyDecided(String),                     // the approval was already granted/denied (card D1)
-    AlreadyExists(String),                      // docket's PodAlreadyExistsError, 409 (card D4)
+    PolicyBlocked { policy_id: String, message: String },  // pre_input refused it, on purpose
+    AlreadyDecided(String),                     // the approval was already granted/denied
+    AlreadyExists(String),                      // docket's PodAlreadyExistsError, 409
 }
 ```
 
@@ -190,9 +175,9 @@ plane. Each tick is three strictly separated phases, enforced by the types rathe
 by convention:
 
 1. **Fetch** (`reconcile_once`) — every HTTP call the tick needs, across **six**
-   steps today (health, status, runs, approvals, metrics, traces — the last three
-   landed in Wave 2, one field/one `poll_*` fn/one struct-literal line each, per the
-   extension recipe below). No database handle is reachable from this phase at all.
+   steps today (health, status, runs, approvals, metrics, traces — see the
+   extension recipe below for the pattern each new step follows). No database
+   handle is reachable from this phase at all.
 2. **Decide** (`HealthTracker::observe`) — a pure, synchronous state transition over
    the health/status fetch results only. No I/O. Ingestion data (runs, approvals,
    metrics, traces) rides alongside in the same `(PollEvaluation, FetchOutcome)`
@@ -245,7 +230,7 @@ HTTP call, so a panic here can never touch a live user request.
 
 ### Extending the poll loop: adding a `poll_*` step
 
-Exactly three edits, established by B1/B2/B3 and unchanged since:
+Exactly three edits:
 
 ```rust
 // 1. Add a field to FetchOutcome:
@@ -268,7 +253,7 @@ Your own persistence call goes in `spawn_one`'s loop, as its own short call plac
 *after* `store.record_health(...).await` — never inside `reconcile_once`. **Do not
 let a new poll step's failure influence `evaluate`'s reachability verdict.**
 
-### `orch_events` has no natural key — B2's solution, worth knowing before touching trace ingestion
+### `orch_events` has no natural key
 
 Unlike `orch_runs` (keyed by `run_id`) and `orch_approvals` (keyed by `token`), a
 docket trace event is a position in a JSONL stream, not an entity with a stable id.
@@ -295,7 +280,7 @@ never revisited by a poll.
 `crates/tack-orch/src/adapters/prometheus.rs` — a small, dependency-free parser for
 docket's `/metrics` endpoint: `pub fn parse(input: &str) -> Vec<MetricSample>`. Never
 errors, never panics; a malformed line is dropped, not a whole-document failure.
-Reused verbatim by `poll_metrics`'s ingestion (B3) — do not write a second parser.
+Reused verbatim by `poll_metrics`'s ingestion — do not write a second parser.
 
 ## The dispatcher (`tack-api/src/dispatcher.rs`)
 
@@ -313,7 +298,7 @@ Result<DispatchOutcome, ApiError>`:
    `pending`/`running`/`waiting_approval`, does **not** call docket again
    (`DispatchOutcome::AlreadyInFlight`).
 4. Calls `ControlPlane::enqueue_task` — `POST /tasks/{project}`'s three outcomes,
-   live-verified (card V1):
+   live-verified against a real docket instance:
    - **block** → `DispatchOutcome::Blocked { policy_id, message }`, no `orch_tasks`
      row at all.
    - **allow** / **require_approval** are indistinguishable at `enqueue_task`'s
@@ -333,8 +318,8 @@ Result<DispatchOutcome, ApiError>`:
 `dispatch_item`'s `trusted: bool` parameter is **required and non-`Option`** —
 deliberately, because docket's own `core/dispatch.py::enqueue_task` treats an
 *omitted* `trusted` as "trusted iff the caller is `operator`," which is always true
-for every existing caller (confirmed live, card V1). A required Rust `bool` can't
-stop a caller from passing the wrong *value*, but it makes the *omission* — the
+for every existing caller (confirmed against a real docket instance). A required
+Rust `bool` can't stop a caller from passing the wrong *value*, but it makes the *omission* — the
 actual vulnerability — a compile error. `handlers::orch::dispatch_item` (the manual
 "Dispatch" button's HTTP entry point) resolves a default from the item's persisted
 `source.is_trusted()` (see [`ItemSource`](#the-trust-boundary-itemsource) below);
@@ -372,7 +357,7 @@ through `update_item` and asserts `source` is unchanged).
 Two independently-chosen defaults, deliberately not the same value:
 
 - **The migration's SQL default (`'unknown'`) is backfill-only** — every
-  pre-migration row (including items GitHub-imported before this Phase even
+  pre-migration row (including items GitHub-imported before this feature
   existed) resolves to untrusted, since there's no record of which ones were
   manually typed.
 - **`Item`'s `#[serde(default)]` also resolves to `Unknown`** — an old export or a
@@ -411,12 +396,11 @@ function, `plan_sprint_dispatch`, so a dry-run preview and a real run are
   evaluation — no separate bookkeeping needed, since a blocked item never reaches a
   Done-category status.
 
-**A known, disclosed WIP-limit race this card surfaced (fixed by R2/R3, see
-below).** Concurrent dispatch of *different* items into the *same* WIP-limited
-column was, before R2's fix, a genuine race — `apply_mapped_status` read a column's
-item count and wrote the new status as two separate, unlocked steps.
-`max_in_flight` made this an everyday occurrence rather than a rare two-human
-collision.
+**A known WIP-limit race, fixed below.** Concurrent dispatch of *different* items
+into the *same* WIP-limited column was, before the fix, a genuine race —
+`apply_mapped_status` read a column's item count and wrote the new status as two
+separate, unlocked steps. `max_in_flight` made this an everyday occurrence rather
+than a rare two-human collision.
 
 ## Fixing the WIP-limit race: `update_item_status_checked`
 
@@ -436,13 +420,13 @@ check_wip_limit` the old unguarded code called — no duplicated comparison logi
 
 **Two call sites now use it**, closing the race everywhere it could manifest, not
 just on the dispatch path where it was first found: `dispatcher::apply_mapped_status`
-(the original fix, card R2, reproduced 12/12 concurrent dispatches over-filling a
-WIP-5 column before the fix) and `handlers::items::update_item` (the human board-drag
-path, card R3). Both reproduced the identical race live before being fixed — see
-their own test modules (`crates/tack-api/tests/security/wip_limit_race.rs` and
-`board_drag_wip_race.rs`) for the exact repro methodology (genuinely concurrent
-requests via `tokio::spawn` on a multi-thread runtime, asserting the pre-fix code
-over-fills the column before touching anything).
+(reproduced 12/12 concurrent dispatches over-filling a WIP-5 column before the fix)
+and `handlers::items::update_item` (the human board-drag path). Both reproduced the
+identical race live before being fixed — see their own test modules
+(`crates/tack-api/tests/security/wip_limit_race.rs` and `board_drag_wip_race.rs`)
+for the exact repro methodology (genuinely concurrent requests via `tokio::spawn`
+on a multi-thread runtime, asserting the pre-fix code over-fills the column before
+touching anything).
 
 `Repository::count_items_by_status` still exists and is still used where an
 unguarded read is fine (e.g. the Fleet aggregate) — only the *check-then-write*
@@ -499,8 +483,8 @@ can, without a real change-log.
 
 `crates/tack-db/src/repo/orch.rs` is the repository module for the orchestration
 tables; `repo/economics.rs` is a **separate** module for the two unit-economics
-queries (kept separate specifically to avoid a same-file collision with a
-concurrently-landing card, not a structural necessity). Notable design points:
+queries (kept separate to reduce merge collisions during concurrent development,
+not a structural necessity). Notable design points:
 
 - **The stored control-plane token never leaves this layer in a read DTO.**
   `get_control_plane_token` is doc-commented "INTERNAL ONLY"; every other read
@@ -541,7 +525,7 @@ statements per migration, registered in the migration list. Every foreign key to
 | 025 | `orch_metrics` | Mirror of docket's Prometheus `/metrics` scrape — one row per scrape per metric per label set. |
 | 026 | `orch_events_daily` | Per-day aggregate of purged `orch_events`. Keyed `(day, control_plane_id, event_type)` — **drops `item_id`**, so per-item history truncation past the retention window is not recoverable from the aggregate. |
 | 027 | `orch_metrics_daily` | Per-day aggregate of purged `orch_metrics`; non-finite samples counted but excluded from sum/min/max. |
-| 028 | `orch_trace_cursors` | Resumption cursor per `(control_plane_id, remote_project)`, stored as an **opaque string** (R1 made this docket's own cursor value, not a client reconstruction — the column itself needed no schema change either way). |
+| 028 | `orch_trace_cursors` | Resumption cursor per `(control_plane_id, remote_project)`, stored as an **opaque string** — docket's own cursor value, not a client reconstruction. |
 | 029 | `items.source` | `ALTER TABLE items ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'` — the prompt-injection trust boundary. See [The trust boundary](#the-trust-boundary-itemsource). |
 | 030 | `project_templates.orchestration` | `ALTER TABLE project_templates ADD COLUMN orchestration TEXT` (nullable, no default — `NULL` = no block, distinct from `Some("{}")`). Backwards compatible; every existing template row and every existing INSERT keeps working unchanged. |
 | 031 | `idx_items_completed_at` | Partial index `ON items(completed_at) WHERE completed_at IS NOT NULL` — both unit-economics queries filter on this column instance-wide (not scoped to one project, since the whole point is slicing across projects), so no existing `(project_id, …)` composite index helps without it. |
@@ -630,22 +614,21 @@ Enforced by the shape of the code, not just documented — each one below names 
 4. **The stored control-plane token never leaves the repository layer**, and is
    **scrubbed from every backup bundle.** `scrub_snapshot_secrets`
    (`crates/tack-api/src/remote_backup.rs`) nulls `control_planes.token` before the
-   `VACUUM`, alongside the pre-existing `app_meta` secret scrub — closed by card A9
-   after the same class of leak the S3 secret key had before its own exclusion
-   shipped. Tested with a raw-bytes assertion on the extracted snapshot, not just a
-   DTO-shape check.
+   `VACUUM`, alongside the pre-existing `app_meta` secret scrub — the same class of
+   leak the S3 secret key had before its own exclusion shipped. Tested with a
+   raw-bytes assertion on the extracted snapshot, not just a DTO-shape check.
 5. **A check-then-write status update is never split across two unlocked steps.**
    `Repository::update_item_status_checked`'s `BEGIN IMMEDIATE` transaction is the
    one place a WIP-limit check and its corresponding write happen — every caller
-   (dispatch, sprint dispatch, board drag) goes through it. Added this cycle
-   after cards R2/R3 found and fixed a real, live-reproduced race (see above); listed
-   here as a standing rule for any future status-writing code path, not just a
-   changelog entry.
+   (dispatch, sprint dispatch, board drag) goes through it, closing a real,
+   live-reproduced race (see above). Any future status-writing code path must go
+   through it too.
 
 ## Concurrency control: `version`, `ETag`, `If-Match` — and what it doesn't cover
 
-Card G3 added a `version INTEGER` column to `items`, `orch_links`, and `control_planes`
-(migrations 034–036), and `handlers::items::{get_item,update_item}` now round-trips it as
+A `version INTEGER` column on `items`, `orch_links`, and `control_planes`
+(migrations 034–036) backs optimistic concurrency, and
+`handlers::items::{get_item,update_item}` round-trips it as
 an RFC 7232 `ETag`/`If-Match` pair: `GET /api/items/{id}` returns `ETag: "<id>-<version>"`,
 and `PATCH /api/items/{id}` with a matching `If-Match` claims the next version atomically
 before touching any other field; a stale or mismatched `If-Match` is a `412`, never a
@@ -654,10 +637,10 @@ is additive, not a new requirement on any existing caller.
 
 ### The MCP write path now sends it
 
-Before card G4, `tack-cli`'s HTTP client (`client.rs`) had no way to attach a header to a
-request at all, so `tack mcp`'s `update_item`/`move_item` tools were unconditionally
+`tack-cli`'s HTTP client (`client.rs`) can attach an `If-Match` header to a request, so
+`tack mcp`'s `update_item`/`move_item` tools are no longer unconditionally
 last-write-wins — the one write path most exposed to the exact race `If-Match` exists to
-catch (an autonomous agent editing a card a human is also looking at). Both tools now:
+catch (an autonomous agent editing a card a human is also looking at). Both tools:
 
 1. `GET /items/{id}` first, via `TackClient::get_with_etag`, to read the current `ETag`.
 2. `PATCH /items/{id}` with that value as `If-Match`, via `TackClient::patch_if_match`.
@@ -667,22 +650,21 @@ catch (an autonomous agent editing a card a human is also looking at). Both tool
    clobbers whatever won.
 
 If the server ever answers a `GET` with no `ETag` (an older server, or a route that never
-gains version tracking), the client sends no `If-Match` and the write proceeds exactly as
-it did before this card — the fallback is silent and total, not a partial degrade.
+gains version tracking), the client sends no `If-Match` and the write proceeds unguarded —
+the fallback is silent and total, not a partial degrade.
 
 ### CORS had to catch up separately
 
 `If-Match` and `ETag` are meaningless to a browser client unless the CORS layer explicitly
 allows/exposes them — `tower_http`'s preflight response only lists what
 `CorsLayer::allow_headers`/`expose_headers` were built with, regardless of what a real
-request needs. `router.rs`'s `CorsLayer` now allows `if-match` on requests and exposes
-`ETag` on responses; it also allows `x-tack-approval-token`, a **pre-existing** bug this
-card fixed while it was in the file, not something this cycle introduced —
-`frontend/src/features/approvals/api.ts` has sent that header on every grant/deny decision
-since Phase 36, and it has only ever worked because production is same-origin via
-`embed-spa`. Any cross-origin deployment through `TACK_ALLOWED_ORIGINS` would have failed
-every approval preflight silently. See `crates/tack-api/tests/security/cors.rs` — there was no
-CORS test anywhere in this repo before it.
+request needs. `router.rs`'s `CorsLayer` allows `if-match` on requests and exposes
+`ETag` on responses; it also allows `x-tack-approval-token` —
+`frontend/src/features/approvals/api.ts` sends that header on every grant/deny decision,
+and it has only ever worked because production is same-origin via `embed-spa`. Any
+cross-origin deployment through `TACK_ALLOWED_ORIGINS` would fail every approval
+preflight silently if that header weren't allowed. See
+`crates/tack-api/tests/security/cors.rs` for the CORS coverage.
 
 ### Two writers this control deliberately does not cover
 
@@ -696,7 +678,7 @@ consequence of where the call happens:
   there is no `HeaderMap` to read an `If-Match` from because there is no request. This is
   **the largest single mutator of `items.status` in the whole system** (every terminal
   docket run that has a `status_map` target passes through it) and it sits entirely outside
-  the concurrency control this card built. A human moving a card at the same moment a poll
+  this optimistic-concurrency control. A human moving a card at the same moment a poll
   resolves a terminal status is instead handled by a *different* mechanism —
   `card_has_diverged`, described above — which compares the item's status against the one
   value the automation itself expects, not a version number.
@@ -711,7 +693,7 @@ consequence of where the call happens:
 row named in the request; it is not a total ordering over every writer in the system, and a
 `200` on some other row is not proof that row is still what a stale `GET` believes it to
 be. Anything that needs a stronger guarantee than "the row I'm PATCHing hasn't changed
-since I last read it" needs a mechanism this cycle didn't build.
+since I last read it" needs a mechanism that doesn't exist yet.
 
 ## Adding a new control-plane backend
 
@@ -738,7 +720,7 @@ directly rather than assumed — Tack builds no workaround for either:
 - **`docket pipeline validate` is CLI-only.** No HTTP route exists for it, so
   `handlers::templates::validate_template_orchestration` only checks that
   `orchestration.pipeline_yaml` parses as YAML, never that it's a valid docket
-  pipeline. Recorded upstream as docket's own `ROADMAP.md` Phase 22, card P22-8.
+  pipeline. Recorded as a gap in docket's own roadmap.
 
 ## Testing this feature
 
@@ -761,8 +743,7 @@ directly rather than assumed — Tack builds no workaround for either:
 
 None of these require a live docket instance for CI — the adapter tests run against
 `wiremock`, and everything downstream runs against an in-memory database and a
-hand-written fake `ControlPlane`. Several cards in this cycle **additionally**
-verified against a real, isolated `docket serve` (scratch `DOCKET_HOME`, never
-`~/.docket`) as a live sanity check beyond the committed suite — see
-[Local Integration Setup](../user-guide/orchestration-local-setup.md) if you want to
-do the same.
+hand-written fake `ControlPlane`. For a live sanity check beyond the committed
+suite, verify against a real, isolated `docket serve` (scratch `DOCKET_HOME`, never
+`~/.docket`) — see
+[Local Integration Setup](../user-guide/orchestration-local-setup.md) for how.

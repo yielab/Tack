@@ -257,7 +257,7 @@ audited decision; see the [Recovery Runbook](recovery-runbook.md).
 Enroll, revoke, and — for the runner side of the fence — actually run the runner role
 or check what this machine can do. `tack runner enroll` / `revoke` / `revoke-token` are
 the operator surface, covered in full in [Enrolling a
-runner](agent-runners.md#enrolling-a-runner); this section covers the other two
+runner](agent-runners.md#enrolling-a-runner); this section covers the other
 subcommands, which act on the local machine rather than the operator's server.
 
 `tack runner doctor` needs no server and enrolls nothing — it runs the same
@@ -310,6 +310,25 @@ Options:
       --state-dir <STATE_DIR>               Local directory for runner state. Overrides file and environment configuration
       --enrollment-token <ENROLLMENT_TOKEN>  Enrollment credential. Prefer TACK_RUNNER_ENROLLMENT_TOKEN so it is not visible in shell history
 ```
+
+`tack runner secret set|list|remove` manages this machine's runner-local secret
+store — the provider keys a harness's environment can reference via
+`secret_reference` (see [Choosing a model and a
+provider](agent-runners.md#choosing-a-model-and-a-provider)). It needs no server and
+enrolls nothing; it reads and writes the same on-disk/keychain state a real
+`tack-runner` process would.
+
+```sh
+tack runner secret set vercel-ai-gateway/default   # value read from stdin or TACK_RUNNER_SECRET_VALUE
+tack runner secret list
+tack runner secret remove vercel-ai-gateway/default
+```
+
+`set` never accepts the value as a command-line argument — only from
+`TACK_RUNNER_SECRET_VALUE` or, if that is unset, from stdin — so it never lands in
+shell history or a process listing. `list` prints entry names only, never values.
+The secret lives only in this store, local to the runner: the board and its
+database never receive it, at set time or any time after.
 
 ---
 
@@ -368,8 +387,10 @@ root-owned deployment instead of a per-user one, see the systemd unit in
 Manage runner fleets — a named group of runners sharing an optional concurrency limit
 and a default model policy (see [Choosing a model and a
 provider](agent-runners.md#choosing-a-model-and-a-provider)). Adding a runner *to* a
-fleet has no CLI subcommand yet; see [Known
-gaps](agent-runners.md#known-gaps) for the API route that does it today.
+fleet has no CLI subcommand yet. Do it from the Agents page in the web UI (each fleet's
+roster has an add/remove control), or directly against the API: `POST
+/api/runner-fleets/{fleet_id}/members` adds a runner, `DELETE
+/api/runner-fleets/{fleet_id}/members/{runner_id}` removes one.
 
 ```sh
 tack fleet create "opus-fleet" \

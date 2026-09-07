@@ -1,6 +1,6 @@
 # Tack API Reference
 
-**Tack version:** 0.1.0-beta.6
+**Spec of record:** [`docs/openapi.json`](openapi.json), generated from the router — where this page and the spec disagree, the spec is right.
 **Base URL:** `http://localhost:3210/api`
 **WebSocket URL:** `ws://localhost:3210/api/projects/{id}/boards/live`
 
@@ -25,20 +25,20 @@
 
 1. [Authentication](#authentication)
 2. [Projects](#projects)
-3. [Board](#board)
-4. [Items](#items)
-5. [Dependencies](#dependencies)
-6. [Attachments](#attachments)
-7. [Sprints](#sprints)
-8. [Roles](#roles)
-9. [Comments](#comments)
-10. [Search](#search)
-11. [Export/Import](#exportimport)
-12. [Templates](#templates)
-13. [Custom Fields](#custom-fields)
-14. [Multiple Boards](#multiple-boards)
-15. [WebSocket Events](#websocket-events)
-16. [Remote Cloud Backup](#remote-cloud-backup)
+3. [Items](#items)
+4. [Dependencies](#dependencies)
+5. [Attachments](#attachments)
+6. [Sprints](#sprints)
+7. [Roles](#roles)
+8. [Comments](#comments)
+9. [Search](#search)
+10. [Export/Import](#exportimport)
+11. [Templates](#templates)
+12. [Custom Fields](#custom-fields)
+13. [Multiple Boards](#multiple-boards)
+14. [WebSocket Events](#websocket-events)
+15. [Remote Cloud Backup](#remote-cloud-backup)
+16. [Local Backup](#local-backup)
 17. [Runner, Fleet & Execution](#runner-fleet--execution)
 18. [Error Responses](#error-responses)
 
@@ -117,11 +117,11 @@ Content-Type: application/json
 {
   "name": "My Project",
   "description": "Optional description",
-  "template": "software"
+  "project_type": "software"
 }
 ```
 
-**Templates:** `software`, `web`, `mobile`, `construction`, `personal`, `homework`, `maintenance`, `custom`
+**Project types:** `software`, `web`, `mobile`, `construction`, `personal`, `homework`, `maintenance`, `legal`, `research`, `event`, `custom`
 
 **Response:** `201 Created` + Project object
 
@@ -136,7 +136,7 @@ GET /api/projects/{id}
 ### Update Project
 
 ```http
-PUT /api/projects/{id}
+PATCH /api/projects/{id}
 Content-Type: application/json
 
 {
@@ -154,79 +154,6 @@ DELETE /api/projects/{id}
 ```
 
 **Response:** `204 No Content`
-
----
-
-## Board
-
-### Get Board State
-
-```http
-GET /api/projects/{id}/board
-```
-
-**Response:**
-```json
-{
-  "columns": [
-    {
-      "status": "Todo",
-      "wip_limit": null,
-      "wip_exceeded": false,
-      "items": [
-        {
-          "id": "660e8400-e29b-41d4-a716-446655440001",
-          "project_id": "550e8400-e29b-41d4-a716-446655440000",
-          "parent_id": null,
-          "title": "Implement user authentication",
-          "description": "Add JWT-based authentication",
-          "item_type": "task",
-          "status": "Todo",
-          "priority": "high",
-          "estimate": 5,
-          "estimate_unit": "story_points",
-          "tags": ["backend", "security"],
-          "sort_order": 0,
-          "sprint_id": null,
-          "due_date": null,
-          "started_at": null,
-          "completed_at": null,
-          "created_at": "2026-03-16T10:30:00Z",
-          "updated_at": "2026-03-16T10:30:00Z"
-        }
-      ]
-    }
-  ]
-}
-```
-
-### Update Board Config
-
-```http
-PATCH /api/projects/{id}/board
-Content-Type: application/json
-
-{
-  "wip_limits": {
-    "In Progress": 3,
-    "Code Review": 2
-  }
-}
-```
-
-**Response:** Updated board state + broadcasts `BoardConfigUpdated` event
-
-### WebSocket Connection (Real-time Updates)
-
-```javascript
-const ws = new WebSocket('ws://localhost:3210/api/projects/{id}/boards/live');
-
-ws.onmessage = (event) => {
-  const boardEvent = JSON.parse(event.data);
-  console.log('Event:', boardEvent.event_type);
-  // Handle: ItemCreated, ItemUpdated, ItemDeleted, BoardConfigUpdated, Ping
-};
-```
 
 ---
 
@@ -249,6 +176,14 @@ GET /api/projects/{id}/items?status=Todo&priority=high&limit=50&offset=0
 
 **Response:** Array of Item objects
 
+### Get Item Tree
+
+```http
+GET /api/projects/{project_id}/items/tree
+```
+
+**Response:** All of the project's items, parents with their children nested inline.
+
 ### Create Item
 
 ```http
@@ -259,8 +194,8 @@ Content-Type: application/json
   "title": "Implement user authentication",
   "description": "Add JWT-based authentication with refresh tokens",
   "item_type": "task",
-  "status": "Todo",
   "priority": "high",
+  "assignee": "Backend Team",
   "estimate": 5,
   "estimate_unit": "story_points",
   "tags": ["backend", "security"],
@@ -270,7 +205,8 @@ Content-Type: application/json
 }
 ```
 
-**Response:** `201 Created` + Item object + broadcasts `ItemCreated` event
+**Response:** `201 Created` + Item object + broadcasts `ItemCreated` event. `status` is not settable here — a new item
+starts in the workflow's initial state; move it with `PATCH /api/items/{id}`.
 
 ### Get Item
 
@@ -427,12 +363,20 @@ Content-Type: application/json
   "name": "Sprint 1",
   "goal": "Implement authentication and user management",
   "start_date": "2026-03-16T00:00:00Z",
-  "end_date": "2026-03-30T00:00:00Z",
-  "status": "planning"
+  "end_date": "2026-03-30T00:00:00Z"
 }
 ```
 
-**Response:** `201 Created` + Sprint object
+**Response:** `201 Created` + Sprint object. A new sprint always starts in `planning` —
+`status` isn't a `CreateSprint` field; move it with the status route below.
+
+### Get Sprint
+
+```http
+GET /api/sprints/{id}
+```
+
+**Response:** Sprint object, or `404` if it doesn't exist.
 
 ### Update Sprint
 
@@ -441,20 +385,33 @@ PATCH /api/sprints/{id}
 Content-Type: application/json
 
 {
-  "status": "active",
-  "goal": "Updated goal"
+  "name": "Sprint 1",
+  "goal": "Updated goal",
+  "start_date": "2026-03-16T00:00:00Z",
+  "end_date": "2026-03-30T00:00:00Z"
 }
 ```
 
 **Response:** Updated Sprint object
 
-### Delete Sprint
+This is a full replacement of `name`, `goal`, `start_date` and `end_date` — every
+field is written as given, so omitting `goal`, `start_date` or `end_date` clears the
+stored value rather than leaving it alone. `name` is required (1-200 characters).
+`status` is not part of this route; it moves through its own endpoint below.
+
+### Update Sprint Status
 
 ```http
-DELETE /api/sprints/{id}
+PATCH /api/sprints/{id}/status
+Content-Type: application/json
+
+{
+  "status": "active"
+}
 ```
 
-**Response:** `204 No Content`
+**Response:** `200 OK`. Fires the sprint's lifecycle webhooks (`planning` → `active` →
+`review` → `closed`).
 
 ---
 
@@ -482,21 +439,29 @@ Content-Type: application/json
 
 **Response:** `201 Created` + Role object
 
+### Delete Role
+
+```http
+DELETE /api/roles/{id}
+```
+
+**Response:** `200 OK`, or `404` if the role doesn't exist.
+
 ### Assign Role to Item
 
 ```http
-POST /api/roles/{role_id}/items/{item_id}
+PUT /api/items/{item_id}/roles/{role_id}
 ```
 
-**Response:** `204 No Content`
+**Response:** `200 OK`
 
 ### Unassign Role
 
 ```http
-DELETE /api/roles/{role_id}/items/{item_id}
+DELETE /api/items/{item_id}/roles/{role_id}
 ```
 
-**Response:** `204 No Content`
+**Response:** `200 OK`
 
 ---
 
@@ -584,6 +549,63 @@ Content-Type: application/json
 ```
 
 **Status:** Basic validation implemented, full import pending
+
+### Import from CSV
+
+```http
+POST /api/projects/{id}/import-csv
+Content-Type: text/csv
+
+title,description,priority
+Fix login bug,Users can't sign in on Safari,high
+```
+
+A UTF-8 CSV with a header row; only `title` is required. Recognized columns:
+`title`, `description`, `type`/`item_type`, `status`, `priority`, `assignee`,
+`estimate`.
+
+**Response `200`:** `{ "created": N, "skipped": N }`
+
+### Import from GitHub
+
+```http
+POST /api/projects/{id}/import-github
+Content-Type: application/json
+
+{
+  "repo": "owner/repo",
+  "token": null,
+  "import_closed": false,
+  "label_filter": []
+}
+```
+
+Fetches issues from a GitHub repo and creates matching items; pull requests are
+skipped. `token` is optional — unauthenticated calls are limited to 60 requests/hour,
+a token raises that to 5,000/hour.
+
+**Response `200`:** counts of created/skipped issues plus rate-limit remaining.
+
+### Import from Linear
+
+```http
+POST /api/projects/{id}/import-linear
+Content-Type: application/json
+
+{
+  "api_key": "lin_api_...",
+  "team_id": null,
+  "project_id": null,
+  "import_completed": false,
+  "label_filter": []
+}
+```
+
+Fetches issues from Linear's GraphQL API (cursor-paginated, 50 per page) and creates
+matching items. `team_id`/`project_id` narrow the fetch; `project_id` wins if both are
+set.
+
+**Response `200`:** `{ "created": N, "skipped": N }`
 
 ---
 
@@ -694,6 +716,20 @@ Content-Type: application/json
 - Vocabulary mappings
 - Custom field definitions
 - Default boards
+
+### Save Project as Template
+
+```http
+POST /api/projects/{project_id}/save-as-template
+Content-Type: application/json
+
+{
+  "name": "Software Development (Scrum)",
+  "description": "Snapshot of this project's workflow, vocabulary, custom fields and boards"
+}
+```
+
+**Response `200`:** the created template object, or `404` if the project doesn't exist.
 
 ---
 
@@ -1175,6 +1211,21 @@ After the server restarts, both the database and the attachments directory are
 swapped atomically. The previous DB and attachments are preserved as `<path>.bak`
 for manual recovery.
 
+### Verify Remote Backup
+
+```http
+POST /api/backup/remote/verify
+Content-Type: application/json
+
+{ "key": "tack/tack-backup-2026-06-12T15-04-05+00-00Z.tar.zst" }
+```
+
+Downloads the bundle and checks its sha256, format and schema version **without**
+staging anything, so the UI can preview whether a restore is safe first.
+
+**Response `200`:** a verdict plus the manifest. `404` if no remote backups exist,
+`409` if remote backup isn't configured.
+
 ### Cloud Backup Settings
 
 ```http
@@ -1221,16 +1272,53 @@ default. Returns the same masked shape as `GET`.
 
 ---
 
+## Local Backup
+
+A local counterpart to the remote flow above — no cloud destination required.
+
+### Download Local Backup
+
+```http
+GET /api/backup
+```
+
+Streams a `VACUUM INTO` snapshot of the SQLite database as `application/octet-stream`,
+with secrets scrubbed. `400` if the configured database isn't file-based.
+
+### Stage Local Restore
+
+```http
+POST /api/restore
+Content-Type: application/octet-stream
+
+<sqlite file bytes>
+```
+
+Validates the uploaded file is a SQLite database and writes it as `<db-path>.restore`.
+The next server startup applies the staged restore automatically. `400` if the upload
+isn't a valid SQLite file, `409` if its schema is newer than the running binary's.
+
+**Response `200`:** restore staged for next restart.
+
+---
+
 ## Runner, Fleet & Execution
 
-Everything for handing a board item to a coding-agent runner (Codex or Claude Code)
-lives under `/api/executions`, `/api/runner-fleets`, `/api/runners`,
-`/api/agent-profiles`, `/api/model-profiles` (operator surface, ordinary
-`Authorization: Bearer` auth), and the separate `/api/runner/v1/*` protocol (13 paths,
+Everything for handing a board item to a coding-agent runner (Codex or Claude Code),
+and for the orchestration layer that supervises those runs, lives under
+`/api/executions`, `/api/runner-fleets`, `/api/runners`, `/api/agent-profiles`,
+`/api/model-profiles`, `/api/local-runner*` (the runner embedded by `tack serve
+--with-runner` and its stored secrets), `/api/control-planes`, `/api/fleet`,
+`/api/items/{id}/dispatch`, `/api/sprints/{id}/dispatch` (+ its `dry-run`),
+`/api/items/{id}/agent-activity`, `/api/projects/{id}/agent-activity`,
+`/api/approvals`, `/api/projects/{id}/orch-budget`, `/api/projects/{id}/orch-policy`,
+`/api/projects/{id}/orch-link`, `/api/settings/orchestration`, `/api/economics/items`,
+`/api/economics/summary` and `/api/metrics` (operator surface, ordinary
+`Authorization: Bearer` auth), plus the separate `/api/runner/v1/*` protocol (14 paths,
 per-handler hashed runner-credential auth — deliberately never routed through operator
-auth). This document does not hand-duplicate that surface: it changes every wave and
-the schemas are fully typed in `docs/openapi.json` already. Two narrative guides cover
-it instead:
+auth). This document does not hand-duplicate any of that surface: it changes every
+wave and the schemas are fully typed in `docs/openapi.json` already. Two narrative
+guides cover the execution path instead:
 
 - **[Agent Runners & Fleet Execution](book/src/user-guide/agent-runners.md)** —
   concepts, **running an item with an agent**, **choosing a model and a provider**,

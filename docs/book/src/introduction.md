@@ -54,7 +54,7 @@ Six terms recur throughout this documentation:
 | **User Guide** | Anyone running Tack: setup, views, CLI, configuration |
 | **Developer Guide** | Contributors and people extending the codebase |
 | **Learning Path** | Developers new to Rust, Axum, or SolidJS; explains the stack with analogies |
-| **Roadmap** | Planned work and known gaps |
+| **Roadmap** | What each development phase set out to do, and what came of it |
 
 ## Quick links
 

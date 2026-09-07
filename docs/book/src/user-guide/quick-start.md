@@ -8,7 +8,7 @@ Two ways to get Tack running: **install the binary** (the fast path — no build
 
 Tack is a single self-contained binary — the web UI, REST API, and SQLite engine are all inside one file. No runtime, database server, or container required. Choose any one of the methods below.
 
-**Prefer an app you open instead of a command you run?** Download the desktop app from the [releases page](https://github.com/yielab/tack/releases) — the `.AppImage` or `.deb` on Linux, the `.msi` on Windows (macOS isn't built yet). Opening it starts the same server this page describes, inside its own window, with an icon in your system tray: closing the window leaves it running, and the tray's **Quit** is what actually stops it. If the server it started stops on its own, the tray tells you once — the status line reads "Server stopped" with the exit reason, and reopening the app starts it again; if the app is instead pointed at a server it did not start and that server goes quiet, the tray says so after a few seconds rather than staying silent. Skip to [First use](#first-use) once it's open.
+**Prefer an app you open instead of a command you run?** Download the desktop app from the [releases page](https://github.com/yielab/tack/releases) — the `.AppImage` or `.deb` on Linux, the `.msi` on Windows, or the `.dmg` on macOS (built separately for Apple Silicon and Intel). Opening it starts the same server this page describes, inside its own window, with an icon in your system tray: closing the window leaves it running, and the tray's **Quit** is what actually stops it. If the server it started stops on its own, the tray tells you once — the status line reads "Server stopped" with the exit reason, and reopening the app starts it again; if the app is instead pointed at a server it did not start and that server goes quiet, the tray says so after a few seconds rather than staying silent. Skip to [First use](#first-use) once it's open.
 
 | Platform | Install → first agent attempt |
 |---|---|
@@ -33,7 +33,7 @@ tar xzf tack-*.tar.gz && cd tack-*/
 
 On **Windows**, extract the zip and double-click `tack.exe`.
 
-Then open **`http://localhost:3210`** in your browser. On first start, Tack creates `tack.db` and a `storage/` folder next to the binary and runs all 18 database migrations automatically. Those two paths *are* your data — back them up and you've backed up everything.
+Then open **`http://localhost:3210`** in your browser. On first start, Tack creates `tack.db` and a `storage/` folder next to the binary and runs the schema migrations automatically. Those two paths *are* your data — back them up and you've backed up everything.
 
 > **First-run note (unsigned binary).** The binaries are not code-signed yet. On macOS, right-click → **Open** the first time (or run `xattr -d com.apple.quarantine tack`). On Windows, click **More info → Run anyway** if SmartScreen appears.
 
@@ -41,8 +41,10 @@ Then open **`http://localhost:3210`** in your browser. On first start, Tack crea
 
 ```sh
 curl http://localhost:3210/api/health
-# {"status":"ok","version":"0.1.0-beta.6","migrations_applied":18}
+# {"status":"ok","version":"0.1.0-beta.7","migrations_applied":62}
 ```
+
+`migrations_applied` is how many migrations this build actually ran — trust that field over any number quoted here; it only grows as the schema does.
 
 If this fails, see [Troubleshooting](troubleshooting.md).
 
@@ -171,8 +173,8 @@ For contributing to Tack or running with hot reload. The API server and Vite dev
 
 **Prerequisites:**
 
-- **Rust toolchain** via [rustup](https://rustup.rs) (stable, 1.75+)
-- **Node.js 20+** and npm
+- **Rust toolchain** via [rustup](https://rustup.rs) (stable, 1.94+)
+- **Node.js 22+** and npm
 
 ```sh
 rustc --version

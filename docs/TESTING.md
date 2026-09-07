@@ -150,27 +150,45 @@ pull request, and by hand (`workflow_dispatch`).
 | `coverage` | `cargo llvm-cov` floors per crate + Vitest thresholds | **pull requests, `main`, manual** — five instrumented builds that share nothing with the normal one |
 | `embed-spa` | release build with the SPA embedded, binary-size budget | **pull requests, `main`, manual** — the size-optimised release profile is the slowest build in the repository |
 
-Every test runs exactly once per CI run. Each test's own status is in the JUnit report,
-which is why no step re-runs a subset "to see its status". `CARGO_INCREMENTAL=0`
+The full suite runs exactly once, in the `rust` job's `cargo nextest run --workspace
+--profile ci` step — each test's own pass/fail is in the uploaded JUnit report, which is why
+no step re-runs a subset "to see its status". That same job's last two steps *do* run two
+tests a second time, deliberately: the OpenAPI contract test and tack-orch's golden-drift
+tests are re-invoked with `UPDATE_OPENAPI=1`/`UPDATE_GOLDEN=1` through a targeted `-E`
+filter, which makes them regenerate `docs/openapi.json` / `crates/tack-orch/tests/golden/`
+from the current code, and the step then diffs that output against what's committed. This is
+a second pass over the same test in generate mode to catch drift, not a second verdict from
+the first run — nothing here contradicts "the suite runs once." `CARGO_INCREMENTAL=0`
 throughout: CI never reuses incremental state, and keeping it only inflates the cache.
 
 ### Pre-push hook
 
 `git config core.hooksPath .githooks` activates it. It runs the comment and test-hygiene
-checks, `cargo fmt`,
-`cargo clippy` and the generated-file freshness checks — **not the test suite**, on purpose:
-a hook that takes a minute is a hook people bypass, and the suite is CI's job. Run
+checks, `cargo fmt --all --check` for the root workspace **and, separately, for
+`crates/tack-desktop`** (its own workspace, excluded from the root one — nothing else local
+sees that crate at all), `cargo clippy --workspace --all-targets -- -D warnings`, and the
+lockfile freshness check — **not the test suite**, on purpose: a hook that takes a minute is
+a hook people bypass, and the suite is CI's job. The `schema.gen.ts` staleness check only
+runs when `frontend/node_modules` exists, so a checkout that has never run `npm install` gets
+no local protection against schema drift there — CI's `frontend` job still catches it. Run
 `cargo nextest run --workspace` yourself before pushing anything you claim is green.
 
 ## Coverage
 
 ```bash
+make coverage   # reproduces CI's `coverage` job locally: per-crate llvm-cov floors + Vitest thresholds
+```
+
+Floors `make coverage` (and CI's `coverage` job) enforce, per `Makefile`'s `coverage` target:
+`tack-core` and `tack-runner` ≥ 85 % lines; `tack-db`, `tack-api` and `tack-orch` ≥ 70 %
+lines; frontend Vitest ≥ 70 % lines/functions/statements and ≥ 60 % branches.
+
+For an HTML report instead of the pass/fail gate:
+
+```bash
 cargo install cargo-llvm-cov
 cargo llvm-cov nextest --workspace --html --output-dir coverage/
 ```
-
-Floors CI enforces: `tack-core` and `tack-runner` ≥ 85 % lines; `tack-db`, `tack-api` and
-`tack-orch` ≥ 70 %.
 
 ---
 

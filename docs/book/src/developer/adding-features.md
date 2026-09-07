@@ -51,16 +51,20 @@ pub struct UpdateMilestone {
 
 ### Step 2: Add the migration in `tack-db`
 
-Open `crates/tack-db/src/migrations.rs`. Find the `migrations` vec in `run_all()` and append:
+Open `crates/tack-db/src/migrations.rs`. Migration names are numbered sequentially and
+never reused — find the highest number already in `all_migrations()` (`grep -o
+'"[0-9]\{3\}_[a-zA-Z0-9_]*"' crates/tack-db/src/migrations.rs | sort -u | tail -1`) and
+pick the next one. As of this writing that's `062`, so the new migration is `063`. Find
+the `migrations` vec in `all_migrations()` and append:
 
 ```rust
-("017_milestones", &MIGRATION_017[..]),
+("063_milestones", &MIGRATION_063[..]),
 ```
 
 Then add the constant near the end of the file:
 
 ```rust
-const MIGRATION_017: [&str; 2] = [
+const MIGRATION_063: [&str; 2] = [
     "CREATE TABLE IF NOT EXISTS milestones (
         id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -211,7 +215,7 @@ Then add the routes in the `api` router builder:
 .route("/milestones/{id}", delete(milestones::delete_milestone))
 ```
 
-At this point the feature is complete. Run `cargo nextest run --workspace` to verify nothing is broken, then add integration tests in `crates/tack-db/tests/integration_test.rs` and handler tests in `crates/tack-api/tests/api_test.rs`.
+At this point the feature is complete. Run `cargo nextest run --workspace` to verify nothing is broken, then add repository tests in `crates/tack-db/tests/repository.rs` and handler tests in `crates/tack-api/tests/handlers.rs` — each test file is its own binary, so add to the file whose subject fits rather than creating a new one (see [Testing](testing.md)).
 
 ---
 
@@ -279,7 +283,9 @@ Unit testing presets here is valuable because these tests run without any databa
 
 ### Step 3: Add the `ProjectType` variant
 
-Open `crates/tack-core/src/models.rs` and add `Education` to the `ProjectType` enum:
+Open `crates/tack-core/src/models.rs` and add `Education` to the `ProjectType` enum. The
+enum is exhaustive — every match on it must add an arm — so this is the full current
+list, not an excerpt:
 
 ```rust
 pub enum ProjectType {
@@ -290,6 +296,9 @@ pub enum ProjectType {
     Personal,
     Homework,
     Maintenance,
+    Legal,
+    Research,
+    Event,
     Education,  // ← new
     Custom,
 }
@@ -312,6 +321,9 @@ pub fn workflow_for_type(project_type: &ProjectType) -> WorkflowConfig {
         ProjectType::Construction => construction_workflow(),
         ProjectType::Personal | ProjectType::Homework => simple_workflow(),
         ProjectType::Maintenance => kanban_workflow(),
+        ProjectType::Legal => legal_workflow(),
+        ProjectType::Research => research_workflow(),
+        ProjectType::Event => event_workflow(),
         ProjectType::Education => education_workflow(),  // ← new
         ProjectType::Custom => simple_workflow(),
     }
@@ -407,9 +419,9 @@ The crate layering is the project's load-bearing constraint. Most review feedbac
 - **Don't scatter validation across handlers.** Transition rules, WIP limits, cycle checks, and field validation belong in `tack-core`, called from the handler. Duplicating a rule inline in a handler means the CLI, API, and MCP server can disagree about what's valid.
 - **Don't reach past the repository layer.** Handlers call `Repository` methods; they never build SQL or touch the pool directly. New queries go in the matching `repo/<entity>.rs` module.
 - **Don't let `tack-cli` import `tack-db`.** The CLI is an HTTP client — all data access goes through the API so workflow rules are enforced server-side. The same applies to the MCP server.
-- **Don't edit an existing migration.** Migrations are append-only and idempotent. Changing a shipped migration corrupts databases that already applied it. Add a new numbered migration and wire it into `run_all()`.
+- **Don't edit an existing migration.** Migrations are append-only and idempotent. Changing a shipped migration corrupts databases that already applied it. Add a new numbered migration and wire it into `all_migrations()`.
 - **Don't hardcode colors in the frontend.** Components consume `--color-*` design tokens via inline `style`, never raw hex, so the theme/palette system keeps working. See [Frontend & Design System](frontend.md).
-- **Don't add an endpoint without a handler test.** Every new route gets at least a success-path and an error-path test in `crates/tack-api/tests/api_test.rs`. See [Testing](testing.md).
+- **Don't add an endpoint without a handler test.** Every new route gets at least a success-path and an error-path test in `crates/tack-api/tests/handlers.rs` (or the file matching the route's subject — see [Testing](testing.md)).
 
 When a change feels like it needs to break one of these, that's usually a sign the logic belongs in a different layer — move it rather than bending the boundary.
 

@@ -10,22 +10,22 @@ system.
 
 | Key | Default | Construction example | Homework example |
 |---|---|---|---|
+| `epic` | Epic | Building | Course |
+| `feature` | Feature | Section | Module |
 | `task` | Task | Work Order | Assignment |
-| `epic` | Epic | Building | Subject |
+| `subtask` | Subtask | Activity | Question |
+| `bug` | Bug | Defect | Correction |
+| `requirement` | Requirement | Specification | Rubric Item |
 | `sprint` | Sprint | Phase | Week |
-| `story` | Story | Scope | Topic |
-| `bug` | Bug | Defect | Error |
-| `feature` | Feature | Deliverable | Chapter |
-| `project` | Project | Project | Course |
-| `board` | Board | Board | Board |
-| `column` | Column | Stage | Column |
-| `backlog` | Backlog | Work Queue | Backlog |
-| `item` | Item | Work Item | Item |
-| `subtask` | Subtask | Sub-Order | Sub-task |
-| `milestone` | Milestone | Milestone | Exam |
-| `release` | Release | Handover | Semester |
-| `tag` | Tag | Trade | Tag |
-| `assignee` | Assignee | Contractor | Student |
+| `backlog` | Backlog | Pending Work | Upcoming |
+| `board` | Board | Project Board | Planner |
+| `blocker` | Blocker | Hold | Dependency |
+| `story_points` | Story Points | Effort Hours | Effort |
+| `assignee` | Assignee | Responsible | Student |
+| `deliverable` | Deliverable | Deliverable | Submission |
+| `phase` | Phase | Phase | Term |
+| `milestone` | Milestone | Inspection Point | Exam |
+| `release` | Release | Handover | Graduation |
 
 All keys are optional. Omitted keys fall back to the default label.
 
@@ -76,10 +76,10 @@ Starter vocabulary for a construction project:
   "task":      "Work Order",
   "epic":      "Building",
   "sprint":    "Phase",
-  "story":     "Scope Item",
-  "assignee":  "Contractor",
-  "tag":       "Trade",
+  "requirement": "Specification",
+  "assignee":  "Responsible",
+  "blocker":   "Hold",
   "release":   "Handover",
-  "milestone": "Milestone"
+  "milestone": "Inspection Point"
 }
 ```

@@ -31,7 +31,7 @@ directly gets you most of the way:
    `time_spent: Option<f64>` on `Item`, matched to the existing `estimate_unit` pattern,
    or a new `TimeEntry` struct if you're doing the fuller version).
 2. **Migration** — one new migration in `crates/tack-db/src/migrations.rs`, added to
-   `run_all()`. Read this repo's one hard rule here first: **one `ALTER` per migration
+   `all_migrations()`. Read this repo's one hard rule here first: **one `ALTER` per migration
    file** — the migration runner executes statements individually with no wrapping
    transaction, so a multi-statement migration failing halfway leaves the schema
    half-upgraded with no automatic rollback.

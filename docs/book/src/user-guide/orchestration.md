@@ -128,11 +128,10 @@ card's context menu. The response's `outcome` field is one of:
 **Read this table before building anything on top of it.** `blocked` and
 `waiting_approval` are deliberately **distinct outcomes** with distinct shapes
 (`policy_id` vs. `approval_token`), not two flavors of the same "something's
-pending" state — conflating them is a real correctness bug this cycle went out of
-its way to avoid. A `blocked` task never existed on docket's side at all; a
-`waiting_approval` task exists, is queued, and is one grant away from running. An
-integration that shows both the same way ("dispatch paused") hides which one is
-actually true.
+pending" state — conflating them is a real correctness bug. A `blocked` task never
+existed on docket's side at all; a `waiting_approval` task exists, is queued, and is
+one grant away from running. An integration that shows both the same way ("dispatch
+paused") hides which one is actually true.
 
 Every one of these outcomes is an HTTP `200` — branch on the `outcome` field in the
 JSON body, not on the status code.
@@ -520,8 +519,8 @@ Honestly-reported gaps, not bugs:
 ## Known gap: repeated Sprints-view UI bug
 
 `getByRole('button', { name: 'Run sprint' })` has been observed resolving to more
-than one element on the Sprints view across several test runs during this cycle —
-live-reproduced, not flake. Not yet root-caused; if "Run sprint" seems to appear
+than one element on the Sprints view across several test runs — live-reproduced, not
+flake. Not yet root-caused; if "Run sprint" seems to appear
 twice or a dry-run preview behaves oddly, this is a known, tracked issue, not
 something wrong with your setup.
 

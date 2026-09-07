@@ -1,6 +1,6 @@
 # Tack — Footprint & Performance Benchmarks
 
-_Last measured: 2026-06-25 · Tack v0.1.0-beta.6_
+_Last measured against `develop` at workspace version 0.1.0-beta.8._
 
 Tack's pitch is "fast, single-binary, self-hosted." This page replaces that claim
 with numbers you can reproduce. **Everything below is one process and one SQLite
@@ -11,7 +11,7 @@ file — no Postgres, no Redis, no Docker.**
 | | |
 | --- | --- |
 | CPU | 12th Gen Intel Core i5-12600K (16 threads) |
-| RAM | 63 GiB |
+| RAM | 62 GiB |
 | OS | Linux 6.14 (x86_64) |
 | Build | `cargo build --release -p tack-cli --features embed-spa` (LTO, `opt-level="z"`, stripped) |
 
@@ -22,14 +22,19 @@ you can re-run the method below on your own box.
 
 | Metric | Value | How measured |
 | --- | --- | --- |
-| **Binary size** (UI embedded) | **10.3 MiB** | `ls -l target/release/tack` — single file, SPA embedded via `embed-spa`, stripped |
-| **Binary size** (no UI) | ~3.5 MiB | release build without `embed-spa` (API + CLI only) |
-| **Cold start** (launch → first `/api/health` 200) | **~113 ms** | wall-clock poll loop, fresh empty DB |
-| **Idle RSS** (resident memory, settled) | **~11.7 MiB** | `VmRSS` from `/proc/<pid>/status`, 1 s after ready |
+| **Binary size** (UI embedded) | **21.0 MiB** | `ls -l target/release/tack` — single file, SPA embedded via `embed-spa`, stripped by the release profile |
+| **Binary size** (no UI) | 20.3 MiB | the same release build without `embed-spa` |
+| **Cold start** (launch → first `/api/health` 200) | **~150 ms** | wall-clock poll loop, fresh empty DB; 144–256 ms across four runs |
+| **Idle RSS** (resident memory, settled) | **~19.5 MiB** | `VmRSS` from `/proc/<pid>/status`, 1 s after ready |
+
+The two size rows are 0.7 MiB apart, which is the whole web UI. The binary is twice
+what it was before the execution fleet existed, and the UI is not why: the runner
+protocol, the scheduler, the execution domain and their dependencies are. Embedding
+the UI is nearly free; executing work is not.
 
 For comparison, a typical Postgres-backed PM stack starts at hundreds of MiB of
 resident memory across multiple containers before the app serves a request. Tack's
-whole runtime is ~12 MiB.
+whole runtime is under 20 MiB.
 
 ## Request latency
 
@@ -38,12 +43,12 @@ held 100 items in one project.
 
 | Endpoint | p50 | p95 | p99 |
 | --- | --- | --- | --- |
-| `GET /api/health` | 0.40 ms | 0.62 ms | 0.72 ms |
-| `GET /api/projects/:id/items` (100 items) | 1.88 ms | 2.52 ms | 2.78 ms |
-| `GET /api/projects/:id/search?q=…` (FTS5) | 1.30 ms | 1.72 ms | 1.97 ms |
+| `GET /api/health` | 0.12 ms | 0.34 ms | 0.62 ms |
+| `GET /api/projects/:id/items` (100 items) | 1.69 ms | 2.67 ms | 3.48 ms |
+| `GET /api/projects/:id/search?q=…` (FTS5) | 1.13 ms | 2.82 ms | 3.82 ms |
 
-Concurrent read throughput (32 client workers, `GET …/items`): **~794 req/s,
-p99 ≈ 43 ms**. _Caveat: this number is bounded by the Python test client (GIL +
+Concurrent read throughput (32 client workers, `GET …/items`): **~786 req/s,
+p99 ≈ 50 ms**. _Caveat: this number is bounded by the Python test client (GIL +
 `urllib` overhead), not the server — treat it as a conservative floor, not a
 ceiling._ For a rigorous throughput/saturation curve use the k6 baseline below.
 

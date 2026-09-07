@@ -152,12 +152,20 @@ A cancellation observation on an attempt that already reached a terminal state r
 - **Database or migration recovery** (a crashed migration, a corrupted `.db` file) —
   see [Backup and Restore](backup-restore.md) and `docs/adr/0008-transactional-
   migration-rebuild-recovery.md`.
-- **Chaos/adversarial proof of every boundary above** (disk full mid-journal-write,
-  killing the API at each protocol step, stolen/revoked tokens, stale fences) is
-  card III-G2's dedicated audit, not this page — see
-  `docs/agent-handoffs/part-iii/III-G2.md` once published.
-- **Running `tack-runner` against a live server end to end.** As documented on the
-  [Agent Runners](agent-runners.md#what-actually-runs-today) page, the runner
-  binary's own network transport is not wired to the server in this build — the
-  recovery-observation *protocol* above is fully implemented and tested server-side,
-  but no runner in this build can currently report one over a live connection.
+- **Adversarial proof of these boundaries** — duplicated or revoked runner
+  credentials, a stale fence retried against every attempt-scoped route, corrupt or
+  truncated runner journals, oversized or path-traversal artifact uploads, and
+  reordered/replayed event batches — is in
+  `crates/tack-api/tests/security/chaos_recovery.rs` and
+  `crates/tack-runner/tests/g2_journal_corruption_test.rs`, both run against the real
+  production router and a real runner journal, not this page. Killing the API
+  process at each protocol step is covered separately by
+  `crates/tack-runner/tests/crash_matrix.rs`. Disk-full/`ENOSPC` mid-write has no
+  existing test harness in this repository and remains unverified.
+- **Chaos/adversarial proof of the runner's own recovery path against a live
+  server** beyond what `scripts/smoke.sh`'s restart-recovery step (step 9) already
+  covers — see the [Agent Runners](agent-runners.md#what-actually-runs-today) page.
+  The runner binary's network transport is wired to the server
+  (`tack_runner::bootstrap::build_runtime` attaches the real `HttpPullProtocol`,
+  not a stub), and a runner can report a recovery observation over a live
+  connection today.

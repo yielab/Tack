@@ -13,7 +13,7 @@ The API server loads configuration from `tack.toml` (if present) or environment 
 | `TACK_DATABASE_URL` | `sqlite:tack.db?mode=rwc` | SQLite database path |
 | `TACK_LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
 | `TACK_LOG_JSON` | `false` | Structured JSON logging |
-| `TACK_LOG_FILE` | _(none)_ | Optional log file path |
+| `TACK_LOG_FILE` | _(none)_ | Write logs to this file **in addition to** stdout, in the same format `TACK_LOG_JSON` selects. Missing parent directories are created; if the directory cannot be created the server logs to stdout only rather than refusing to start. `tack service install` and the desktop app both set this so logs survive without a service manager attached |
 | `TACK_STORAGE_DIR` | `./storage` | Attachment storage directory |
 | `TACK_API_TOKEN` | _(none)_ | Optional Bearer token — requires `Authorization: Bearer <token>` on all API requests |
 | `TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK` | `false` | Explicit opt-out for the startup refusal to bind a non-loopback address with no `TACK_API_TOKEN` set (see `docs/adr/0059-single-operator-identity-posture.md`). Loopback binds are unaffected either way. Off by default — this widens who can reach an unauthenticated API, so it must be a deliberate choice, never a fallback the code takes on its own |
@@ -21,7 +21,7 @@ The API server loads configuration from `tack.toml` (if present) or environment 
 | `TACK_MAX_BODY_SIZE` | `2097152` | Global request body limit in bytes (default 2 MB; upload endpoint is always 50 MB) |
 | `TACK_WEBHOOK_URL` | _(none)_ | Outbound webhook URL — when set, POSTs JSON events on item create/update/delete, sprint status changes, and due-soon alerts |
 | `TACK_WEBHOOK_SECRET` | _(none)_ | HMAC-SHA256 signing secret; adds `X-Tack-Signature: sha256=<hex>` to each delivery |
-| `TACK_GITHUB_TOKEN` | _(none)_ | GitHub PAT (`repo` scope). When set, item status changes are pushed back to linked GitHub issues (Phase 21, push-only: item done ⇄ issue closed). Never logged. See `docs/GITHUB-SYNC.md` |
+| `TACK_GITHUB_TOKEN` | _(none)_ | GitHub PAT (`repo` scope). When set, item status changes are pushed back to linked GitHub issues (push-only: item done ⇄ issue closed). Never logged. See `docs/GITHUB-SYNC.md` |
 | `TACK_GITHUB_API_BASE` | `https://api.github.com` | GitHub API root — override for GitHub Enterprise or to point tests at a mock. Used by both import and push-back |
 | `TACK_BACKUP_ENDPOINT` | _(none)_ | S3-compatible endpoint URL (e.g. `https://<acct>.r2.cloudflarestorage.com`); omit for AWS S3 |
 | `TACK_BACKUP_BUCKET` | _(none)_ | Bucket name — **required** to enable remote backup |
@@ -29,19 +29,28 @@ The API server loads configuration from `tack.toml` (if present) or environment 
 | `TACK_BACKUP_ACCESS_KEY` | _(none)_ | S3 access key ID — required to enable remote backup |
 | `TACK_BACKUP_SECRET_KEY` | _(none)_ | S3 secret access key — required; never logged |
 | `TACK_BACKUP_PREFIX` | `tack` | Object key prefix inside the bucket |
-| `TACK_BACKUP_INTERVAL_SECS` | _(none)_ | Auto-backup interval in seconds; omit for manual-only |
+| `TACK_BACKUP_INTERVAL_SECS` | _(none)_ | Auto-backup interval in seconds; omit for manual-only. Values below 60 are raised to 60 with a warning — a tighter loop copies the database more often than it can change |
 | `TACK_BACKUP_RETENTION` | `10` | Number of remote backups to keep after each upload |
 | `TACK_LOCAL_RUNNER_ENABLE` | `false` | Startup default for whether the embedded runner runs — the same gate `tack serve --with-runner` sets; either satisfies it. `1` or `true` (case-insensitive) turn it on; anything else, including unset, is off. Read into `AppConfig::local_runner_enable`; a `PUT /api/local-runner` from the UI (ADR 0061 decisions 2 and 6) overrides it at runtime in `app_meta`, the same precedence `TACK_ORCH_ENABLE` already has — see [Embedded runner](#embedded-runner-tack-serve---with-runner) below. Off by default and refused outright (never silently downgraded) on a non-loopback bind |
 | `TACK_ORCH_ENABLE` | `false` | Enables the orchestration reconciler and the `/api/control-planes`, `/api/projects/{id}/orch-link`, `/api/fleet` routes (and their later-wave successors). Unset ⇒ no reconciler task spawned, every orch route 404s |
 | `TACK_ORCH_POLL_SECS` | `10` | Reconciler base poll interval in seconds (before per-plane backoff + jitter) |
 | `TACK_ORCH_EVENT_RETENTION_DAYS` | `90` | Days of `orch_events` (and, once ingested, `orch_metrics`) history kept before the retention sweep rolls old rows into per-day aggregates and deletes them |
-| `TACK_ORCH_APPROVAL_TOKEN` | _(none)_ | Separate shared secret required to grant/deny a docket approval via `POST /api/approvals/{token}` (Wave 4). Deliberately distinct from `TACK_API_TOKEN` — granting an approval is higher-privilege than editing a card. Never logged |
-| `TACK_EXECUTION_RETENTION_ENABLE` | `false` | Enables the execution-domain retention sweep. **Off by default** (Wave 5 integrator III-F6 amendment — F5 originally shipped this `true`; see `crates/tack-api/src/config.rs#default_execution_retention_enable`) — this sweep deletes rows **and on-disk blobs**, so data deletion must be an explicit operator opt-in, matching `TACK_ORCH_ENABLE`'s own off-by-default posture. Covers four things, across two runtime tasks: (a) replay/idempotency bookkeeping and (b) terminal `execution_events` purge (III-F5, `tack-orch`), plus (c) `execution_artifacts` rows **and their `TACK_STORAGE_DIR/execution-artifacts` blobs** and (d) overdue-decision expiry (`pending` → `expired`) — (c) and (d) wired by III-F6d, which found F2's and F1's sweeps had **zero callers anywhere in the tree** because F5 was authored before F2 existed. Artifact blobs are typically the largest consumer in this domain; before III-F6d they grew without bound even with retention enabled. Decision expiry deliberately shares this one gate rather than running always-on — a test pins that posture so changing it is a reviewed diff |
+| `TACK_ORCH_APPROVAL_TOKEN` | _(none)_ | Separate shared secret required to grant/deny a docket approval via `POST /api/approvals/{token}`. Deliberately distinct from `TACK_API_TOKEN` — granting an approval is higher-privilege than editing a card. Never logged |
+| `TACK_EXECUTION_RETENTION_ENABLE` | `false` | Enables the execution-domain retention sweep. **Off by default** (`crates/tack-api/src/config.rs#default_execution_retention_enable`) — this sweep deletes rows **and on-disk blobs**, so data deletion must be an explicit operator opt-in, matching `TACK_ORCH_ENABLE`'s own off-by-default posture. Covers four things, across two runtime tasks: (a) replay/idempotency bookkeeping and (b) terminal `execution_events` purge (`tack-orch`), plus (c) `execution_artifacts` rows **and their `TACK_STORAGE_DIR/execution-artifacts` blobs** and (d) overdue-decision expiry (`pending` → `expired`). Artifact blobs are typically the largest consumer in this domain. Decision expiry deliberately shares this one gate rather than running always-on — a test pins that posture so changing it is a reviewed diff |
 | `TACK_EXECUTION_RETENTION_DAYS` | `90` | Days of history kept before the sweep purges it — applies to all four categories above (replay/idempotency bookkeeping, terminal `execution_events`, `execution_artifacts` rows and blobs, and decision expiry deadlines) |
 | `TACK_EXECUTION_RETENTION_INTERVAL_SECS` | `3600` | Interval, in seconds, between execution-retention sweeps |
-| `TACK_EXECUTION_HEALTH_ENABLE` | `true` | Enables the execution-domain health watch (runner/queue/lease/event counts; logs a `warn!` on stale-lease/`needs_operator` onset, Wave 5 card III-F5). On by default, unlike retention above — this reads and logs only, deletes nothing |
+| `TACK_EXECUTION_HEALTH_ENABLE` | `true` | Enables the execution-domain health watch (runner/queue/lease/event counts; logs a `warn!` on stale-lease/`needs_operator` onset). On by default, unlike retention above — this reads and logs only, deletes nothing |
 | `TACK_EXECUTION_HEALTH_INTERVAL_SECS` | `60` | Interval, in seconds, between execution health-watch checks |
-| `TACK_EXECUTION_DECISION_TOKEN` | _(none)_ | Separate shared secret required to resolve a scoped execution decision via `POST /api/attempts/{attempt_id}/decisions/{decision_id}/resolve` (Wave 5 card III-F1, wired by integrator III-F6). Mirrors `TACK_ORCH_APPROVAL_TOKEN` exactly: distinct from `TACK_API_TOKEN`, **fail-closed when unset** (the route rejects rather than falling back to the operator token). Never logged |
+| `TACK_EXECUTION_DECISION_TOKEN` | _(none)_ | Separate shared secret required to resolve a scoped execution decision via `POST /api/attempts/{attempt_id}/decisions/{decision_id}/resolve`. Mirrors `TACK_ORCH_APPROVAL_TOKEN` exactly: distinct from `TACK_API_TOKEN`, **fail-closed when unset** (the route rejects rather than falling back to the operator token). Never logged |
+
+The `tack` CLI client — every subcommand other than `serve` — talks to a running server
+over HTTP and never opens the database. It resolves the server's base URL from
+`--base-url`, then `TACK_API_URL`, then `~/.tackrc`, then `http://127.0.0.1:3210`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TACK_API_URL` | `http://127.0.0.1:3210` | Base URL of the server the CLI talks to, unless `--base-url` overrides it |
+| `TACK_API_TOKEN` | _(none)_ | Bearer token the CLI sends, when the server it talks to requires one. Same variable the server reads to *require* a token — one value, two ends of the same connection |
 
 The `tack-runner` binary is configured separately (defaults → `TOML` → environment → CLI flags,
 in that order):

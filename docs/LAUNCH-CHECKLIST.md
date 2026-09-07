@@ -11,6 +11,18 @@ GitHub issue — it's listed under "Blocking pre-flight" or "Publish list", neve
 These aren't nice-to-haves; publishing before they're resolved sends the audience this
 card is written for straight into a broken first impression.
 
+**Three of the four have since been resolved. The detail of each is kept below as the
+record of what was wrong and how it was found.**
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | CI badge reads "failing" | **Resolved.** A push to `develop` now completes with all ten jobs green, E2E included; the E2E budget was raised on measured numbers rather than by guessing |
+| 2 | Local `develop` ahead of the remote | **Resolved.** `origin/develop` matches the local tip |
+| 3 | `install.sh` downloads the runner archive and fails | **Resolved.** The asset match excludes `tack-runner-` archives, and `scripts/verify-install-urls.sh` now runs the installer for real into a scratch directory and asserts a runnable `tack` lands, so this class of bug fails a check instead of a stranger's first command |
+| 4 | The live GitHub repository description names a removed harness | **Open.** One command, listed in the publish list below |
+
+
+
 ### 1. The public repository's CI badge currently reads "failing"
 
 Checked live, 2026-09-06, filtered to actual pushes to `develop` (not just the two most
@@ -206,29 +218,27 @@ Not verified — stated as `not measured`, not rounded up:
 
 ## Publish list — everything a human has to actually do
 
-Nothing above was posted, pushed, tagged, or labeled. In order:
+Nothing here is posted, tagged or labeled by any card. Items 1 to 3 of the pre-flight
+above are done; what is left, in order:
 
-1. **Push the accumulated local `develop` history** (`git push origin develop`) so
-   `origin/develop` matches this worktree's base (`a84a089`) — resolves pre-flight
-   item 2, and is a precondition for item 1 (a clean CI run needs the real tip pushed
-   without a second push landing on top of it mid-run).
-2. **Get one genuinely green, completed `ci.yml` run** on the pushed tip before linking
-   this repository anywhere public — resolves pre-flight item 1.
-3. **Land this card's `install.sh` fix** (or an equivalent one) — resolves pre-flight
-   item 3. It's V-A1's file; whoever owns merging it should review the fix in this
-   branch's diff.
-4. **Update the GitHub repository description** to drop the removed OpenCode mention —
-   resolves pre-flight item 4. V-A4 already has proposed text on file per its own
-   handoff; this is a one-line edit via `gh repo edit --description "..."` or the repo
-   settings UI.
-5. **Open the seven `good first issue` GitHub issues** from the drafts in
+1. **Tag the release.** Nothing since `v0.1.0-beta.7` is downloadable, and that tag
+   predates the desktop bundles entirely — the releases page carries no `.AppImage`,
+   `.deb`, `.dmg` or `.msi` today, so every download link in the README and the quick
+   start resolves to a page without the app on it. Bump the workspace version, then
+   `git tag vX.Y.Z && git push origin vX.Y.Z`; `release.yml` builds and publishes the
+   archives, the four desktop bundles and the SBOMs, and refuses the tag outright if it
+   does not match `Cargo.toml`.
+2. **Update the GitHub repository description** to drop the removed OpenCode mention —
+   resolves pre-flight item 4. A one-line `gh repo edit --description "..."`, or the
+   repository settings UI.
+3. **Open the seven `good first issue` GitHub issues** from the drafts in
    `docs/launch/good-first-issues/`, applying the existing `good first issue` label
    (already exists on the repo — confirmed via `gh label list`, not created by this
    card).
-6. **Post the four drafts** in `docs/launch/posts/` to their respective venues, in
+4. **Post the four drafts** in `docs/launch/posts/` to their respective venues, in
    whatever order/timing is preferred — nothing about them is time-sensitive relative
-   to each other, but all four assume items 1–4 above are already done (every draft
+   to each other, but all four assume the items above are already done (every draft
    links to the repo and the recovery-demo recording).
-7. **Post the two Discussions topics** in `docs/launch/discussions-seed.md`, into the
+5. **Post the two Discussions topics** in `docs/launch/discussions-seed.md`, into the
    `Q&A` and `Ideas` categories respectively (both already exist on the repo — no
    category needs creating).

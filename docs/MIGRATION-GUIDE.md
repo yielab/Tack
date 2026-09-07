@@ -54,12 +54,11 @@ If you are only running Tack as a project manager and have never set
    restore a database with an intact `_migrations` history. Restore your pre-upgrade
    backup, confirm you're running the intended binary version, and try again.
 
-There are currently **61 migrations** as of this build
-(`GET /api/health` reports `migrations_applied` — check that field rather than a
-hand-written count, since this document will not track future additions). Migrations
-039–048 added the ten neutral runner-v1 execution tables (Part III, Wave 1); 049+
-refined execution replay, recovery, and attempt-start facts across later waves. None
-of them are destructive to Parts I/II data — every new table is additive.
+`GET /api/health` reports `migrations_applied` — read that field rather than a
+hand-written count, which this document does not track. Migrations 039–048 added the
+ten neutral runner-v1 execution tables; later ones refined execution replay, recovery
+and attempt-start facts. None of them are destructive to data written by an earlier
+version: every one of them is additive.
 
 ---
 
@@ -75,7 +74,7 @@ gates are independent of each other — enabling one does not enable the others.
 | Docket control-plane polling and dispatch (`/api/control-planes`, `/api/fleet`) | `TACK_ORCH_ENABLE=true` | Spawns a background reconciler task and adds a real, network-reaching agent-fleet backend to the picture |
 | Resolving a scoped execution decision | `TACK_EXECUTION_DECISION_TOKEN=<secret>` | Fail-closed by design — with it unset, `POST .../decisions/{id}/resolve` rejects every request rather than falling back to the ordinary operator token |
 | Granting/denying a Docket approval | `TACK_ORCH_APPROVAL_TOKEN=<secret>` | Same fail-closed posture, mirrored exactly for the Docket approval surface |
-| Automatic deletion of old execution history, replay bookkeeping, and artifact blobs | `TACK_EXECUTION_RETENTION_ENABLE=true` | **Deletes rows and on-disk blobs.** Off by default deliberately — an integrator amendment (III-F6) flipped this from an earlier card's `true` default specifically because data deletion must be an explicit operator opt-in, matching `TACK_ORCH_ENABLE`'s posture |
+| Automatic deletion of old execution history, replay bookkeeping, and artifact blobs | `TACK_EXECUTION_RETENTION_ENABLE=true` | **Deletes rows and on-disk blobs.** Off by default deliberately: data deletion is an explicit operator opt-in, matching `TACK_ORCH_ENABLE`'s posture |
 | The read-only execution health watch (logs a `warn!` on stale-lease/`needs_operator` onset) | Nothing to do — `TACK_EXECUTION_HEALTH_ENABLE=true` is the default | Reads and logs only; no data is deleted or sent anywhere |
 
 **Recommended enablement order for a first rollout:**

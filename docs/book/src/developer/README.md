@@ -13,20 +13,29 @@ You have read the quick-start and can run the server. This document explains *wh
 
 ## 1. The Layering Rule
 
-Tack enforces a strict one-way dependency graph between its four crates:
+Tack enforces a strict one-way dependency graph across the workspace's six crates:
 
 ```
-tack-core  ←  tack-db  ←  tack-api  ←  tack-cli
+tack-core  ←  tack-db  ←  tack-orch  ←  tack-api  ←  tack-cli
+
+tack-runner  (a separate binary, sibling to this graph — talks to tack-api
+              over the runner-v1 HTTP contract, not through any Rust dependency)
 ```
 
-Each arrow means "depends on". No reverse arrows are allowed.
+Each arrow means "depends on". No reverse arrows are allowed. A seventh crate,
+`tack-desktop`, is deliberately excluded from this workspace (its own `Cargo.toml`
+and lockfile) because Tauri drags GTK/WebKit/glib into whatever workspace holds it —
+see the [Crate Tour](crate-tour.md#tack-desktop) for how it supervises `tack` instead
+of linking against it.
 
 **What this means in practice:**
 
 - `tack-core` has zero I/O. It cannot open a file, touch a database, or make a network call. It only contains pure Rust structs, enums, and functions. You can run every test in it without a database process.
 - `tack-db` knows about `tack-core` (it persists those structs), but it knows nothing about HTTP, routing, or config files.
-- `tack-api` is the only place where HTTP concerns (status codes, request extraction, CORS) and database concerns meet.
+- `tack-orch` knows about `tack-core` and `tack-db` but nothing about HTTP — it is the control-plane client (Docket reconciler) and the neutral runner-v1 execution domain, both usable without Axum. See [Crate Tour](crate-tour.md#tack-orch).
+- `tack-api` is the only place where HTTP concerns (status codes, request extraction, CORS) and database concerns meet. It depends on `tack-orch` to spawn the reconciler and expose the orchestration/execution routes.
 - `tack-cli` is the single `tack` binary. It depends on `tack-api` so that `tack serve` can start the server in-process, but its **client** commands only talk to a running server over HTTP — they never open the database directly. This means the CLI works whether the server is local or on a remote machine.
+- `tack-runner` is a separate binary entirely. It never depends on any of the crates above; it speaks the runner-v1 protocol to `tack-api` over loopback or the network, the same way a remote runner would.
 
 **Why bother?** The layering prevents the kind of "everything knows about everything" entanglement that makes codebases brittle. It also means:
 
@@ -170,9 +179,21 @@ The broadcast channel is the pub/sub backbone. Every handler that modifies data 
 │   ├── tack-db/           SQLite persistence layer
 │   │   └── src/
 │   │       ├── lib.rs       init_pool() — WAL mode, foreign keys on
-│   │       ├── migrations.rs 18 migrations as embedded SQL strings
+│   │       ├── migrations.rs Ordered migrations as embedded SQL strings
 │   │       ├── repo.rs      Repository struct — delegates to submodules
 │   │       └── repo/        One file per entity (items, projects, sprints, …)
+│   │
+│   ├── tack-orch/         Control-plane client + runner-v1 execution domain
+│   │   └── src/
+│   │       ├── lib.rs       ControlPlane trait, OrchError
+│   │       ├── reconciler.rs Docket poll loop, health state machine
+│   │       ├── adapters/    Docket adapter
+│   │       ├── execution/   Lifecycle validation, fencing/idempotency types
+│   │       ├── scheduler/   Deterministic runner selection
+│   │       ├── model_policy/ Deterministic model-selection precedence
+│   │       ├── execution_retention.rs Cancellable retention sweep
+│   │       ├── execution_observability.rs Fleet health snapshots
+│   │       └── usage_provenance.rs Requested-vs-actual model + usage economics
 │   │
 │   ├── tack-api/          Axum HTTP server + WebSocket
 │   │   └── src/
@@ -184,12 +205,24 @@ The broadcast channel is the pub/sub backbone. Every handler that modifies data 
 │   │       ├── middleware.rs Bearer token gate
 │   │       └── handlers/    One file per entity group + websocket.rs
 │   │
-│   └── tack-cli/          CLI (clap), talks to API over HTTP
-│       └── src/
-│           ├── main.rs      Command tree + implementation functions
-│           ├── client.rs    TackClient — thin reqwest wrapper
-│           ├── config.rs    ~/.tackrc reader/writer
-│           └── vocab.rs     Fetch and cache project vocabulary
+│   ├── tack-cli/          CLI (clap), talks to API over HTTP
+│   │   └── src/
+│   │       ├── main.rs      Command tree + implementation functions
+│   │       ├── client.rs    TackClient — thin reqwest wrapper
+│   │       ├── config.rs    ~/.tackrc reader/writer
+│   │       ├── service.rs   `tack service` — systemd/launchd unit management
+│   │       └── vocab.rs     Fetch and cache project vocabulary
+│   │
+│   ├── tack-runner/       Separate binary; pull-based execution runner
+│   │   └── src/
+│   │       ├── main.rs      Startup, config, registry
+│   │       ├── engine.rs    Claim → prepare → run → report loop
+│   │       ├── harness/     Adapters per coding agent (codex, claude_code)
+│   │       ├── journal.rs   Local attempt journal for crash recovery
+│   │       └── workspace.rs Per-attempt working directory + credentials
+│   │
+│   └── tack-desktop/      Tauri shell; excluded from the workspace above
+│       └── src/            Supervises `tack` as a bundled sidecar process
 │
 ├── frontend/                SolidJS + TypeScript + Tailwind v4
 │   └── src/

@@ -14,7 +14,8 @@ frontend/src/
 ├── app/          App shell — Router, Layout (sidebar + top bar), routes
 ├── features/     One folder per surface: board, list, table, calendar,
 │                 timeline, sprints, item-detail, dashboard, projects,
-│                 settings, templates
+│                 settings, templates, agents, approvals, economics, fleet,
+│                 provisioning
 ├── shared/
 │   ├── ui/       The component kit (Button, Badge, Modal, Drawer, Tabs,
 │   │             CommandPalette, SearchBar, Sidebar, ToastContainer …) plus

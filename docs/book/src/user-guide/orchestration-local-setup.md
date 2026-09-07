@@ -7,12 +7,12 @@ This page takes you from nothing to Tack dispatching real work to a local
 I actually stand this up" companion.
 
 Every command and environment variable below was verified directly against
-docket's own source (`~/Sites/rack-cli/src/docket/serve.py` and `cli/__init__.py`)
-and against Tack's `crates/tack-api/src/config.rs`/`router.rs` at the time this page
-was written — not copied from docket's own docs or an earlier draft of this cycle's
-plan, both of which have been caught stating things that shipped-and-changed or
-never shipped at all. If you find a mismatch against your installed version, trust
-the source over this page and file an issue.
+docket's own source (`serve.py` and `cli/__init__.py` in the
+[docket repository](https://github.com/yielab/docket)) and against Tack's
+`crates/tack-api/src/config.rs`/`router.rs` — not copied from docket's own docs,
+which have been caught stating things that shipped-and-changed or never shipped at
+all. If you find a mismatch against your installed version, trust docket's source
+over this page and file an issue.
 
 ## Safety note — read this before you run `docket serve`
 
@@ -188,7 +188,7 @@ Project dialog) if you don't already have one.
 ### Via the UI
 
 Open the project's **Settings → Orchestration** tab. It has a link form
-(control plane picker, remote project name, budget cap) — but as of this writing it
+(control plane picker, remote project name, budget cap) — but it
 does **not** let you *create* the control plane itself, only link an existing one.
 So the first step is still the API call below; after that, the link form (and
 editing the budget cap afterward) works entirely from the UI.

@@ -22,7 +22,7 @@ cd frontend && npm ci && npm run build && cd ..
 # 2. Build the release binary with embedded SPA
 cargo build --release --features embed-spa -p tack-cli
 
-# Result: target/release/tack (~10 MB)
+# Result: target/release/tack
 ```
 
 Copy the binary to the server and run it:
@@ -161,7 +161,12 @@ The app is then available at `https://tack.test`.
 sqlite3 /var/data/tack/tack.db "SELECT * FROM _migrations;"
 ```
 
-If a migration record is corrupt, delete that row and restart — the migration will re-run.
+Applied migrations are checked at every startup as an exact ordered prefix by name and
+checksum — deleting or editing a row does not make it re-run; it shifts every later
+row out of position and the server refuses to boot. If a migration record looks
+corrupt, do not touch the `_migrations` table by hand: inspect it to see where the
+history diverges, then restore a known-good backup (see
+[Backup and Restore](../user-guide/backup-restore.md)).
 
 **Database locked:**
 
@@ -181,4 +186,4 @@ If FTS5 is missing, recompile SQLite with `SQLITE_ENABLE_FTS5`, or install a SQL
 
 **Binary size too large:**
 
-The release binary uses `opt-level = "z"`, LTO, and symbol stripping. A >10 MB binary usually means `--features embed-spa` picked up a large frontend dist. Check `du -sh frontend/dist/`.
+The release binary uses `opt-level = "z"`, LTO, and symbol stripping. [Benchmarks](../../../BENCHMARKS.md) records the size this build should land near; a binary well past it usually means `--features embed-spa` picked up a large frontend dist. Check `du -sh frontend/dist/`.

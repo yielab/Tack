@@ -137,9 +137,9 @@ The mapping from `CoreError` to HTTP status codes lives in `tack-api/src/error.r
 
 ### `migrations.rs`
 
-Contains every migration (61 as of this build — check `GET /api/health`'s
-`migrations_applied` field rather than trusting a hand-written count here) as `const`
-arrays of SQL strings. Each entry is `(&str name, &[&str] statements)`. The runner:
+Contains every migration (check `GET /api/health`'s `migrations_applied` field for
+the current count rather than trusting a hand-written number here) as `const` arrays
+of SQL strings. Each entry is `(&str name, &[&str] statements)`. The runner:
 
 1. Creates `_migrations` table if absent.
 2. For each migration, checks if the name is already recorded.
@@ -152,10 +152,10 @@ Migrations are idempotent — running them on an existing database is safe. Nota
 - `010_fts` — creates the FTS5 virtual table `items_fts` and three triggers (`after_item_insert`, `after_item_update`, `after_item_delete`) that keep the FTS index in sync with the `items` table.
 - `012_custom_fields` — `custom_field_definitions` and `custom_field_values` tables.
 - `016_perf_indexes` — additional composite indexes added after profiling.
-- `039`–`048` — the ten neutral runner-v1 execution-domain tables added in Part III
-  Wave 1 (execution requests/attempts/events/decisions/artifacts, agent profiles,
-  runner fleets/members, model profiles). `049`+ refine execution replay, recovery
-  and attempt-start facts across later waves.
+- `039`–`048` — the ten neutral runner-v1 execution-domain tables (execution
+  requests, attempts, events, decisions and artifacts; agent profiles; runner fleets
+  and their members; model profiles). `049`+ refine execution replay, recovery and
+  attempt-start facts.
 
 Each ordinary migration runs in its own transaction with the `_migrations` record
 inserted at commit; a failing statement rolls the whole migration back. Applied
@@ -249,6 +249,58 @@ so a Docket version mismatch degrades gracefully instead of failing a poll. This
 of the crate is entirely independent of the execution domain above — see
 [Docket compatibility](../user-guide/agent-runners.md#docket-compatibility) for how
 (and why) the two never share a code path.
+
+### `scheduler/`
+
+The deterministic fleet scheduler: given a candidate set of runners (health,
+capacity, labels, declared harness and model support) and a request (exact runner or
+fleet selector, required harness, optional provider/model, priority), it decides
+which runner gets the work, or a typed reason none qualify. Two entry points:
+`select::select_runner` for one request against a candidate pool, and `batch::schedule`
+for several requests sharing one pool, ordered by priority then FIFO fairness. Both
+are pure and synchronous — no database, no network client — and neither grants the
+authoritative lease; only the repository's fenced claim
+(`docs/contracts/runner-v1/`) can do that. `wiring::choose_request_for_runner` is the
+live bridge: it loads real `agent_runners` / `agent_fleet_members` /
+`execution_requests` rows and calls into the pure core above, called ahead of the
+naive `ORDER BY created_at LIMIT 1` match in `tack-db`'s claim query. The only
+production caller is the `claim` handler in `tack-api`'s runner protocol.
+
+### `model_policy/`
+
+Deterministic model-selection precedence: request override → agent-profile default →
+project default → fleet default → nothing configured, meaning auto-select.
+`resolve_model_policy` is pure; `wiring` is the `tack-db`-backed caller that fetches
+each tier's configured default and hands the result in, mirroring the scheduler's own
+pure-core/live-wiring split. Every resolved value is still a *request*, whichever tier
+supplied it — intersecting it against a runner's declared capability is the
+scheduler's job, not this module's; and a resolved value is never conflated with the
+*actual* model an attempt reports back, which `usage_provenance` compares separately.
+
+### `execution_retention.rs` and `execution_observability.rs`
+
+Two sibling background tasks — not submodules of `execution/`, which is deliberately
+I/O-free — because both are persistence-bearing work that runs on a timer. Retention
+sweeps stale terminal-attempt event rows out of `execution_events` on an injectable
+clock (`RetentionClock`, so tests never depend on wall time) with a cancellation
+signal raced against its inter-sweep sleep, mirroring the reconciler's own shutdown
+shape; there is no daily roll-up table for `execution_events` yet, so this purges
+rows outright rather than aggregating them, and says so rather than calling itself a
+"roll up". Observability computes a periodic, id-free snapshot of runner/queue/lease/
+event counts and logs alerts from it — keyed only by the domain's two small, closed
+state vocabularies (`agent_runners.state`, `execution_requests.state`), never by
+attempt/request/runner id, so the label set stays bounded regardless of fleet size.
+
+### `usage_provenance.rs`
+
+Two independent pure concerns, neither performing I/O. `compare_model_provenance`
+checks the request's resolved model (or "no model requested") against the attempt's
+actual, observed execution — visible as a mismatch, never silently reconciled.
+`build_usage_economics` keeps runner-observed wall-clock time cost structurally
+separate from the harness/vendor's own self-reported token or dollar usage, never
+summed into one opaque number. Every dollar-valued field in this crate is named
+`*_usd_estimated`, never `*_usd` alone, and absent usage is a `Measurement` with
+`source: NotMeasured`, never a fabricated `0`.
 
 ---
 
@@ -410,8 +462,8 @@ traits:
 `reconcile`) and `HarnessProbe` (version/capability discovery). `AdapterRegistry`
 implements `HarnessAdapter` by dispatching on harness kind and **refuses to register
 any probe claiming `cancel: supported`** — every harness's own shell tool spawns its
-subprocess in a new session outside the runner's process group, confirmed against real
-binaries in Wave 3 (`docs/agent-handoffs/part-iii/III-D{1,2,3,4,5}.md`). Live harness
+subprocess in a new session outside the runner's process group, confirmed against the
+real binaries with `ps`. Live harness
 tests are `#[ignore]`d and never required in CI; `harness/fixtures/fake_harness.sh`,
 driven by `TACK_FAKE_HARNESS_MODE`, is the always-runnable path every required test
 uses instead.
@@ -430,7 +482,12 @@ uses instead.
 
 ### `main.rs`
 
-Uses `clap`'s derive API. The top-level `Cli` struct has two global flags (`--api-url`, `--token`) and an **optional** `Commands` enum. Commands include `serve`, `init`, `projects`, `add`, `list`, `move`, `board`, `search`, `sprint`, `config`, `completions`, `backup`, and `restore`.
+Uses `clap`'s derive API. The top-level `Cli` struct has two global flags (`--api-url`, `--token`) and an **optional** `Commands` enum. Run `tack --help` for the authoritative, current list; as of this writing it is:
+
+- Board basics: `serve`, `init`, `projects`, `add`, `list`, `move`, `board`, `branch`, `search`, `sprint`, `config`, `completions`
+- Backup/restore: `backup`, `backups`, `restore`
+- Project setup: `template`, `role`, `comment`, `field`
+- Agent onboarding and the runner-fleet surface: `mcp` (MCP server over stdio), `execution` (create/list/cancel/reconcile execution requests), `fleet` (runner fleets), `runner` (enroll/revoke execution runners), `service` (run `tack` as a systemd/launchd background service), `agent-profile` (instructions, tool policy, limits), `model-profile` (provider + model id combinations)
 
 Running `tack` with **no subcommand** — or `tack serve` — starts the server + web UI: `run_server()` builds a Tokio runtime and calls `tack_api::serve()`. This is the primary, UI-first entry point. Everything else is the CLI client.
 

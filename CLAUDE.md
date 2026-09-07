@@ -12,18 +12,14 @@ near your code and credentials) — shipped as a single `tack` binary where `tac
 (Scrum/Kanban/phase) with per-project vocabulary; 10 project-type presets; MCP server
 (`tack mcp`). Core is complete (backend, frontend, CLI).
 
-**Active cycles — three, in parallel:** **Part VI** (Phase 60, agent onboarding + provider UX:
-one screen that owns the path from an installed binary to a completed attempt, project-level
-model choice, Vercel AI Gateway as a runner-side provider — Waves 14–16 integrated, Wave 17
-proof and assets left), **Part V** (Phase 59, adoption + first public release — Wave 13, only
-V-C3 left) and **Part VII** (Phase 61, desktop app + background service — ADR 0062 accepted;
-**done 2026-09-07**, closed by VII-D1's stranger walk; dispatch plan in
-`docs/agent-handoffs/part-vii/README.md`). Part IV (Phase 58, `tack serve --with-runner`) is
-done. **These status lines decay in days — `TODO.md`'s "Which board is live" table is the
-authority, not this paragraph.** Both active Parts branch from `develop` and share `README.md` and
-`docs/screenshots/**` under the conflict rules in `TODO.md` §VI.3 and §V.3 — read them before
-branching a card in either. The boards are the authority for what shipped;
-`docs/book/src/roadmap.md` records only intent.
+**No board has an open card.** Parts IV through VII (Phases 58–61) are all carded out: the
+embedded runner, adoption and distribution, agent onboarding and provider choice, and the
+desktop app with its background service. What is left is not card work — tagging a release
+and the publish list in `docs/LAUNCH-CHECKLIST.md`. **These status lines decay in days —
+`TODO.md`'s "Which board is live" table is the authority, not this paragraph.** A new cycle
+branches from `develop`; `README.md` and `docs/screenshots/**` are shared files, and the
+conflict rules for them are in `TODO.md` §VI.3 and §V.3. The boards are the authority for what
+shipped; `docs/book/src/roadmap.md` records only intent.
 
 **Never read `TODO.md` whole — it costs ~199k tokens.** Active boards sit in its first ~2400
 lines (Part VII, then VI, then V, then IV — extract one, never all); the archive (Parts I–III) sits below them.
@@ -100,7 +96,7 @@ crates/
 ├── tack-db/       SQLite via sqlx; 62 migrations; FTS5; repository pattern in repo/
 ├── tack-orch/     ControlPlane trait + reconciler + neutral runner-v1 execution domain.
 │                  Depends on core+db only — must NEVER depend on tack-api
-├── tack-api/      Axum server (library; tack_api::serve). ~90 documented paths + WebSocket
+├── tack-api/      Axum server (library; tack_api::serve). 97 documented paths + WebSocket
 ├── tack-runner/   Pull-based execution runner — separate binary; owns credentials,
 │                  workspace, journal, and the harness subprocess (codex/claude_code)
 └── tack-cli/      The single `tack` binary: serve + CLI client (HTTP only, never opens the DB)

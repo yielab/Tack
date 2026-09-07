@@ -38,11 +38,18 @@ are. One binary. The board plans and records; the runner executes.**
 
 ## Durable by design
 
-The paragraph above isn't a claim without a witness. [`scripts/smoke.sh` step
-9](scripts/smoke.sh#L322-L409) kills the runner mid-attempt against a real server and a
-real lease, proves the attempt turns `needs_operator` with no blind duplicate execution,
-then recovers it with an explicit operator requeue to a succeeded attempt. A recorded run
-of this exact sequence lands in this slot next; until then, the script is the proof.
+The paragraph above isn't a claim without a witness. This is a runner killed mid-attempt
+against a real server and a real lease: the attempt turns `needs_operator` with no blind
+duplicate execution, an operator resolves it with an explicit decision, and the retry
+succeeds.
+
+<p align="center">
+  <img src="docs/screenshots/recovery-demo.gif" width="98%" alt="An attempt is killed mid-run; the board shows needs_operator with no blind duplicate; an operator reconciles it with an explicit decision; the retry succeeds — recorded from a real GitHub Release binary running in Docker, not a development build" />
+</p>
+
+The recording is reproducible: [`scripts/record-recovery-demo.sh`](scripts/record-recovery-demo.sh)
+drives it against a published release artifact in Docker, and [`scripts/smoke.sh` step
+9](scripts/smoke.sh#L322-L409) asserts the same sequence on every run.
 
 ## How it works
 
@@ -91,6 +98,14 @@ external services.
   approval, and structured artifacts on every run
 - Measured usage only — cost and token counts are shown as measured or explicitly
   **not measured**, never estimated or silently shown as zero
+- One **Agents** page owns the path from an installed binary to a finished run: turn
+  execution on without a restart or a flag, see which harnesses this machine has and
+  whether their vendor login already works, paste a provider key, pick a default model
+  from a real catalog, and dispatch a test run. Every status on it is earned by an
+  observation, never asserted
+- Bring your own provider: a Vercel AI Gateway or Anthropic key, held by the runner on
+  its own machine and resolved from the OS keychain. The board and its database never
+  receive it
 
 ### Project management
 
@@ -109,6 +124,8 @@ external services.
 - `tack mcp` — lets Claude Code, Codex, and other MCP clients read and update the
   board through normal workflow validation
 - Outbound signed webhooks and optional GitHub push sync
+- A desktop app with a tray icon, and `tack service install` for a per-user background
+  service — closing the window, or the terminal, does not stop the work
 
 ## Screenshots
 
@@ -147,7 +164,7 @@ the single `tack` binary — no Docker, no database server, no separate frontend
 | --- | --- |
 | **Platform** | Linux, macOS (Intel + Apple Silicon), Windows |
 | **Browser** | Any current Chrome, Firefox, Safari, or Edge |
-| **Footprint** | 10.3 MiB binary (UI embedded), ~11.7 MiB idle memory — measured in [Benchmarks](docs/BENCHMARKS.md) |
+| **Footprint** | 21.0 MiB binary (UI embedded), ~19.5 MiB idle memory — measured in [Benchmarks](docs/BENCHMARKS.md) |
 
 Building from source instead needs [Rust 1.94+](https://rustup.rs/) and
 [Node.js 22+](https://nodejs.org/).
@@ -157,12 +174,16 @@ Building from source instead needs [Rust 1.94+](https://rustup.rs/) and
 **Get the app** — download it, open it, the board is a window on your machine, the
 same server underneath:
 
-- **Linux:** the `.AppImage` or `.deb` from the
-  [releases page](https://github.com/yielab/tack/releases). The AppImage runs as
-  downloaded (`chmod +x`, then run it); the `.deb` installs normally
-  (`sudo apt install ./Tack_*_amd64.deb`).
-- **Windows:** the `.msi` from the same page — run it.
-- **macOS:** not built yet; use the binary below until it is.
+- **Linux:** the `.AppImage` or `.deb`. The AppImage runs as downloaded (`chmod +x`,
+  then run it); the `.deb` installs normally (`sudo apt install ./Tack_*_amd64.deb`).
+- **macOS:** the `.dmg`, Apple Silicon or Intel.
+- **Windows:** the `.msi` — run it.
+
+All four are built for every release and published on the
+[releases page](https://github.com/yielab/tack/releases). **The first release to carry
+them has not been tagged yet** — until it is, build the app from source with
+`make desktop`, or run the server directly with the binary below, which is published
+today.
 
 ![Tack's desktop window open on the Agents page, showing agent execution on and Codex and Claude Code both detected on the machine](docs/screenshots/desktop-window.png)
 
@@ -178,7 +199,8 @@ from the tray** when you want it to actually stop.
 **Or run the binary directly** — servers, CI, anywhere a window doesn't make sense.
 Either way, `tack service install` keeps it running past the session that started
 it — a per-user background service, no root required: a `systemd --user` unit on
-Linux, a `launchd` agent on macOS. `tack service uninstall` removes it again;
+Linux, a `launchd` agent on macOS. There is no Windows implementation; on Windows the
+desktop app is what keeps the server alive. `tack service uninstall` removes it again;
 `tack service status` says whether it's active. That's the same promise the app's tray
 makes with a window attached: install it once, and it's there whenever you open the
 board or point a client at it — not something you remember to start.
@@ -225,15 +247,13 @@ it on, see what harness it found, and set a provider key or a default model from
 
 ## Status
 
-Tack is in public beta. The core project-management product — workflows, views,
-DAGs, search, backup — is complete. The native, harness-agnostic agent-execution
-fleet described above is implemented and gated behind `--with-runner`, but has not
-shipped in a tagged release yet; install it today from the `develop` branch with the
-Cargo command above.
+Tack is in public beta. The core project-management product — workflows, views, DAGs,
+search, backup — is complete, and so is the harness-agnostic execution fleet described
+above. The published release archives predate the fleet; until the next tag, install it
+from the `develop` branch with the Cargo command above.
 
-**Harness proof** — every row below is checked against the actual installed binaries
-on a real machine, not mocked out; see `docs/agent-handoffs/part-v/V-A2.md` for the
-full evidence, including reverted-fix proofs and live run logs.
+**Harness proof** — every row below was checked against the actual installed binaries on
+a real machine, not mocked out.
 
 | Harness | Status |
 | --- | --- |
@@ -303,7 +323,7 @@ tack-core   Domain models, workflow rules, vocabulary, and dependency graph (no 
     ↑
 tack-db     SQLite persistence through sqlx, FTS5, and repositories
     ↑
-tack-orch   Optional Docket client and reconciliation boundary
+tack-orch   Scheduling, model policy, and the neutral execution domain (no I/O of its own)
     ↑
 tack-api    Axum HTTP/WebSocket server, configuration, and integrations
     ↑

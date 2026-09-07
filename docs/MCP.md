@@ -6,7 +6,7 @@ projects, search and read items, and create/update/move items and add comments â
 all through the same HTTP API the CLI uses, so **workflow validation, WIP limits,
 and parent-auto-completion still apply** and the live board updates over WebSocket.
 
-## Transport decision (Phase 20, Task 1)
+## Transport decision
 
 Two options were considered:
 

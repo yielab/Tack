@@ -112,6 +112,8 @@ The header value must be exactly `Bearer ` followed by the same string you set i
 ```
 http://localhost:8080
 http://127.0.0.1:8080
+http://localhost:3210
+http://127.0.0.1:3210
 https://tack.test
 ```
 

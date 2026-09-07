@@ -41,7 +41,7 @@ The token value is never written to logs. Use a long, random string and rotate i
 Browsers block cross-origin API calls unless the server explicitly allows the page's origin. Tack's allow-list is `TACK_ALLOWED_ORIGINS`, a comma-separated list of exact origins (scheme + host + port). The default is:
 
 ```
-http://localhost:8080,http://127.0.0.1:8080,https://tack.test
+http://localhost:8080,http://127.0.0.1:8080,http://localhost:3210,http://127.0.0.1:3210,https://tack.test
 ```
 
 Change it when the browser loads the UI from a different origin than the API — for example a reverse-proxy hostname or a separate frontend dev server:
@@ -278,7 +278,7 @@ Security- and administration-relevant settings, as read by the server at startup
 | `TACK_DATABASE_URL` | `sqlite:tack.db?mode=rwc` | SQLite database location |
 | `TACK_API_TOKEN` | _(none)_ | When set, requires `Authorization: Bearer <token>` on all `/api/*` routes except `/api/health`. Never logged |
 | `TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK` | `false` | Explicit opt-out for the non-loopback-without-token startup refusal (see [ADR 0059](https://github.com/yielab/tack/blob/develop/docs/adr/0059-single-operator-identity-posture.md)). Off by default — set only when a `TACK_HOST` reachable beyond the local machine is intentional and a token genuinely cannot be configured |
-| `TACK_ALLOWED_ORIGINS` | `http://localhost:8080,http://127.0.0.1:8080,https://tack.test` | Comma-separated CORS allow-list of exact origins |
+| `TACK_ALLOWED_ORIGINS` | see [`docs/CONFIG.md`](https://github.com/yielab/tack/blob/develop/docs/CONFIG.md) | Comma-separated CORS allow-list of exact origins |
 | `TACK_MAX_BODY_SIZE` | `2097152` | Max body size in bytes for non-attachment requests (2 MB). Uploads are always capped at 50 MB |
 | `TACK_STORAGE_DIR` | `./storage` | Attachment storage directory |
 | `TACK_WEBHOOK_URL` | _(none)_ | Outbound webhook URL; enables event POSTs |

@@ -1,25 +1,20 @@
 # Roadmap
 
-> **Where this project actually stands, as of 2026-08-30.** Phases 0–56 are delivered and
-> merged on `develop`. **Nothing since `v0.1.0-beta.6` (2026-06-22) has ever been released**,
-> so the entire runner fleet — the thing that distinguishes Tack — is not downloadable by
-> anyone. Phase 57's tag is refused: the live smoke fails, and `codex` has never completed a
-> live attempt. Two cycles are active in parallel: **Phase 58** (`tack serve --with-runner`,
-> packaging and first run) and **Phase 59** (adoption and the first real public release,
-> opened by the audit of 2026-08-30). Both are carded in [TODO.md](../../../TODO.md), Parts
-> IV and V. Sections below this banner describe **intent**; the boards describe what shipped.
+> **This file records intent, phase by phase. It is not the status board.** What actually
+> shipped, and at which commit, is in [TODO.md](../../../TODO.md) — one board per cycle,
+> each with its own card ownership and accepted integration SHAs. Where this file and a
+> board disagree, the board is right.
 >
-> The rest of this file is long and mostly closed-phase history. If you are picking work up
-> cold, read the two _Next_ sections at the end — _Standalone Single-Binary Operation_ and
-> _Adoption & First Public Release_ — and skip everything between.
+> Phases 0–61 are delivered and merged on `develop`: the project-management core, the
+> harness-agnostic runner fleet, the single-binary embedded runner, the adoption and
+> distribution work, agent onboarding and provider choice, and the desktop app with its
+> background service. The phase sections below are mostly closed history; each one states
+> its own outcome at the top.
 
-**Current version:** 0.1.0-beta.6 (a large body of unreleased work is pending → `v0.1.0-beta.7`)  
-**Status:** All thirteen engineering phases complete, plus competitive/growth phases
-20 (MCP server), 22 (dev-native CLI), 23 (Table view), 24 (positioning & presets),
-and 25 (local-first). A full-repo audit (July 2026) produced the **audit-driven
-Phases 26–32**, which are now **implemented and verified green** (244 Rust tests,
-169 Vitest, clippy clean, frontend builds) — see the status board below. The work
-is staged for release as `v0.1.0-beta.7`.
+**Status:** All engineering phases through 61 are delivered. The earlier ground: the
+thirteen original engineering phases, then competitive and growth phases 20 (MCP server),
+22 (dev-native CLI), 23 (Table view), 24 (positioning & presets) and 25 (local-first), then
+the audit-driven phases 26–32, whose per-phase outcomes are in the status board below.
 
 **Next cycle (added August 2026): Phases 33–38 — the Agent-Factory Control Center.**
 Tack becomes the control panel for a factory of products built by
@@ -2396,7 +2391,7 @@ three most common extension patterns.
 
 ---
 
-# Next — Harness-Agnostic Runner Fleet (Phases 50–57)
+# Harness-Agnostic Runner Fleet (Phases 50–57)
 
 **Status:** feature-complete, **release still refused.** Phases 50–56 delivered; Phase 57 (the
 Docket bridge, recovery and release phase) is the only phase remaining. Updated 2026-08-26
@@ -2954,9 +2949,9 @@ capability gap in the table above, but both would have failed a real multi-runne
 
 ---
 
-# Next — Standalone Single-Binary Operation (Phase 58)
+# Standalone Single-Binary Operation (Phase 58)
 
-**Status:** not started. Decided in
+**Status:** delivered. Decided in
 [`docs/adr/0058-standalone-single-binary-runner.md`](../../adr/0058-standalone-single-binary-runner.md).
 Execution is tracked card-by-card on the **Part IV board** in `TODO.md` (§IV.0–§IV.6), which is
 the authority for wave status, card ownership and accepted integration SHAs. This section
@@ -3057,9 +3052,11 @@ growth is measured and recorded as a real number, never estimated.
 
 ---
 
-# Next — Adoption & First Public Release (Phase 59)
+# Adoption & First Public Release (Phase 59)
 
-**Status:** active, not started. Opened by the **adoption audit of 2026-08-30**, whose
+**Status:** every card delivered; what remains is publishing, which is a human action
+outside this repository and is listed in `docs/LAUNCH-CHECKLIST.md`. Opened by an
+**adoption audit**, whose
 findings are consolidated below. Execution is tracked card-by-card on the **Part V board**
 in `TODO.md` (§V.0–§V.6), which is the authority for wave status, card ownership and
 accepted integration SHAs. This section records the audit and the intent; the board records
@@ -3214,9 +3211,9 @@ human approval.
 
 ---
 
-# Next — Agent Onboarding & Provider UX (Phase 60)
+# Agent Onboarding & Provider UX (Phase 60)
 
-**Status:** active, not started. Opened by the **agent-UX audit of 2026-09-03**, whose
+**Status:** every card delivered. Opened by an **agent-UX audit**, whose
 findings are consolidated below. Execution is tracked card-by-card on the **Part VI board**
 in `TODO.md` (§VI.0–§VI.6), which is the authority for wave status, card ownership and
 accepted integration SHAs. This section records the audit and the intent; the board records
@@ -3521,7 +3518,9 @@ stranger who reads the README's first screen reports two components — a board 
 and records, runners that execute where the code lives — before they see a single Kanban
 column.
 
-# Next — Desktop app and background service (Phase 61)
+# Desktop app and background service (Phase 61)
+
+**Status:** delivered.
 
 **Tack runs as a background service, and the window is a view of it.** Closing the window
 never stops the work; only Quit does. The normal install is a desktop application with its

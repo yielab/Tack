@@ -38,10 +38,24 @@ page no longer enumerates endpoints by hand: any such list would silently rot, w
 is exactly the failure this contract eliminates.
 
 To browse the spec interactively, load `docs/openapi.json` into any OpenAPI viewer
-(Redocly, Scalar, Swagger Editor, or `npx @redocly/cli preview-docs docs/openapi.json`).
-The current surface is **68 REST operations across 43 paths, plus 1 WebSocket**
-(`/api/projects/{id}/boards/live`, which — like the multipart upload — is documented
-in prose below rather than in the spec).
+(Redocly, Scalar, Swagger Editor, or `npx @redocly/cli preview-docs docs/openapi.json`),
+or count the surface yourself:
+
+```sh
+python3 -c "
+import json
+spec = json.load(open('docs/openapi.json'))
+methods = {'get','put','post','delete','options','head','patch','trace'}
+ops = sum(1 for item in spec['paths'].values() for k in item if k in methods)
+print(f\"{len(spec['paths'])} paths, {ops} operations\")
+"
+```
+
+There is also **1 WebSocket** endpoint (`/api/projects/{id}/boards/live`), which —
+like the multipart upload — is documented in prose below rather than in the spec.
+No fixed operation count is given here: it changes with every endpoint added, and
+a hand-copied number is exactly the kind of drift this page exists to avoid — trust
+the command above, or the spec, over anything written here.
 
 ---
 
@@ -57,6 +71,8 @@ Connect to `ws://127.0.0.1:3210/api/projects/{id}/boards/live` with a standard W
 | `ItemDeleted` | `{"id":"…"}` |
 | `BoardConfigUpdated` | Updated board config |
 | `SprintUpdated` | Full sprint object |
+| `AgentRunUpdated` | `{project_id, item_id, run_id, state}` — an orchestrated agent run mirrored from a control plane (docket) changed state, or was newly attributed to this item |
+| `ApprovalPending` | `{project_id, item_id, token, action}` — a mirrored approval transitioned into `pending`; not emitted on every re-poll or on a grant/deny decision |
 | `Ping` | `{}` — keepalive, sent periodically |
 
 ---

@@ -244,7 +244,7 @@ use uuid::Uuid;
 
 `use` is like Python's `from x import y` or TypeScript's `import { y } from 'x'`. It brings names into scope without needing to write the full path every time.
 
-**Crates** are the compilation unit — analogous to npm packages, Python packages, or Maven artifacts. Tack has four crates:
+**Crates** are the compilation unit — analogous to npm packages, Python packages, or Maven artifacts. Tack's workspace has six crates, plus a runner binary and a desktop shell built separately (see the [Architecture Overview](../README.md#1-the-layering-rule) and [Crate Tour](../crate-tour.md) for the full picture); the four at the center of the layering rule are:
 
 ```
 crates/

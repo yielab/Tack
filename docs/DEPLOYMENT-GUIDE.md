@@ -2,7 +2,7 @@
 
 This guide covers deploying Tack to production.
 
-Tack is a **single, self-contained binary** (~10 MB) with the SolidJS SPA
+Tack is a **single, self-contained binary** (about 21 MiB — see [Benchmarks](BENCHMARKS.md)) with the SolidJS SPA
 embedded. One process serves the REST API (`/api/*`), the WebSocket, and the web
 UI — same-origin, so there is no separate frontend service, no CORS to configure
 for the bundled UI, and no static host to run. All state lives in one SQLite
@@ -64,7 +64,7 @@ cd tack
 make build
 # → npm --prefix frontend ci && npm --prefix frontend run build
 #   cargo build -p tack-cli --release --features embed-spa
-# Produces target/release/tack  (~10 MB, SPA embedded)
+# Produces target/release/tack  (SPA embedded)
 ```
 
 For a fully static Linux binary (no glibc dependency — ideal for minimal hosts
@@ -107,10 +107,11 @@ The same binary is also the CLI client (`./tack --help`, `./tack add`,
 > must bind a non-loopback address (`TACK_HOST=0.0.0.0`), set `TACK_API_TOKEN` —
 > otherwise the API (including the "download the whole database" endpoint) is open
 > to anyone who can reach the port. In this exact configuration (non-loopback bind
-> **and** no `TACK_API_TOKEN`), the server prints a loud multi-line security
-> warning at startup; set `TACK_INSECURE_NO_AUTH=1` to acknowledge it when the
-> exposure is intentional (e.g. behind a trusted authenticating proxy). The
-> warning is informational — the server still boots either way.
+> **and** no `TACK_API_TOKEN`), the server refuses to start: its security preflight
+> rejects the configuration before any network resources open. Set
+> `TACK_API_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1` only to accept that risk
+> deliberately (e.g. behind a trusted authenticating proxy). See `docs/CONFIG.md`
+> for the full `TACK_*` variable table.
 
 ---
 
@@ -256,7 +257,7 @@ Add TLS with Certbot: `sudo certbot --nginx -d tack.example.com`.
 
 A `Dockerfile` and `docker-compose.yml` ship at the repo root. The image is a
 three-stage build (build SPA → compile a static musl binary that embeds it → copy
-onto a distroless base) producing a ~10 MB, shell-less image. There is a single
+onto a distroless base) producing a shell-less image barely larger than the binary. There is a single
 service and a single volume for the database and attachments.
 
 ```bash
@@ -379,10 +380,9 @@ override), and a restore that would clobber newer local work requires
 confirmation. Restores verify the bundle's SHA-256 and schema version before
 staging, snapshot the current state first, and roll back if the swap fails.
 
-> **Encryption at rest is not yet implemented.** Bundles are compressed but
-> unencrypted in the bucket. Until client-side encryption lands (tracked as
-> Phase 28.6), use a private bucket with encryption-at-rest enabled on the
-> provider side, and scope the access key to that one bucket.
+> **Encryption at rest is not implemented.** Bundles are compressed but
+> unencrypted in the bucket. Use a private bucket with encryption-at-rest enabled on
+> the provider side, and scope the access key to that one bucket.
 
 ---
 

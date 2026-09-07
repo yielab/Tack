@@ -1,9 +1,9 @@
 # Architecture & Implementation Notes
 
 Crate responsibilities, design patterns, and implementation details of record.
-Moved from CLAUDE.md (2026-08-19); this file is the authority — CLAUDE.md keeps
-only the condensed map. (The mdBook's crate-tour predates tack-orch/tack-runner;
-until Wave 6 card III-G3 refreshes it, this file is the more current source.)
+This file is the authority — CLAUDE.md keeps only the condensed map. The
+mdBook's crate-tour predates `tack-orch`/`tack-runner` and has not caught up,
+so this file is the more current source on anything the two disagree about.
 
 **Project structure:**
 ```
@@ -11,7 +11,10 @@ crates/
 ├── tack-core/     Pure business logic (no I/O)
 ├── tack-db/       SQLite persistence layer
 ├── tack-orch/     Agent-fleet orchestration client (ControlPlane trait, reconciler)
-│                  + the neutral runner-v1 execution domain (execution/)
+│                  + the neutral runner-v1 execution domain (execution/), the
+│                  deterministic scheduler and model-policy resolver, and the
+│                  execution domain's own retention/observability/provenance
+│                  background modules
 ├── tack-api/      Axum HTTP server + WebSocket (library; pub fn serve)
 ├── tack-runner/   Pull-based execution runner — its own binary; owns local
 │                  credentials, workspace, journal and the harness subprocess
@@ -19,10 +22,13 @@ crates/
 
 frontend/
 ├── src/
-│   ├── components/  Reusable UI components
-│   ├── pages/       Route pages (Board, Projects)
-│   ├── lib/         Utilities (API client, WebSocket, optimistic UI)
-│   └── types/       TypeScript type definitions
+│   ├── app/         Root App/Layout components and routes.tsx
+│   ├── features/    One directory per feature (board, list, sprints, fleet,
+│   │                agents, provisioning, economics, settings, …)
+│   ├── shared/      Cross-feature code: api/ (generated client + schema),
+│   │                realtime/, orch/, execution/, ui/, state/, vocab/, keyboard/
+│   └── test/        Vitest setup
+├── e2e/             Playwright specs
 ├── public/          Static assets
 └── package.json     Frontend dependencies (SolidJS, Vite, Tailwind v4)
 
@@ -43,21 +49,30 @@ docs/                Documentation
 
 **tack-db**:
 - SQLite via `sqlx` (async)
-- 61 migrations with FTS5 full-text search on items
+- 62 migrations (`grep -oE '"[0-9]{3}_[a-zA-Z0-9_]+"' crates/tack-db/src/migrations.rs | sort -u | wc -l`; the live count is `GET /api/health`'s `migrations_applied`) with FTS5 full-text search on items
 - Repository pattern: CRUD for all entities in `repo/` submodules
 - Auto-runs migrations on startup
 - Database is created automatically if missing
 
-**tack-orch** (agent-fleet orchestration client — off by default, gated behind `TACK_ORCH_ENABLE`):
-- Defines the `ControlPlane` trait (`health`, `status`, `metrics`, `list_runs`, `list_approvals`, `list_tasks`, `traces`, plus write methods gated behind Phase 35 dispatch) — the seam that makes Tack a factory control center rather than a docket-specific dashboard. `docket` (`adapters::docket::DocketAdapter`) is the only implementor today.
-- Depends only on `tack-core` and `tack-db`; must never depend on `tack-api` — the dependency points inward, `tack-api` depends on this crate to spawn the reconciler and expose the orchestration routes
+**tack-orch** (agent-fleet orchestration client + the neutral runner-v1 execution domain — depends only on `tack-core` and `tack-db`; must never depend on `tack-api`, the dependency points inward, `tack-api` depends on this crate to spawn the reconciler, run the scheduler/retention/observability tasks, and expose the orchestration and execution routes):
+
+*Agent-fleet orchestration (off by default, gated behind `TACK_ORCH_ENABLE`):*
+- Defines the `ControlPlane` trait (`health`, `status`, `metrics`, `list_runs`, `list_approvals`, `list_tasks`, `traces`, plus gated write/dispatch methods) — the seam that makes Tack a factory control center rather than a docket-specific dashboard. `docket` (`adapters::docket::DocketAdapter`) is the only implementor today.
 - `reconciler.rs`: one `tokio` task per registered control plane, polling `/health` + `/status.json` on a jittered interval and driving a `healthy` → `degraded` (3 consecutive failures) → `unreachable` (10) health state machine, persisted to `control_planes`
 - Remote enums (`RunState`, `RunSource`, `TaskStatus`, `ApprovalState`) all carry an `Unknown(String)` fallback so a docket upgrade degrades gracefully instead of failing a poll
 - `adapters::prometheus`: dependency-free `/metrics` text-exposition parser, reused by any future metrics ingestion
-- Every dollar-valued field is named `*_usd_estimated` — token counts are the primary, trustworthy measure; docket reports no real spend, so any cost figure downstream is a derived estimate. See `docs/book/src/developer/orchestration.md`
+
+*The runner-v1 execution domain and its supporting modules:*
+- `execution/`: the neutral, transport-free runner-v1 protocol domain (request/attempt/event/artifact/decision types) that both `tack-api`'s handlers and `tack-runner` build on
+- `scheduler/`: a pure, I/O-free decision library — given a candidate pool of runners (health/capacity/labels/declared harness and model support) and a request (exact runner or fleet selector, required harness, optional provider/model, priority), it returns a selected runner or a typed reason none qualify; it never grants the authoritative lease, only the repository's fenced claim does that. `select::select_runner` decides one request; `batch::schedule` orders several by priority then FIFO fairness; `wiring` is the live `tack-db`-backed caller
+- `model_policy/`: deterministic model-selection precedence — request override → agent-profile default → project default → fleet default → auto-select when nothing is configured — pure resolution plus a `wiring` module that fetches each tier's configured default
+- `execution_retention.rs`: a cancellable background sweep that purges stale/terminal execution rows, mirroring the reconciler's own retention sweep but with an injectable clock and a real stop signal
+- `execution_observability.rs`: a periodic, **id-free** fleet health snapshot (runner/queue/lease/event state counts, bounded to the domain's small closed vocabularies) plus stuck/ambiguous alerts — never labeled by attempt, request or runner id
+- `usage_provenance.rs`: compares an execution request's resolved model against what the attempt actually ran on, and keeps runner-observed wall-clock cost structurally separate from harness/vendor-reported token and dollar usage
+- Every dollar-valued field across this crate is named `*_usd_estimated` — token counts are the primary, trustworthy measure; docket reports no real spend, so any cost figure downstream is a derived estimate; absent usage is a typed "not measured", never a fabricated `0`. See `docs/book/src/developer/orchestration.md`
 
 **tack-api** (library — does not build its own binary):
-- Axum HTTP server with 90 documented paths + 1 WebSocket (the WebSocket is not in the spec; includes the 8 orchestration endpoints gated behind `TACK_ORCH_ENABLE`, the operator execution/fleet surface, and the 14 `/api/runner/v1` runner-protocol paths)
+- Axum HTTP server with 97 documented paths (`python3 -c "import json; print(len(json.load(open('docs/openapi.json'))['paths']))"`) + 1 WebSocket not in the spec — includes the orchestration endpoints gated behind `TACK_ORCH_ENABLE`, the operator execution/fleet surface, and the 14 `/api/runner/v1` runner-protocol paths. `docs/openapi.json` is generated and authoritative; re-run the count above rather than trusting this number after the next handler change.
 - **Two authentication surfaces, separated structurally.** Operator routes live under `/api` behind `require_token`. Runner routes are nested as a _sibling_ of `/api` on the outer router, so they never traverse the operator auth layer at all — deliberately not an exemption-list entry, which a later edit could quietly widen. Each runner handler authenticates its own hashed bearer credential via `handlers/runner_protocol/runner_auth.rs`.
 - `x-tack-principal` is **overwritten from server config** by `middleware::inject_operator_principal` and never read from the request. Operator idempotency is scoped by principal, so a trusted header would let one caller collide with another's requests.
 - Server entry point exposed as `tack_api::serve()` (in `server.rs`)
@@ -77,11 +92,10 @@ docs/                Documentation
 - Two traits: `client::engine::HarnessAdapter` (per-attempt lifecycle — `validate`/`start`/`cancel`/`wait`/`reconcile`) and `harness::HarnessProbe` (version/capability discovery, which needs no claimed attempt). `AdapterRegistry` implements `HarnessAdapter` by dispatching on the requested harness kind, so the engine takes exactly one adapter type
 - **Capabilities are honest or the adapter is rejected.** `AdapterRegistry::register_probe` refuses any probe claiming `Supported` cancellation, because every harness's shell tool spawns its subprocess in a new session outside the runner's process group — verified with `ps` against real `claude`. Cancellation is `Advisory` everywhere; the scheduler must read the capability snapshot, never assume
 - Live harness tests are opt-in (`#[ignore]` + a PATH check) and never required in CI; the shared fake binary at `harness/fixtures/fake_harness.sh` is the always-runnable path, driven by `TACK_FAKE_HARNESS_MODE`
-- See `docs/agent-handoffs/part-iii/III-D{1,2,3,4,5}.md` for each adapter's observed-vs-assumed CLI contract
 
 **tack-cli** (the single `tack` binary):
 - `tack` with no subcommand (or `tack serve`) starts the server + web UI via `tack_api::serve()` — the primary, UI-first entry point
-- CLI client using `clap`: `init`, `add`, `list`, `move`, `board`, `branch`, `search`, `sprint`, `template`, `role`, `comment`, `field`, `backup`, `restore` (complete)
+- CLI client using `clap` (`Commands` enum in `main.rs`): board/item basics — `init`, `projects`, `add`, `list`, `move`, `board`, `branch`, `search`, `config`, `completions`; entity subcommand groups — `sprint`, `template`, `role`, `comment`, `field`; backup — `backup`, `backups`, `restore`; and the execution/runner surface, each its own subcommand group — `execution` (create/list/get/cancel/reconcile requests), `fleet` (runner fleets), `runner` (enroll/revoke/start), `service` (manage `tack` as a background service — a systemd user unit on Linux, a launchd agent on macOS), `agent-profile`, `model-profile`
 - `tack mcp` — Model Context Protocol server over stdio (hand-rolled JSON-RPC 2.0 in `mcp.rs`); proxies tool calls to a running server over HTTP so workflow rules apply. See `docs/MCP.md`
 - `tack branch <item-id>` — derives/creates a git branch from an item (`git.rs`)
 - Client commands talk to the server over HTTP (blocking `reqwest`); never open the DB directly
@@ -122,9 +136,9 @@ docs/                Documentation
 
 ## Database Schema Highlights
 
-- **61 migrations** tracked in `_migrations` table (039–048 added the ten neutral execution tables; 049+ refine execution replay, recovery and attempt-start facts)
+- **62 migrations** tracked in the `_migrations` table — see `GET /api/health`'s `migrations_applied` for the live count rather than trusting this number (039–048 added the ten neutral execution tables; 049–061 refine execution replay, recovery and attempt-start facts; 062 adds project-level default-model selection)
 - Migrations are transactional with ordered-prefix and checksum enforcement; 037/038 do a copy/verify/swap rebuild guarded by a `VACUUM INTO` snapshot
-- **`BEGIN IMMEDIATE` is mandatory for read-then-write transactions.** A deferred transaction that reads then writes deadlocks under concurrency — two callers both upgrade from reader to writer and SQLite returns `SQLITE_LOCKED`. Ten sites in `repo/execution.rs` hit this; each was stress-tested before and after the fix. Write-first methods are fine as-is and were deliberately left deferred. Note the shared in-memory test harness can _mask_ these races — prove any new concurrency test load-bearing against a file-backed DB by reverting the fix and watching it fail
+- **`BEGIN IMMEDIATE` is mandatory for read-then-write transactions.** A deferred transaction that reads then writes deadlocks under concurrency — two callers both upgrade from reader to writer and SQLite returns `SQLITE_LOCKED`. 16 sites in `repo/execution.rs` hit this (`grep -c 'begin_with("BEGIN IMMEDIATE")' crates/tack-db/src/repo/execution.rs`); each was stress-tested before and after the fix. Write-first methods are fine as-is and were deliberately left deferred. Note the shared in-memory test harness can _mask_ these races — prove any new concurrency test load-bearing against a file-backed DB by reverting the fix and watching it fail
 - **FTS5 virtual table** (`items_fts`) for full-text search across titles, descriptions, tags
 - **Triggers** maintain FTS index on INSERT/UPDATE/DELETE
 - **Foreign keys** enforce referential integrity (e.g., items → projects, items → sprints)
@@ -138,8 +152,8 @@ All routes follow RESTful conventions:
 - `/api/projects` — CRUD for projects (5 endpoints)
 - `/api/projects/{id}/boards` — Multiple boards per project (CRUD + view)
   - `GET /api/projects/{id}/boards/live` — **WebSocket** for real-time updates
-- `/api/projects/{id}/export` — Export to JSON/CSV (1 endpoint)
-- `/api/projects/import` — Import from JSON (1 endpoint)
+- `/api/projects/{id}/export` — Export to JSON/YAML/CSV (1 endpoint)
+- `/api/projects/import` — Import from JSON or YAML (1 endpoint)
 - `/api/projects/{id}/items` — Items scoped to project (3 endpoints)
 - `/api/items/{id}` — Individual item operations (3 endpoints with WebSocket broadcasting)
 - `/api/items/{id}/dependencies` — Dependency management (3 endpoints)
@@ -150,14 +164,14 @@ All routes follow RESTful conventions:
 - `/api/items/{id}/comments` — Comments on items (2 endpoints)
 - `/api/projects/{id}/search` — Full-text search within project (1 endpoint)
 - `/api/search` — **Global search** across all projects (1 endpoint)
-- `/api/projects/{id}/import-github` — GitHub Issues import (1 endpoint; `owner/repo` or full URL, optional PAT, label filter, PR-skipping, cursor pagination). Imported items are linked in the `github_links` table so completing them pushes a close back to GitHub when `TACK_GITHUB_TOKEN` is set (Phase 21, push-only). See `docs/GITHUB-SYNC.md`
+- `/api/projects/{id}/import-github` — GitHub Issues import (1 endpoint; `owner/repo` or full URL, optional PAT, label filter, PR-skipping, cursor pagination). Imported items are linked in the `github_links` table so completing them pushes a close back to GitHub when `TACK_GITHUB_TOKEN` is set (push-only). See `docs/GITHUB-SYNC.md`
 - `/api/projects/{id}/import-linear` — Linear import (1 endpoint; Linear API key, optional team/project filter, label filter, priority mapping, cursor pagination)
 - `/api/backup`, `/api/restore` — Local DB backup download / staged restore (2 endpoints)
 - `/api/backup/remote` (POST/GET), `/api/backup/remote/restore` — Cloud (S3-compatible) backup, list, and staged restore (3 endpoints)
 - `/api/settings/backup` (GET/PUT) — Read/update the UI-editable cloud-backup config; secret key is write-only (returned as a `secret_key_set` boolean)
 - `/api/control-planes` (GET/POST), `/api/control-planes/{id}` (GET/PATCH/DELETE), `/api/projects/{id}/orch-link` (GET/PUT), `/api/fleet` (GET) — Agent-fleet orchestration (8 endpoints; all gated behind `TACK_ORCH_ENABLE`, 404 when unset). Control-plane token is write-only (`token_set` boolean). See `docs/book/src/developer/orchestration.md` and `docs/book/src/user-guide/orchestration.md`
 - `/api/executions`, `/api/runner-fleets`, `/api/runners/*`, `/api/agent-profiles`, `/api/model-profiles` — **Operator** execution surface (create/list/get/cancel/requeue, fleet and profile management, runner enrollment and revocation). Under operator auth. Raw enrollment tokens are returned exactly once at issue time and only their SHA-256 hash is stored
-- `/api/runner/v1/*` — **Runner protocol**, 14 paths under a separate credential: `enroll`, `refresh`, `claim`, `heartbeat`, and per-attempt `accept`, `start`, `events`, `decisions`, `decisions/poll`, `artifacts`, `artifacts/{artifact_id}/content` (PUT — the content upload; omitted from this list until Wave 5's III-F6e specced it), `completion`, `cancellation-observation`, `recovery-observation`. Every attempt-scoped mutation validates runner identity + attempt id + current fencing token; a stale fence returns the stable `stale_lease` error and writes nothing
+- `/api/runner/v1/*` — **Runner protocol**, 14 paths under a separate credential: `enroll`, `refresh`, `claim`, `heartbeat`, and per-attempt `accept`, `start`, `events`, `decisions`, `decisions/poll`, `artifacts`, `artifacts/{artifact_id}/content` (PUT — the content upload), `completion`, `cancellation-observation`, `recovery-observation`. Every attempt-scoped mutation validates runner identity + attempt id + current fencing token; a stale fence returns the stable `stale_lease` error and writes nothing
 
 Query parameters support filtering, pagination, and search.
 
@@ -225,14 +239,14 @@ Items can only be assigned to active or planning sprints (enforced in handlers).
 
 ### Export/Import
 
-- **JSON Export**: Complete project snapshot with items, sprints, metadata
+- **JSON Export**: Complete project snapshot — project, items, sprints, dependencies, metadata
   - `GET /api/projects/{id}/export?format=json`
-  - Returns downloadable JSON file with all project data
+- **YAML Export**: The same snapshot, serialized as YAML. YAML is a JSON superset, so both formats decode into the same intermediate value on import
+  - `GET /api/projects/{id}/export?format=yaml`
 - **CSV Export**: Simplified item list for spreadsheet import
   - `GET /api/projects/{id}/export?format=csv`
   - Includes: id, title, type, status, priority, parent_id, created_at
-- **Import**: Placeholder endpoint for future implementation
-  - `POST /api/projects/import` (basic structure in place)
+- **Import**: `POST /api/projects/import` (`handlers/export.rs::import_project`) accepts the same JSON-or-YAML snapshot shape produced by export, dispatched on `Content-Type`. Creates a new project, imports sprints then items (two passes — create, then wire up `parent_id`) then dependencies, preserves each item's original `source` trust marker, and restores the source project's workflow and vocabulary. If any step fails, the created project is deleted and the error is returned — nothing is left half-imported.
 
 ### WebSocket Real-Time Updates
 
@@ -264,9 +278,9 @@ Items can only be assigned to active or planning sprints (enforced in handlers).
   talks to the API directly; the browser exercises the SPA via the proxy.
 - **Security**: `cargo audit` + `npm audit` in CI; justified advisory exceptions
   in `.cargo/audit.toml`. **Performance**: k6 baseline in `tests/load/`.
-- **Wave gates** in `crates/tack-api/tests/wave2_gate.rs` — deliberately import no test
-  infrastructure from any card and drive the real `build_router`, because a card's own
-  green tests are not evidence that the integrated system works.
+- **Integration gates** in `crates/tack-api/tests/wave2_gate.rs` — deliberately import no
+  test infrastructure from any other test module and drive the real `build_router`,
+  because one area's own green tests are not evidence that the integrated system works.
 
 **A test that asserts a status code has usually not proved the claim.** The recurring failure
 in this codebase has been tests that pass while proving something weaker than their name says:
