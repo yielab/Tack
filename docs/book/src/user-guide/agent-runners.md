@@ -61,7 +61,7 @@ Three ways to attach one, in order of effort:
 |---|---|---|
 | **Embedded, from the first second** | `tack serve --with-runner` | One developer, one machine — the fastest path to a completed attempt. |
 | **Embedded, turned on later, no restart** | Agents page (`/agents`) → **Turn on** | You started plain `tack serve` and changed your mind. Same runner as above, same process, flipped on live — a flag and this toggle are two doors to the identical on/off switch. |
-| **A separate `tack-runner` process, enrolled against this board** | [Enrolling a runner](#enrolling-a-runner) below | **Required** for Docker, or any deployment not bound to `127.0.0.1` — an embedded runner refuses to start there on purpose. Executing arbitrary agent processes on a machine reachable from outside the loopback interface is the one thing this product refuses to do silently; see [Non-loopback and security posture](#non-loopback-and-security-posture). |
+| **A separate `tack-runner` process, enrolled against this board** | [Enrolling a runner](#enrolling-a-runner) below | **Required** for a shared or production deployment not bound to `127.0.0.1` — an embedded runner refuses to start there on purpose. Executing arbitrary agent processes on a machine reachable from outside the loopback interface is the one thing this product refuses to do silently; see [Non-loopback and security posture](#non-loopback-and-security-posture). |
 
 **"Run with agent"** (the button on an item) and **`--with-runner`** (the boot flag) are
 two different things that happen to sound alike: the button always exists; the flag —

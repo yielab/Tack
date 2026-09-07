@@ -213,11 +213,11 @@ runner, just switched on at a different moment:
    command below uses.
 2. **The Agents page → Turn on** — same embedded runner, flipped on later with no
    restart, if you started plain `tack serve` instead.
-3. **A separate `tack-runner` process**, enrolled against this board — **required for
-   Docker** or any deployment not bound to `127.0.0.1`: an embedded runner refuses to
-   start there on purpose, since it would execute arbitrary agent processes on a
-   machine reachable from outside. See
-   [Agent Runners](docs/book/src/user-guide/agent-runners.md#do-you-need-a-runner).
+3. **A separate `tack-runner` process**, enrolled against this board — needed for a
+   shared or production deployment not bound to `127.0.0.1`: an embedded runner
+   refuses to start there on purpose, since it would execute arbitrary agent processes
+   on a machine reachable from outside. See
+   [Enrolling a runner](docs/book/src/user-guide/agent-runners.md#enrolling-a-runner).
 
 **"Run with agent"** (the button) and **`--with-runner`** (the flag) are two different
 things that sound alike: the button always exists; the flag is one of three ways to
@@ -279,24 +279,6 @@ tar xzf tack-*.tar.gz && cd tack-*/
 ```
 
 **Windows:** extract the zip and run `tack.exe serve --with-runner`.
-
-**Or run it in Docker** — build the image locally from the checked-in
-[`Dockerfile`](Dockerfile); a published `ghcr.io` image isn't pullable yet, so build
-from source until it is:
-
-```bash
-docker build -t tack:latest .
-docker run --rm -p 3210:3210 -v tack-data:/data tack:latest
-```
-
-The container binds `0.0.0.0` internally so the host can reach it — which means
-**`--with-runner` won't apply here**: the embedded runner refuses to start on any
-non-loopback bind, container or not (see [Do you need a
-runner?](#do-you-need-a-runner) above). Agent execution in a containerized board comes
-from a separate `tack-runner` process enrolled against it, run on whatever machine
-actually has your code and credentials — see [Enrolling a
-runner](docs/book/src/user-guide/agent-runners.md#enrolling-a-runner). Everything
-else — the board, its API, the CLI, MCP — works exactly the same as any other install.
 
 Open **`http://localhost:3210`**. Project data lives in `tack.db`; attachments live in
 `storage/`. Back up both.
