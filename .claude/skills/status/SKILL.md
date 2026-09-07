@@ -15,13 +15,9 @@ description: Answer "where is this project right now and what is next" — recon
 State is NOT stored in one place and no file is kept "up to date" for you. It is derived
 from four sources of record. Run these, then report.
 
-**Three cycles are active in parallel** as of 2026-09-03: **Part VII** (Phase 61 — desktop
-app + background service; ADR 0062; dispatch plan `docs/agent-handoffs/part-vii/README.md`),
-**Part VI** (Phase 60 — agent onboarding, the Agents page, Vercel AI Gateway at the runner
-boundary; `docs/agent-handoffs/part-vi/README.md`) and **Part V** (Phase 59 — adoption;
-Wave 13 in flight). Part IV (Phase 58) is done. All active Parts branch from `develop` and
-share `README.md` and `docs/screenshots/**` under §VII.3 / §VI.3 / §V.3. A status report that names only
-one of them is wrong.
+**No board has an open card.** Parts IV through VII are all carded out. Confirm that
+against `TODO.md`'s "Which board is live" table rather than trusting this paragraph —
+if it lists an open card, the table wins and a new cycle branches from `develop`.
 
 ```bash
 # 1. What actually landed, and is the tree clean?
@@ -68,13 +64,22 @@ For every branch that reports UNLANDED, classify it before reporting — never g
 | `agent/<card-id>-<slug>` | one board card's work (e.g. `agent/v-a2-smoke-truth`); merged by the wave integrator |
 | `worktree-agent-<hash>` | throwaway checkout created by agent isolation; not authored work |
 | `plan/<cycle-name>` | an older cycle's integration line; Parts IV, V and VI do NOT use one |
-| `develop`, `origin/*` | long-lived; `develop` is the repository's **default** branch |
+| `develop`, `main`, `origin/*` | long-lived; `main` is the repository's **default** branch and what the public sees |
 
-**`main` does not exist — not locally and not on the remote.** This is not a quirk to work
-around; it is a live defect. `README.md` advertises an install one-liner that fetches from
-`.../tack/main/install.sh`, which returns **HTTP 404** and has since the repository went
-public. Card **V-A1** owns the fix and the branch decision. Report it if you see anyone about
-to depend on `main` existing.
+**`main` is the published face of the repository, `develop` is where work lands.** The
+install one-liner in `README.md` fetches `install.sh` from `main`, the GitHub landing page
+renders `main`'s `README.md`, and both are what a stranger gets. So `main` trailing
+`develop` is not cosmetic: it silently serves an older installer and an older README.
+Fast-forward `main` to `develop` before tagging a release, and check the gap whenever you
+report status:
+
+```bash
+git rev-list --count origin/main..origin/develop   # 0 = the public face is current
+```
+
+A ruleset protects both branches (no deletion, no force-push, linear history, and every CI
+job required); repository admins can bypass it, which is how a direct fast-forward of `main`
+is possible at all.
 
 ## Branch health — run this every time, it is how the trunk gets lost
 
