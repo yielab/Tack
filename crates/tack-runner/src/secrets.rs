@@ -14,12 +14,23 @@
 //! instead of `keyring` — exactly this module's situation. A platform-store
 //! attempt has to be caught and turned into a file fallback, and tests need
 //! a store that never touches a real Secret Service.
+//!
+//! Constructing the platform store is a blocking call that can stall far
+//! longer than a normal answer takes — a Secret Service that has to
+//! activate over D-Bus is the concrete case seen on this project's own
+//! Linux boxes. `open` bounds that call with [`PLATFORM_STORE_TIMEOUT`] so
+//! a slow or hung store degrades to the file backend instead of hanging
+//! the caller; see that constant's doc comment for the split-brain
+//! consequence of the bound existing at all.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use keyring_core::api::CredentialStoreApi;
 use thiserror::Error;
@@ -27,6 +38,22 @@ use thiserror::Error;
 /// Service name every keychain entry is filed under, and what a live
 /// `secret-tool`/`security` lookup on the dev machine names.
 pub const SERVICE: &str = "tack-runner";
+
+/// How long [`SecretStore::open`] waits for the platform credential store
+/// to answer before treating it as absent and falling back to the file
+/// backend. A working store answers a local IPC call in well under this;
+/// the bound only ever matters on the boot where the store would otherwise
+/// have hung.
+///
+/// Its cost is a split-brain risk, not a false negative: a store that
+/// clears this window on one boot and misses it on the next (a Secret
+/// Service that is briefly slow to activate, a machine under load) makes
+/// `SecretStore::open` choose a different backend for the same secret
+/// names across restarts, silently, since nothing else about the machine
+/// changed. `tack runner doctor` reports this bound and the backend it
+/// picked so that swap is visible rather than only inferred from a key
+/// that stops resolving.
+pub const PLATFORM_STORE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Which backend answered. Never a mode a caller chooses — [`SecretStore`]
 /// picks this once, at construction, from what the machine actually has.
@@ -112,11 +139,11 @@ pub struct SecretStore {
 impl SecretStore {
     /// Tries the platform credential store; falls back to a single
     /// owner-only file at `file_fallback_path` only when no platform store
-    /// answers — callers pass `RunnerConfig::secret_store_path()`, which
-    /// keeps the fallback path a `config.rs` concern. The choice is made
-    /// once, here, and never re-attempted for the life of the returned
-    /// `SecretStore` — matching `tack runner doctor`'s report, which reads
-    /// this same choice back.
+    /// answers within [`PLATFORM_STORE_TIMEOUT`] — callers pass
+    /// `RunnerConfig::secret_store_path()`, which keeps the fallback path a
+    /// `config.rs` concern. The choice is made once, here, and never
+    /// re-attempted for the life of the returned `SecretStore` — matching
+    /// `tack runner doctor`'s report, which reads this same choice back.
     pub fn open(file_fallback_path: &Path) -> Self {
         match Self::platform_store() {
             Ok(store) => {
@@ -165,7 +192,37 @@ impl SecretStore {
         }
     }
 
+    /// Runs the platform-specific probe on a helper thread and gives it
+    /// [`PLATFORM_STORE_TIMEOUT`] to answer.
     fn platform_store() -> Result<Arc<dyn CredentialStoreApi + Send + Sync>, String> {
+        Self::bounded(PLATFORM_STORE_TIMEOUT, Self::platform_store_unbounded)
+    }
+
+    /// Runs `work` on its own thread and returns what it produces, or a
+    /// timeout error if `timeout` passes first. `work` is never cancelled —
+    /// a genuinely hung probe keeps its thread alive past the timeout, with
+    /// nothing left to receive its eventual answer — so this bounds how
+    /// long the *caller* waits, not how long the probe itself runs.
+    fn bounded<T: Send + 'static>(
+        timeout: Duration,
+        work: impl FnOnce() -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = sender.send(work());
+        });
+        match receiver.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(format!("did not answer within {timeout:?}"))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err("probe thread ended without answering".to_string())
+            }
+        }
+    }
+
+    fn platform_store_unbounded() -> Result<Arc<dyn CredentialStoreApi + Send + Sync>, String> {
         #[cfg(target_os = "macos")]
         {
             let store: Arc<dyn CredentialStoreApi + Send + Sync> =
@@ -490,5 +547,48 @@ mod tests {
 
         let error = store.get("absent").expect_err("nothing was ever set");
         assert!(matches!(error, SecretError::NotFound(name) if name == "absent"));
+    }
+
+    // ---------------------------------------------------------------
+    // The bound on a hung platform-store probe. `bounded` is the whole
+    // mechanism `open` relies on to avoid stalling on a real Secret
+    // Service, so it is tested directly against a fake probe that never
+    // returns — the same shape a D-Bus activation stall has — rather than
+    // against the real, target-gated `platform_store_unbounded`.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bounded_times_out_promptly_when_the_work_never_answers() {
+        let bound = Duration::from_millis(50);
+        let started = std::time::Instant::now();
+
+        let result: Result<(), String> = SecretStore::bounded(bound, || {
+            std::thread::sleep(Duration::from_secs(5));
+            Ok(())
+        });
+
+        let elapsed = started.elapsed();
+        assert!(
+            result.is_err(),
+            "a probe that never answers must not be treated as success"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "bounded() took {elapsed:?} to return against a {bound:?} bound; \
+             the abandoned probe's 5s sleep must not be on the caller's critical path"
+        );
+    }
+
+    #[test]
+    fn bounded_returns_the_work_s_own_result_when_it_answers_in_time() {
+        let ok: Result<i32, String> = SecretStore::bounded(Duration::from_secs(1), || Ok(42));
+        assert_eq!(ok, Ok(42));
+
+        let err: Result<i32, String> =
+            SecretStore::bounded(
+                Duration::from_secs(1),
+                || Err("backend said no".to_string()),
+            );
+        assert_eq!(err, Err("backend said no".to_string()));
     }
 }

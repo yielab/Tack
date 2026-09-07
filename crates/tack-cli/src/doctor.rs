@@ -174,6 +174,14 @@ fn render(report: &bootstrap::DiscoveryReport) {
 
     println!("Secret store (resolves `secret_reference` environment entries):");
     println!("  backend: {}", report.secret_backend);
+    println!(
+        "  note: the platform credential store gets {:?} to answer before this falls back to \
+         an owner-only file; a store that is slow to start up (a Secret Service activating \
+         over D-Bus, for example) can miss that window on one boot and clear it on the next, \
+         so which backend answers for the same secret name is not guaranteed to stay the same \
+         across restarts.",
+        tack_runner::secrets::PLATFORM_STORE_TIMEOUT
+    );
     println!();
 
     render_provider(&report.provider_catalog);
