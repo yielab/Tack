@@ -808,3 +808,119 @@ async fn attempt_summary_reports_mismatched_provenance_with_both_sides_visible()
         attempt["model_provenance"]["actual_model_id"]
     );
 }
+
+/// An item runs one attempt through to a terminal state, then the *same*
+/// item is enqueued again with a fresh, never-used idempotency key, reusing
+/// the same runner and agent profile a retry through the Run-with-agent
+/// modal would. Guards against a regression that would make
+/// `execution_requests`/`execution_attempts` treat "this item already has a
+/// finished attempt" as a reason to refuse a new request — no such
+/// invariant exists, and the second call must succeed exactly like the
+/// first.
+#[tokio::test]
+async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
+    let (app, _pool, item_id) = setup().await;
+    let (runner_id, runner_auth_owned) = enroll_runner(&app, "C36 repeat-enqueue runner").await;
+    let runner_auth = headers_ref(&runner_auth_owned);
+    let agent_profile_id =
+        create_agent_profile(&app, "C36 repeat-enqueue profile", json!({})).await;
+
+    let (status, created) = send(
+        &app,
+        "POST",
+        "/api/executions",
+        execution_request_body(
+            &item_id,
+            "c36-first",
+            "exact_runner",
+            &runner_id,
+            &agent_profile_id,
+            Some("openai"),
+            Some("opaque/model-f6b"),
+        ),
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+
+    let (status, claimed) = send(
+        &app,
+        "POST",
+        "/api/runner/v1/claim",
+        json!({"protocol_version": 1, "runner_id": runner_id, "claim_request_id": "c36-claim", "available_capacity": 1, "wait_ms": 0}),
+        &runner_auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{claimed}");
+    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
+    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
+
+    let (status, accepted) = send(
+        &app,
+        "POST",
+        &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
+        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-c36", "base_revision": BASE_REVISION}),
+        &runner_auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+
+    let (status, started) = send(
+        &app,
+        "POST",
+        &format!("/api/runner/v1/attempts/{attempt_id}/start"),
+        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-c36", "base_revision": BASE_REVISION, "process_id": "pid-c36"}),
+        &runner_auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+
+    let (status, completed) = send(
+        &app,
+        "POST",
+        &format!("/api/runner/v1/attempts/{attempt_id}/completion"),
+        completion_body(
+            &runner_id,
+            &attempt_id,
+            fencing_token,
+            "c36-completion",
+            "openai",
+            "opaque/model-f6b",
+            json!({
+                "tokens_in": {"value": null, "source": "not_measured"},
+                "tokens_out": {"value": null, "source": "not_measured"},
+                "duration_ms": {"value": null, "source": "not_measured"},
+                "cost_usd": {"value": null, "source": "not_measured"},
+            }),
+        ),
+        &runner_auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{completed}");
+
+    // The item's one attempt is now terminal (`succeeded`). A fresh
+    // idempotency key against the same item, same runner, same profile.
+    let (status2, second) = send(
+        &app,
+        "POST",
+        "/api/executions",
+        execution_request_body(
+            &item_id,
+            "c36-second",
+            "exact_runner",
+            &runner_id,
+            &agent_profile_id,
+            Some("openai"),
+            Some("opaque/model-f6b"),
+        ),
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(
+        status2,
+        StatusCode::OK,
+        "second enqueue for an item with a finished attempt must not fail: {second}"
+    );
+    assert_eq!(second["state"], "queued");
+    assert_eq!(second["replayed"], false);
+}
