@@ -217,3 +217,95 @@ async fn board_live_handshake_selects_the_tack_v1_subprotocol() {
         "response selected the wrong subprotocol: {header_line}"
     );
 }
+
+/// Starts `app` on a real loopback listener, creates a project through it,
+/// then drives a raw WebSocket handshake against that project's `boards/live`
+/// route carrying `origin` (when given). Returns the raw HTTP response text
+/// so callers can assert on the status line. Shared by the pair of tests
+/// below and `board_live_handshake_selects_the_tack_v1_subprotocol` above.
+async fn board_live_handshake_response(app: axum::Router, origin: Option<&str>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let address = listener.local_addr().expect("test listener address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let project = reqwest::Client::new()
+        .post(format!("http://{address}/api/projects"))
+        .json(&serde_json::json!({ "name": "WS origin test", "project_type": "software" }))
+        .send()
+        .await
+        .expect("create project over the real listener")
+        .error_for_status()
+        .expect("project creation must succeed")
+        .json::<serde_json::Value>()
+        .await
+        .expect("project JSON");
+    let project_id = project["id"].as_str().expect("project ID");
+
+    let origin_line = origin
+        .map(|o| format!("Origin: {o}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "GET /api/projects/{project_id}/boards/live HTTP/1.1\r\n\
+         Host: {address}\r\n\
+         {origin_line}\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\
+         Sec-WebSocket-Protocol: tack.v1\r\n\r\n"
+    );
+
+    let mut stream = TcpStream::connect(address)
+        .await
+        .expect("connect WebSocket client");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("send browser-style WebSocket handshake");
+    let mut buffer = [0_u8; 4096];
+    let count = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+        .await
+        .expect("WebSocket handshake timed out")
+        .expect("read WebSocket handshake");
+    let response = String::from_utf8_lossy(&buffer[..count]).into_owned();
+    server.abort();
+    response
+}
+
+/// Following the documented developer recipe (`tack serve` bound to its
+/// loopback default, then `npm run dev`, which opens `http://localhost:5173`)
+/// sends this exact `Origin` on the board's live handshake, and
+/// `default_allowed_origins()` has never listed `5173`. A loopback-bound
+/// server now recognizes any loopback-hosted `Origin` as same-machine and
+/// authorizes it without needing it in `TACK_ALLOWED_ORIGINS`.
+#[tokio::test]
+async fn board_live_handshake_from_the_vite_dev_origin_is_authorized_on_a_loopback_bind() {
+    let (app, _) = common::test_app().await;
+    let response = board_live_handshake_response(app, Some("http://localhost:5173")).await;
+    assert!(
+        response.starts_with("HTTP/1.1 101"),
+        "loopback bind should authorize a loopback browser origin: {response}"
+    );
+}
+
+/// The same loopback `Origin` gets no special treatment once the server
+/// itself is not loopback-bound — proving the fix widens only what a
+/// loopback bind accepts, never what `TACK_ALLOWED_ORIGINS` means for a
+/// bind reachable beyond this machine.
+#[tokio::test]
+async fn board_live_handshake_from_a_loopback_origin_is_still_refused_on_a_non_loopback_bind() {
+    let (app, _) = common::test_app_with_config(AppConfig {
+        host: "0.0.0.0".into(),
+        ..AppConfig::default()
+    })
+    .await;
+    let response = board_live_handshake_response(app, Some("http://localhost:5173")).await;
+    assert!(
+        !response.starts_with("HTTP/1.1 101"),
+        "a non-loopback bind must still require an explicitly listed origin: {response}"
+    );
+}

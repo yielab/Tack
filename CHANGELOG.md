@@ -99,6 +99,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A developer following the quick-start's own steps now sees live board events.**
+  `tack serve`, then `npm run dev`, then opening `http://localhost:5173` — the
+  documented developer path — used to open a socket the server silently refused: the
+  board-live WebSocket upgrade checks the browser's `Origin` against
+  `TACK_ALLOWED_ORIGINS`, whose default list has never included Vite's dev port, so an
+  item created in one tab never appeared in another. A server bound to loopback (the
+  default) now also authorizes any loopback-hosted `Origin` on its own — the same
+  same-machine trust the rest of this API already extends to an unauthenticated
+  loopback bind — so any local dev port works with no configuration; a non-loopback
+  bind is unaffected and still requires an explicit entry.
 - **The Execution tab no longer flickers and forgets what you were doing every four
   seconds.** Its background refresh used to replace an already-loaded attempt list with
   "loading" first, which tore down and rebuilt the whole attempt panel — including the

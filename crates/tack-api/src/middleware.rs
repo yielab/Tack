@@ -31,17 +31,38 @@ fn is_board_websocket_route(path: &str) -> bool {
 
 const AUTH_PROTOCOL_PREFIX: &str = "tack.auth.";
 
+/// True when the browser `Origin` header names a loopback host. A remote
+/// page cannot forge this: a browser sets `Origin` from the script's own
+/// origin, never from where a URL later resolves, so this only ever matches
+/// a page that is itself running on `localhost`/`127.0.0.1`.
+fn origin_is_loopback(origin: &str) -> bool {
+    reqwest::Url::parse(origin)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .is_some_and(|host| crate::config::is_loopback_host(&host))
+}
+
+/// Checks the browser `Origin` header against `TACK_ALLOWED_ORIGINS`. When
+/// the server itself is bound to loopback, an `Origin` that also names a
+/// loopback host is accepted even if it isn't in the configured list — on a
+/// single machine, whoever can open this connection already holds the same
+/// access as the bind itself (the posture ADR 0059 states for the rest of
+/// this API). This is what lets any local dev port (Vite's default `5173`
+/// included) reach the socket with no configuration; it does not change
+/// what a non-loopback bind accepts, since that check still requires an
+/// exact match against the configured list.
 fn board_websocket_is_authorized(req: &Request, state: &AppState) -> bool {
     if let Some(origin) = req.headers().get(header::ORIGIN) {
         let Ok(origin) = origin.to_str() else {
             return false;
         };
-        if !state
+        let listed = state
             .config
             .allowed_origins
             .iter()
-            .any(|allowed| allowed == origin)
-        {
+            .any(|allowed| allowed == origin);
+        let same_machine = state.config.binds_loopback() && origin_is_loopback(origin);
+        if !listed && !same_machine {
             return false;
         }
     }
