@@ -94,6 +94,20 @@ updates:
       npm-security:
         applies-to: security-updates
         patterns: ["*"]
+    ignore:
+      # openapi-typescript (every release through 7.13.0, including the 7.0.0-rc.1
+      # "next" line) pins its typescript peer at ^5.x. Forcing a TS 7 major here
+      # would ERESOLVE against that generator on every install. Remove this once
+      # a released openapi-typescript widens the peer range.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # jsdom 30 requires Node ^22.22.2 || ^24.15.0 || >=26.0.0 (confirmed at
+      # runtime, not just via the engines warning: vitest's forked workers crash
+      # loading jsdom under Node 20 — `webidl.util.markAsUncloneable is not a
+      # function` inside the bundled undici). CI's setup-node pins "20" across
+      # every frontend-touching job. Remove this once that pin moves to 22+.
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
 
   # The pinned Rust toolchain (rust-toolchain.toml). Pinning exactly is what keeps
   # local builds and CI on the same compiler; this entry is what keeps the pin

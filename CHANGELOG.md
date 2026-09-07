@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its 0.9 line raises the crate's own `rust-version` to 1.94.0, above this repo's pinned
   1.89 floor, so raising it is out of scope here and Dependabot no longer proposes it
   (`.github/dependabot.yml`'s `ignore` on `sqlx`'s major updates).
+- **Frontend dependency bumps: `@solidjs/router` 0.16.3 → 1.0.0, `@types/node`
+  24.13.3 → 26.4.1.** Both are dev-time/type-only or internal-only changes —
+  nothing a user of the running app can notice. `typescript` and `jsdom` stay on
+  their current pins: no released `openapi-typescript` accepts a TypeScript 7
+  peer yet, and `jsdom` 30 raises its Node floor above CI's pinned Node 20 (a
+  real runtime crash under Node 20, not just an engines warning); both majors
+  are now held back in `.github/dependabot.yml` until their blocker moves.
 
 - **The comment gate now scans the E2E suite.** `scripts/check-comments.sh` covered only
   `crates/` and `frontend/src`; `frontend/e2e` is now a third default root. Fixing it
