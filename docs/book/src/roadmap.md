@@ -2393,6 +2393,12 @@ three most common extension patterns.
 
 # Harness-Agnostic Runner Fleet (Phases 50–57)
 
+**OpenCode was later dropped.** This section records the intent of a cycle that
+planned for three harness families; the adapter was removed and the shipped product
+registers two, Codex and Claude Code. The phase names, the vocabulary table and the
+Phase 53 findings below are left as written — they are the record of what was proven
+at the time.
+
 **Status:** feature-complete, **release still refused.** Phases 50–56 delivered; Phase 57 (the
 Docket bridge, recovery and release phase) is the only phase remaining. Updated 2026-08-26
 against `TODO.md`'s Part III board (integration SHA `6252f52`/`c193a77` on `develop`), the

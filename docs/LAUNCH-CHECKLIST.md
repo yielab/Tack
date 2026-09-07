@@ -19,7 +19,8 @@ record of what was wrong and how it was found.**
 | 1 | CI badge reads "failing" | **Resolved.** A push to `develop` now completes with all ten jobs green, E2E included; the E2E budget was raised on measured numbers rather than by guessing |
 | 2 | Local `develop` ahead of the remote | **Resolved.** `origin/develop` matches the local tip |
 | 3 | `install.sh` downloads the runner archive and fails | **Resolved.** The asset match excludes `tack-runner-` archives, and `scripts/verify-install-urls.sh` now runs the installer for real into a scratch directory and asserts a runnable `tack` lands, so this class of bug fails a check instead of a stranger's first command |
-| 4 | The live GitHub repository description names a removed harness | **Open.** One command, listed in the publish list below |
+| 4 | The live GitHub repository description names a removed harness | **Resolved.** The description now names Claude Code and Codex only, matching the harnesses the runner registers |
+| 5 | `main` trailed `develop`, so the public installer and landing page were months old | **Resolved.** `main` fast-forwards to `develop` before a release; the ruleset covers both branches and requires all ten CI jobs |
 
 
 
@@ -135,19 +136,28 @@ release-blocking `Dockerfile` bug the same way. This is left uncommitted in this
 worktree per this card's own hard rules; someone needs to actually land it before the
 install command in any of the drafts below is true.
 
-### 4. The live GitHub repository description still names a removed harness
+### 4. The live GitHub repository description named a removed harness
+
+The description advertised OpenCode, whose adapter no longer exists anywhere in the
+tree. It now reads:
 
 ```bash
 gh repo view yielab/tack --json description --jq .description
-# → "Tack assigns board items to AI coding agents — Codex, Claude Code, or OpenCode —
-#    and keeps the run as part of the project's history, in one self-hosted binary."
+# → "Tack assigns board items to AI coding agents — Claude Code or Codex — and keeps
+#    the run as part of the project's history, in one self-hosted binary."
 ```
 
-`opencode.rs` was removed from `crates/tack-runner/src/harness/` on 2026-09-05 (ADR
-0063, decision 8) — confirmed by its absence from that directory today. The live
-description is stale by one day relative to `develop`. This is V-A4's file to change
-(`TODO.md` §V.2: "GitHub repo description / topics / homepageUrl... V-A4 only"), not
-this card's — noted here as a pre-flight item, not fixed.
+### 5. `main` trailed `develop` by months
+
+`main` is what a stranger receives: the install one-liner fetches `install.sh` from it
+and the GitHub landing page renders its `README.md`. It sat 296 commits behind, which
+is how pre-flight item 3's installer bug survived on the public path after being fixed
+— the fix, and the workflow written to catch that exact class of bug, both lived only
+on `develop`. Fast-forward `main` before tagging, and check the gap in one command:
+
+```bash
+git rev-list --count origin/main..origin/develop   # 0 = the public face is current
+```
 
 ## What was verified end to end on this machine (stranger's path)
 
@@ -228,17 +238,14 @@ above are done; what is left, in order:
    `git tag vX.Y.Z && git push origin vX.Y.Z`; `release.yml` builds and publishes the
    archives, the four desktop bundles and the SBOMs, and refuses the tag outright if it
    does not match `Cargo.toml`.
-2. **Update the GitHub repository description** to drop the removed OpenCode mention —
-   resolves pre-flight item 4. A one-line `gh repo edit --description "..."`, or the
-   repository settings UI.
-3. **Open the seven `good first issue` GitHub issues** from the drafts in
+2. **Open the seven `good first issue` GitHub issues** from the drafts in
    `docs/launch/good-first-issues/`, applying the existing `good first issue` label
    (already exists on the repo — confirmed via `gh label list`, not created by this
    card).
-4. **Post the four drafts** in `docs/launch/posts/` to their respective venues, in
+3. **Post the four drafts** in `docs/launch/posts/` to their respective venues, in
    whatever order/timing is preferred — nothing about them is time-sensitive relative
    to each other, but all four assume the items above are already done (every draft
    links to the repo and the recovery-demo recording).
-5. **Post the two Discussions topics** in `docs/launch/discussions-seed.md`, into the
+4. **Post the two Discussions topics** in `docs/launch/discussions-seed.md`, into the
    `Q&A` and `Ideas` categories respectively (both already exist on the repo — no
    category needs creating).

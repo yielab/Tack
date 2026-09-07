@@ -18,7 +18,7 @@
 | II | Agnostic Control Plane | 39–49 | Superseded after Wave B by Part III | [§II](#part-ii--agnostic-control-plane-phases-3949), archive |
 | I | Agent-Factory Control Center | 33–38 | Complete 2026-08-05 | [§I](#part-i--agent-factory-control-center-phases-3338), archive |
 
-**Parts VI and V are both active.** Part V is distribution and launch — everything between
+**No Part has an open card.** Part V is distribution and launch — everything between
 "it works here" and "a stranger can use it". Part VI is the agent onboarding and provider
 flow — everything between "a stranger installed it" and "a stranger ran an item with the
 model they chose, without opening this file". Part IV is done. They share `README.md` and
