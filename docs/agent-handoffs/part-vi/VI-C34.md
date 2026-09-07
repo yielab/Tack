@@ -1,7 +1,7 @@
 # VI-C34 handoff
 
 - Base SHA / branch / final SHA: `cc7db7ea77174a2721c6fa8be31aab87ed71fe08` /
-  `agent/vi-c34-spa-fallback-scope` / filled in after commit (see `git log -1`).
+  `agent/vi-c34-spa-fallback-scope` / `2325d7b2ab1539c07c94d5ba0a9343d3d62a2850`.
 - Files changed (must equal ownership list): `crates/tack-api/src/router.rs` only
   (the card's Owns line: "the `fallback(spa::serve_spa)` wiring in
   `crates/tack-api/src/router.rs` and `spa.rs`, the two `local_runner` handler tests
