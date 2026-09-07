@@ -300,13 +300,20 @@ fn default_allowed_origins() -> Vec<String> {
     ]
 }
 
+/// True when `host` names a loopback address. Shared by `AppConfig::binds_loopback`
+/// (the server's own bind address) and `middleware::board_websocket_is_authorized`
+/// (a browser `Origin` header's host) so both recognize the same set of
+/// "this machine" names.
+pub fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "::1" | "localhost")
+        || host.starts_with("127.")
+        || host.eq_ignore_ascii_case("::ffff:127.0.0.1")
+}
+
 impl AppConfig {
     /// True when this bind address is restricted to the local machine.
     pub fn binds_loopback(&self) -> bool {
-        let host = self.host.as_str();
-        matches!(host, "127.0.0.1" | "::1" | "localhost")
-            || host.starts_with("127.")
-            || host.eq_ignore_ascii_case("::ffff:127.0.0.1")
+        is_loopback_host(self.host.as_str())
     }
 
     /// Reject a configuration that would expose an unauthenticated API or
