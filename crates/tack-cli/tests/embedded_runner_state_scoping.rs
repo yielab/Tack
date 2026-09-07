@@ -140,6 +140,28 @@ fn wait_for_active_runner(base_url: &str) -> Option<String> {
     }
 }
 
+/// Polls for `path` to exist. `store_session`
+/// (`tack_runner::client::transport`) writes the session file to disk
+/// *after* the server's own enrollment response already flipped the
+/// runner's row to `active` — `embedded_runner_orphaned_credential.rs`
+/// documents and waits out the identical ordering for the same reason. A
+/// bare `is_file()` check taken the instant `wait_for_active_runner`
+/// returns can race that write; this bounds the same way every other wait
+/// in this file does, so a session that never lands is still reported
+/// promptly rather than read one instant too early.
+fn wait_for_session_file(path: &Path) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if path.is_file() {
+            return true;
+        }
+        if Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Two servers, each against its own database and `storage_dir`, started in
 /// turn from the same working directory — each must reach its own active
 /// runner enrollment, proven from `GET /api/runners` on its own address and
@@ -174,7 +196,7 @@ fn two_servers_on_two_databases_each_see_only_their_own_runner_enrollment() {
         .expect("server A's own embedded runner must reach `active` in its own database");
     let state_dir_a = root_a_path.join("storage").join("runner");
     assert!(
-        state_dir_a.join("session.json").is_file(),
+        wait_for_session_file(&state_dir_a.join("session.json")),
         "server A's enrolled session must live under its own storage_dir, not the shared cwd"
     );
     drop(server_a);
@@ -191,7 +213,7 @@ fn two_servers_on_two_databases_each_see_only_their_own_runner_enrollment() {
     );
     let state_dir_b = root_b_path.join("storage").join("runner");
     assert!(
-        state_dir_b.join("session.json").is_file(),
+        wait_for_session_file(&state_dir_b.join("session.json")),
         "server B's enrolled session must live under its own storage_dir, not the shared cwd"
     );
     drop(server_b);

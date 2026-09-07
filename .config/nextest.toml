@@ -29,12 +29,17 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 [profile.ci.junit]
 path = "junit.xml"
 
-# The scheduler E2E spawns a real `tack serve` on a port it found by
-# bind-then-drop. Two of its tests in flight at once can be handed the same
-# port and end up talking to one server (measured: once in 40 full runs).
-# Until the server can report the port it actually bound, each of these
-# tests runs with nothing else alongside — the guarantee `--test-threads=1`
-# on a sequential `cargo test` used to give.
+# Every one of these spawns a real `tack serve` subprocess on a port it
+# found by bind-then-drop: `TcpListener::bind("127.0.0.1:0")`, read the
+# port, drop the listener, then trust the port is still free when the
+# subprocess binds it moments later. Two such subprocesses in flight at
+# once can be handed the same port — measured once in 40 full runs for the
+# scheduler E2E, and reproduced directly for the embedded-runner boot
+# tests: the loser gets `Address already in use` and exits nonzero within
+# a few seconds of spawning, which reads as a startup crash rather than
+# what it is. Until the server can report the port it actually bound, each
+# of these tests runs with nothing else alongside — the guarantee
+# `--test-threads=1` on a sequential `cargo test` used to give.
 [[profile.default.overrides]]
-filter = 'binary(e6_scheduler_e2e_test)'
+filter = 'binary(e6_scheduler_e2e_test) | binary(embedded_runner_orphaned_credential) | binary(embedded_runner_state_scoping) | binary(embedded_runner_live_secret)'
 threads-required = "num-test-threads"
