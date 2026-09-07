@@ -106,6 +106,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Coverage CI job no longer fails on every pull request.** `cargo llvm-cov` runs
+  every test in one process, and the server's tracing setup called `.init()`
+  unconditionally on the global subscriber — fine under the normal test runner, where
+  each test is its own process, but a hard panic the second any other test in the same
+  binary also boots a server. Initialization now uses `try_init` and discards the
+  "already installed" error, so the first server in a process still configures logging
+  and every later one in that same process runs under it rather than crashing.
 - **A developer following the quick-start's own steps now sees live board events.**
   `tack serve`, then `npm run dev`, then opening `http://localhost:5173` — the
   documented developer path — used to open a socket the server silently refused: the
