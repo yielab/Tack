@@ -310,12 +310,12 @@
   --color-accent2: #475569;
   --color-accent2-soft: #eceff3;
 
-  /* dark olive, not the earlier bright lime: that value could not clear AA as
-     both foreground text on the light surfaces below AND the background under
-     white on-accent text at once (two dark colors don't contrast with each
-     other). #3f6a0c keeps the palette's hue (~87°) and clears every role:
-     6.41:1 on bg-base, 5.66:1 on bg-sidebar, 5.61:1 on bg-subtle, 5.97:1 on
-     bg-app, 6.41:1 under white on-accent text. */
+  /* Dark olive with a white on-accent, the pairing teal and clay use. The
+     bright lime this palette had before (#84cc16) read at 1.97:1 as text on
+     bg-base, and darkening it alone would have failed under the dark
+     on-accent it paired with, so both moved together. #3f6a0c keeps the hue
+     (~87°) and clears every role: 6.41:1 on bg-base, 5.66:1 on bg-sidebar,
+     5.61:1 on bg-subtle, 5.97:1 on bg-app, 6.41:1 under white on-accent. */
   --color-primary-600: #3f6a0c;
 
   --color-success-600: #157a37;
