@@ -243,7 +243,7 @@ const Sidebar: Component = () => {
             <span style={{ 'font-size': '10.5px', color: 'var(--color-text-tertiary)', 'margin-right': '2px' }}>Palette</span>
             <PaletteSwatch value={PALETTES[0]} color="#0d9488" title="Teal" />
             <PaletteSwatch value={PALETTES[1]} color="#c2410c" title="Clay" />
-            <PaletteSwatch value={PALETTES[2]} color="#84cc16" title="Graphite" />
+            <PaletteSwatch value={PALETTES[2]} color="#3f6a0c" title="Graphite" />
           </div>
         </div>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '9px', padding: '2px' }}>
