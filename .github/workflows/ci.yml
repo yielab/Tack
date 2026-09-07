@@ -235,7 +235,7 @@ jobs:
           --coverage.thresholds.branches=60
 
   deny:
-    name: cargo-deny (licenses + duplicate deps)
+    name: cargo-deny (dependency policy)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -250,15 +250,20 @@ jobs:
           tool: cargo-deny
       # Generated at run time (not committed) by scripts/gen-deny-toml.sh —
       # the same script `make deny` calls, so the local and CI policy can
-      # never drift apart. Advisories are covered by the `security` job's
-      # cargo-audit, so this run checks licenses + bans only.
+      # never drift apart. Unrestricted (advisories, bans, licenses, sources)
+      # so this step is exactly what a developer's own `cargo deny check`
+      # runs — a policy that is green here and red on a checkout is a policy
+      # bug, not a developer-environment difference.
       - name: Generate deny policy
         run: ./scripts/gen-deny-toml.sh
       - name: cargo deny check
-        run: cargo deny check licenses bans
+        run: cargo deny check
       # tack-desktop is a separate workspace, so the run above never sees Tauri's
       # dependency tree — the largest one in the repository and the one most
-      # likely to introduce an unapproved license.
+      # likely to introduce an unapproved license. Its advisories stay out of
+      # this gate: Tauri's Linux (GTK/WebKit) bindings alone carry more than a
+      # dozen pre-existing "unmaintained" advisories with no upstream fix, which
+      # is a review of its own, not a duplicate-deps/license check.
       - name: cargo deny check (tack-desktop workspace)
         run: cargo deny --manifest-path crates/tack-desktop/Cargo.toml check licenses bans
 
