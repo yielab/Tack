@@ -5,9 +5,58 @@
 [![Rust](https://img.shields.io/badge/rust-1.94%2B-orange.svg)](https://www.rust-lang.org/)
 [![Beta](https://img.shields.io/badge/status-beta-yellow.svg)](CHANGELOG.md)
 
-**A self-hosted project board that dispatches its items to coding agents — Claude Code
-or Codex — through runners that live where your code and credentials already
-are. One binary. The board plans and records; the runner executes.**
+**A project board that can hand its own items to an AI coding agent — Claude Code or
+Codex — and track the run as part of the item's history.** Self-hosted, one binary,
+no cloud account.
+
+<p align="center">
+  <img src="docs/screenshots/hero.gif" width="98%" alt="Board, Timeline, and vocabulary editor — project-management views only; no agent run is shown in this recording" />
+</p>
+
+## What it is
+
+- **A project manager** — board, list, table, calendar, timeline and dashboard views;
+  configurable Scrum/Kanban/phase workflows; vocabulary you rename to match your domain
+  (`Task` → `Work Order`, `Sprint` → `Phase`).
+- **An agent runner** — assign any item to `claude-code` or `codex` and it runs as a
+  tracked, durable attempt: events, decisions and artifacts land back on the item,
+  not a fire-and-forget shell command.
+- **Self-hosted** — one binary, one SQLite file. No accounts, no subscriptions, nothing
+  running in someone else's cloud.
+
+<p align="center">
+  <img src="docs/screenshots/agents.png" width="49%" alt="The Agents page, fully earned: agent execution on, Codex and Claude Code both detected, Claude Code's own login verified by a real test run, a project default model saved, and that test run's own attempt shown Succeeded." />
+  <img src="docs/screenshots/attempt.png" width="49%" alt="An item's Execution tab: a real attempt shown Succeeded, its requested-vs-actual model matched against claude-sonnet-4-5, and its usage economics — token cost measured, wall-clock cost explicitly Not measured rather than shown as zero." />
+</p>
+
+## How it works
+
+1. **Plan it on the board** — create an item, assign it to an agent profile, set its
+   budget and policy.
+2. **A runner picks it up where the code is** — it pulls the request, checks out an
+   isolated workspace, and launches the harness with its own credentials.
+3. **The run is recorded on the item** — events, decisions, and artifacts land back on
+   the board as they happen, and the finished attempt stays in the item's history.
+
+## Durable by design
+
+An attempt in progress can be killed — a crashed machine, a lost connection — without
+losing track of it or silently running it twice. This is a runner killed mid-attempt
+against a real server and a real lease: the attempt turns `needs_operator` with no blind
+duplicate execution, an operator resolves it with an explicit decision, and the retry
+succeeds.
+
+<p align="center">
+  <img src="docs/screenshots/recovery-demo.gif" width="98%" alt="An attempt is killed mid-run; the board shows needs_operator with no blind duplicate; an operator reconciles it with an explicit decision; the retry succeeds — recorded from a real GitHub Release binary running in Docker, not a development build" />
+</p>
+
+The recording is reproducible: [`scripts/record-recovery-demo.sh`](scripts/record-recovery-demo.sh)
+drives it against a published release artifact in Docker, and [`scripts/smoke.sh` step
+9](scripts/smoke.sh#L322-L409) asserts the same sequence on every run.
+
+## Two components
+
+Under the hood, Tack is two components, built to be one product.
 
 <p align="center">
   <picture>
@@ -16,8 +65,6 @@ are. One binary. The board plans and records; the runner executes.**
   </picture>
 </p>
 
-> **Tack is two components, built to be one product.**
->
 > **The board** is the project manager: workflows, timelines, dependencies, per-project
 > vocabulary — one binary, one SQLite file, no accounts, no cloud. It is the plan, the
 > policy and the record. It decides *what* runs, *when*, under *which* limits, and it keeps
@@ -35,32 +82,6 @@ are. One binary. The board plans and records; the runner executes.**
 > lease expires and its fencing token stops writing. A board that restarts cannot lose a
 > run — the runner's journal knows what it started. **One developer runs both in one
 > process with one command**, on the same contract, with the same recovery.
-
-## Durable by design
-
-The paragraph above isn't a claim without a witness. This is a runner killed mid-attempt
-against a real server and a real lease: the attempt turns `needs_operator` with no blind
-duplicate execution, an operator resolves it with an explicit decision, and the retry
-succeeds.
-
-<p align="center">
-  <img src="docs/screenshots/recovery-demo.gif" width="98%" alt="An attempt is killed mid-run; the board shows needs_operator with no blind duplicate; an operator reconciles it with an explicit decision; the retry succeeds — recorded from a real GitHub Release binary running in Docker, not a development build" />
-</p>
-
-The recording is reproducible: [`scripts/record-recovery-demo.sh`](scripts/record-recovery-demo.sh)
-drives it against a published release artifact in Docker, and [`scripts/smoke.sh` step
-9](scripts/smoke.sh#L322-L409) asserts the same sequence on every run.
-
-## How it works
-
-1. **Plan it on the board** — create an item, assign it to an agent profile, set its
-   budget and policy.
-2. **A runner picks it up where the code is** — it pulls the request, checks out an
-   isolated workspace, and launches the harness with its own credentials.
-3. **The run is recorded on the item** — events, decisions, and artifacts land back on
-   the board as they happen, and the finished attempt stays in the item's history.
-
-## Two components
 
 | | The board | The runner |
 | --- | --- | --- |
@@ -129,15 +150,8 @@ external services.
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/screenshots/agents.png" width="98%" alt="The Agents page, fully earned: agent execution on, Codex and Claude Code both detected, Claude Code's own login verified by a real test run, a project default model saved, and that test run's own attempt shown Succeeded." />
-</p>
-<p align="center">
-  <img src="docs/screenshots/attempt.png" width="98%" alt="An item's Execution tab: a real attempt shown Succeeded, its requested-vs-actual model matched against claude-sonnet-4-5, and its usage economics — token cost measured, wall-clock cost explicitly Not measured rather than shown as zero." />
-</p>
-<p align="center">
-  <img src="docs/screenshots/hero.gif" width="98%" alt="Board, Timeline, and vocabulary editor — project-management views only; no agent run is shown in this recording" />
-</p>
+More views — the board and the Agents page are up top, this is the rest of it.
+
 <p align="center">
   <img src="docs/screenshots/board.png" width="49%" alt="Board — Kanban with WIP limits and drag-and-drop" />
   <img src="docs/screenshots/timeline.png" width="49%" alt="Timeline — Gantt view with draggable bars" />

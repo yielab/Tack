@@ -2,8 +2,23 @@
 
 [![CI](https://github.com/yielab/tack/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/yielab/tack/actions/workflows/ci.yml)
 
-> **Tack is two components, built to be one product.**
->
+**A project board that can hand its own items to an AI coding agent — Claude Code or
+Codex — and track the run as part of the item's history.** Self-hosted, one binary,
+no cloud account.
+
+<img src="screenshots/hero.gif" width="98%" alt="Board, Timeline, and vocabulary editor — project-management views only; no agent run is shown in this recording">
+
+Tack tracks work for any domain — software sprints, a kitchen renovation, thesis chapters, a
+maintenance schedule — through fully configurable vocabulary and workflow columns, and can hand
+any item that's agent-eligible to a real coding-agent run instead of just tracking it. No
+accounts. No cloud. No subscriptions. One binary, one SQLite file.
+
+<img src="screenshots/agents.png" width="98%" alt="The Agents page, fully earned: agent execution on, Codex and Claude Code both detected, Claude Code's own login verified by a real test run, a project default model saved, and that test run's own attempt shown Succeeded.">
+
+## The board and the runner
+
+Under the hood, Tack is two components, built to be one product.
+
 > **The board** is the project manager: workflows, timelines, dependencies, per-project
 > vocabulary — one binary, one SQLite file, no accounts, no cloud. It is the plan, the
 > policy and the record. It decides *what* runs, *when*, under *which* limits, and it keeps
@@ -26,11 +41,6 @@
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/two-components-dark.svg">
   <img src="diagrams/two-components-light.svg" alt="Two components: the board (one) on the left holds workflows, timelines, leases, fencing, and history; runners (many) on the right each launch a harness — Claude Code or Codex — near your code and credentials. One arrow, from runner to board, labeled &quot;pulls work&quot;: the board never calls out.">
 </picture>
-
-Tack tracks work for any domain — software sprints, a kitchen renovation, thesis chapters, a
-maintenance schedule — through fully configurable vocabulary and workflow columns, and can hand
-any item that's agent-eligible to a real coding-agent run instead of just tracking it. No
-accounts. No cloud. No subscriptions. One binary, one SQLite file.
 
 ---
 
