@@ -1,6 +1,6 @@
 # VIII-B3 handoff
 
-- Base SHA / branch / final SHA: `884b217` / `agent/viii-b3-replay-collision` / *(committed after this handoff — see final commit note below)*
+- Base SHA / branch / final SHA: `884b217` / `agent/viii-b3-replay-collision` / `9e80704`
 - Files changed (must equal ownership list): `crates/tack-api/src/handlers/executions.rs`
   (the conflict payload), `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`
   (the idempotent-replay case and a payload-naming test), `crates/tack-db/src/repo/orch.rs`
