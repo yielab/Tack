@@ -1,7 +1,9 @@
 # VIII-A2 handoff
 
-- Base SHA / branch / final SHA: `884b217` / `agent/viii-a2-dispatch-route` / _(recorded
-  at commit time — see the commit this handoff ships in)_.
+- Base SHA / branch / final SHA: `884b217` / `agent/viii-a2-dispatch-route` / `e8dd832`
+  (the implementation commit this handoff was written against; this correction itself
+  lands in a small follow-up commit on the same branch, since the handoff cannot name its
+  own commit's hash before that commit exists).
 - Files changed (must equal ownership list): `crates/tack-api/src/handlers/orch.rs` (the
   new `dispatch_project_pipeline` route, `require_dispatch_token`,
   `DispatchProjectPipelineRequest`/`Response`, `DISPATCH_TOKEN_HEADER`),
