@@ -1,14 +1,15 @@
 //! Collision tests across the two scheduling planes: the legacy Docket
 //! bridge (`orch_tasks`, dispatched via `dispatcher::dispatch_item`) and the
-//! neutral runner-v1 domain (`execution_requests`). See
+//! neutral runner-v1 domain (`execution_requests`, created via
+//! `handlers::executions::create_execution`). See
 //! `crates/tack-orch/src/adapters/legacy_bridge.rs`'s module doc ("One
-//! scheduling owner") for the policy this proves — one direction of it is
-//! still an open gap, documented near the bottom of this file.
+//! scheduling owner") for the policy this proves, in both directions.
 //!
-//! Drives the real, mounted `POST /api/items/{id}/dispatch` route through
-//! `build_router` — not a test-local scaffold — so the guard is proven
-//! against the production request path: every "writes nothing" claim below
-//! is backed by a direct row-count assertion, not just a status code.
+//! Drives the real, mounted `POST /api/items/{id}/dispatch` and `POST
+//! /api/executions` routes through `build_router` — not a test-local scaffold —
+//! so both guards are proven against the production request path: every "writes
+//! nothing" claim below is backed by a direct row-count assertion, not just a
+//! status code.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -190,6 +191,140 @@ async fn count_orch_tasks(state: &AppState) -> i64 {
         .await
         .unwrap();
     row.0
+}
+
+/// Inserts an `orch_tasks` row directly (bypassing the docket HTTP call, which
+/// these tests have no need to mock) with the given `remote_status` — the exact
+/// column the mirror-direction guard reads.
+async fn insert_orch_task(
+    state: &AppState,
+    item_id: Uuid,
+    remote_task_id: &str,
+    remote_status: &str,
+) {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO orch_tasks (
+            item_id, remote_task_id, remote_status, attempt, dispatched_at,
+            trusted, created_at, updated_at
+         ) VALUES (?, ?, ?, 1, ?, 1, ?, ?)",
+    )
+    .bind(item_id.to_string())
+    .bind(remote_task_id)
+    .bind(remote_status)
+    .bind(&now)
+    .bind(&now)
+    .bind(&now)
+    .execute(state.repo.pool())
+    .await
+    .expect("insert orch_tasks fixture row");
+}
+
+async fn count_execution_requests_for_item(state: &AppState, item_id: Uuid) -> i64 {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM execution_requests WHERE item_id = ?")
+        .bind(item_id.to_string())
+        .fetch_one(state.repo.pool())
+        .await
+        .unwrap();
+    row.0
+}
+
+/// Full production enrollment flow (mirrors `wave2_gate.rs`'s own
+/// `enroll_runner`, duplicated rather than imported to avoid coupling this file
+/// to that one's helper signatures changing later) so `selector_kind:
+/// "exact_runner"` resolves against a real, active runner, then the actual `POST
+/// /api/executions` call this file's guard tests are driving at.
+async fn attempt_create_execution(
+    app: &Router,
+    item_id: Uuid,
+    idempotency_key: &str,
+) -> axum::response::Response {
+    let profile_res = req(
+        app,
+        Method::POST,
+        "/api/agent-profiles",
+        Some(json!({"name": "g1 profile", "instructions": "work safely"})),
+    )
+    .await;
+    assert_eq!(profile_res.status(), StatusCode::OK);
+    let agent_profile_id = body_json(profile_res).await["agent_profile_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pending_res = req(
+        app,
+        Method::POST,
+        "/api/runners/enrollment",
+        Some(json!({"name": "g1-runner", "total_capacity": 1, "available_capacity": 1})),
+    )
+    .await;
+    assert_eq!(pending_res.status(), StatusCode::OK);
+    let pending = body_json(pending_res).await;
+    let runner_id = pending["runner_id"].as_str().unwrap().to_string();
+    let enrollment_token = pending["enrollment_token"].as_str().unwrap().to_string();
+
+    let enroll_now = Utc::now().to_rfc3339();
+    let enroll_res = req(
+        app,
+        Method::POST,
+        "/api/runner/v1/enroll",
+        Some(json!({
+            "protocol_version": 1,
+            "enrollment_token": enrollment_token,
+            "runner_name": "g1-runner",
+            "runner_version": "0.1.0",
+            "capabilities": {
+                "reported_at": enroll_now,
+                "labels": {"os": "linux"},
+                "concurrency": {"total": 1, "available": 1},
+                "harnesses": [{
+                    "harness_kind": "codex",
+                    "installed_version": "1.2.3",
+                    "probe_error": null,
+                    "probed_at": enroll_now,
+                    "model_combinations": [{
+                        "model_provider": "openai",
+                        "model_ids": ["opaque/model-g1"],
+                        "discovery": "reported"
+                    }],
+                }],
+                "features": {},
+                "limits": {"event_payload_bytes_max": 65536, "artifact_content_bytes_max": 52428800},
+            },
+        })),
+    )
+    .await;
+    assert_eq!(
+        enroll_res.status(),
+        StatusCode::OK,
+        "{:?}",
+        body_json(enroll_res).await
+    );
+
+    req(
+        app,
+        Method::POST,
+        "/api/executions",
+        Some(json!({
+            "item_id": item_id,
+            "idempotency_key": idempotency_key,
+            "selector_kind": "exact_runner",
+            "selector_id": runner_id,
+            "agent_profile_id": agent_profile_id,
+            "requested_harness_kind": "codex",
+            "requested_model_provider": "openai",
+            "requested_model_id": "opaque/model-g1",
+            "agent_profile_snapshot": {"name": "profile", "instructions": "work safely", "tool_policy": {}, "timeout_seconds": 60, "budgets": {}},
+            "repository_snapshot": {"kind": "git", "remote": "https://example.test/g1.git", "base_revision": "deadbeef", "subdirectory": null},
+            "permission_policy": {"tools": ["shell"], "network": false},
+            "timeout_seconds": 60,
+            "budgets": {},
+            "environment": {},
+            "metadata": {},
+        })),
+    )
+    .await
 }
 
 // ─── The fix: runner-v1 active blocks legacy Docket dispatch ──────────────────
@@ -390,153 +525,128 @@ async fn has_active_execution_request_for_item_ignores_terminal_states() {
     );
 }
 
-// ─── The documented, still-open gap: the reverse guard does not exist ─────────
+// ─── The mirror direction: runner-v1 request creation defers to an active
+// legacy Docket task ─────────────────────────────────────────────────────────
 
-/// **Known limitation, not something this file's guard fixes.**
-/// `tack-api::handlers::executions::create_execution` does not check
-/// `orch_tasks` before creating a new `execution_requests` row. This test
-/// documents that gap against the real,
-/// production `POST /api/executions` handler — full enrollment flow, no shortcuts —
-/// rather than leaving it merely asserted in prose: an item with an active legacy
-/// Docket task can still have a runner-v1 execution request created today. If a
-/// future change closes this gap, this test's final assertion (`status ==
-/// StatusCode::OK`) will start failing, which is the intended trip wire — update the
-/// test to assert the new refusal, not delete it, when that happens.
+/// Direct, unit-level proof of the read the mirror guard is built on —
+/// isolates the "which `remote_status` values count as active" claim from any
+/// HTTP/enrollment noise the full-router tests below can't fully separate out.
 #[tokio::test]
-async fn creating_a_runner_v1_request_does_not_yet_check_for_an_active_docket_task() {
-    let (app, state) = app_with_state(AppConfig::default()).await; // orch_enable irrelevant to this route
-    let project_res = req(
-        &app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "p2", "project_type": "software"})),
-    )
-    .await;
-    let project_id = Uuid::parse_str(body_json(project_res).await["id"].as_str().unwrap()).unwrap();
+async fn has_active_docket_task_for_item_ignores_terminal_statuses() {
+    let (app, state) = app_with_state(orch_config()).await;
+    let project_id = create_project(&app).await;
     let item_id = create_item(&app, project_id).await;
 
-    // Simulate an active legacy Docket dispatch by inserting an `orch_tasks` row
-    // directly (bypassing the docket HTTP call, which this test has no need to mock).
-    let now = Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO orch_tasks (
-            item_id, remote_task_id, remote_status, attempt, dispatched_at,
-            trusted, created_at, updated_at
-         ) VALUES (?, 'remote-task-1', 'running', 1, ?, 1, ?, ?)",
-    )
-    .bind(item_id.to_string())
-    .bind(&now)
-    .bind(&now)
-    .bind(&now)
-    .execute(state.repo.pool())
-    .await
-    .expect("insert orch_tasks fixture row");
-
-    // Full production enrollment flow (mirrors wave2_gate.rs's own `enroll_runner`,
-    // duplicated rather than imported to avoid coupling this file to that one's
-    // helper signatures) so `selector_kind: "exact_runner"` resolves against a
-    // real, active runner.
-    let profile_res = req(
-        &app,
-        Method::POST,
-        "/api/agent-profiles",
-        Some(json!({"name": "g1 profile", "instructions": "work safely"})),
-    )
-    .await;
-    assert_eq!(profile_res.status(), StatusCode::OK);
-    let agent_profile_id = body_json(profile_res).await["agent_profile_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let pending_res = req(
-        &app,
-        Method::POST,
-        "/api/runners/enrollment",
-        Some(json!({"name": "g1-runner", "total_capacity": 1, "available_capacity": 1})),
-    )
-    .await;
-    assert_eq!(pending_res.status(), StatusCode::OK);
-    let pending = body_json(pending_res).await;
-    let runner_id = pending["runner_id"].as_str().unwrap().to_string();
-    let enrollment_token = pending["enrollment_token"].as_str().unwrap().to_string();
-
-    let enroll_now = Utc::now().to_rfc3339();
-    let enroll_res = req(
-        &app,
-        Method::POST,
-        "/api/runner/v1/enroll",
-        Some(json!({
-            "protocol_version": 1,
-            "enrollment_token": enrollment_token,
-            "runner_name": "g1-runner",
-            "runner_version": "0.1.0",
-            "capabilities": {
-                "reported_at": enroll_now,
-                "labels": {"os": "linux"},
-                "concurrency": {"total": 1, "available": 1},
-                "harnesses": [{
-                    "harness_kind": "codex",
-                    "installed_version": "1.2.3",
-                    "probe_error": null,
-                    "probed_at": enroll_now,
-                    "model_combinations": [{
-                        "model_provider": "openai",
-                        "model_ids": ["opaque/model-g1"],
-                        "discovery": "reported"
-                    }],
-                }],
-                "features": {},
-                "limits": {"event_payload_bytes_max": 65536, "artifact_content_bytes_max": 52428800},
-            },
-        })),
-    )
-    .await;
-    assert_eq!(
-        enroll_res.status(),
-        StatusCode::OK,
-        "{:?}",
-        body_json(enroll_res).await
+    assert!(
+        !state
+            .repo
+            .has_active_docket_task_for_item(item_id)
+            .await
+            .unwrap(),
+        "no rows yet: must be false"
     );
 
-    let res = req(
-        &app,
-        Method::POST,
-        "/api/executions",
-        Some(json!({
-            "item_id": item_id,
-            "idempotency_key": "g1-gap-test",
-            "selector_kind": "exact_runner",
-            "selector_id": runner_id,
-            "agent_profile_id": agent_profile_id,
-            "requested_harness_kind": "codex",
-            "requested_model_provider": "openai",
-            "requested_model_id": "opaque/model-g1",
-            "agent_profile_snapshot": {"name": "profile", "instructions": "work safely", "tool_policy": {}, "timeout_seconds": 60, "budgets": {}},
-            "repository_snapshot": {"kind": "git", "remote": "https://example.test/g1.git", "base_revision": "deadbeef", "subdirectory": null},
-            "permission_policy": {"tools": ["shell"], "network": false},
-            "timeout_seconds": 60,
-            "budgets": {},
-            "environment": {},
-            "metadata": {},
-        })),
-    )
-    .await;
-
-    // Documenting current behavior, not endorsing it: this succeeds today even
-    // though the item already has an active legacy `orch_tasks` row — proving the
-    // gap by row count, not just a status code.
-    let status = res.status();
-    assert_eq!(status, StatusCode::OK, "{:?}", body_json(res).await);
-
-    let (count,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM execution_requests WHERE item_id = ?")
-            .bind(item_id.to_string())
-            .fetch_one(state.repo.pool())
+    for (task_id, status) in [
+        ("t-completed", "completed"),
+        ("t-failed", "failed"),
+        ("t-stale", "stale"),
+        ("t-unknown", "some_future_docket_status"),
+    ] {
+        insert_orch_task(&state, item_id, task_id, status).await;
+    }
+    assert!(
+        !state
+            .repo
+            .has_active_docket_task_for_item(item_id)
             .await
-            .unwrap();
+            .unwrap(),
+        "terminal, stale, and unrecognised statuses must all read as inactive"
+    );
+
+    insert_orch_task(&state, item_id, "t-running", "running").await;
+    assert!(
+        state
+            .repo
+            .has_active_docket_task_for_item(item_id)
+            .await
+            .unwrap(),
+        "running counts as active"
+    );
+}
+
+/// The fix this file exists for: an active legacy Docket task blocks a new
+/// runner-v1 request. Drives the real, mounted `POST /api/executions` handler
+/// through a full enrollment flow — no shortcuts — and proves the refusal by
+/// row count, not just a status code: reverting the guard makes this test's
+/// final assertion fail (`execution_requests` gains a row it must not).
+#[tokio::test]
+async fn create_execution_refuses_when_item_has_an_active_docket_task() {
+    let (app, state) = app_with_state(orch_config()).await;
+    let project_id = create_project(&app).await;
+    let item_id = create_item(&app, project_id).await;
+
+    insert_orch_task(&state, item_id, "remote-task-mirror", "running").await;
+
+    let res = attempt_create_execution(&app, item_id, "mirror-guard-conflict").await;
+
     assert_eq!(
-        count, 1,
-        "the runner-v1 request was actually created despite the active docket task"
+        res.status(),
+        StatusCode::CONFLICT,
+        "{:?}",
+        body_json(res).await
+    );
+    assert_eq!(
+        count_execution_requests_for_item(&state, item_id).await,
+        0,
+        "no execution_requests row may exist — the active docket task must have blocked it"
+    );
+}
+
+/// A terminal docket task (`completed`) must not block a new runner-v1 request —
+/// only an *active* one does. Proves the guard reads `remote_status`, not merely
+/// "a row exists for this item."
+#[tokio::test]
+async fn create_execution_proceeds_when_docket_task_is_terminal() {
+    let (app, state) = app_with_state(orch_config()).await;
+    let project_id = create_project(&app).await;
+    let item_id = create_item(&app, project_id).await;
+
+    insert_orch_task(&state, item_id, "remote-task-done", "completed").await;
+
+    let res = attempt_create_execution(&app, item_id, "mirror-guard-terminal").await;
+
+    assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
+    assert_eq!(
+        count_execution_requests_for_item(&state, item_id).await,
+        1,
+        "a terminal docket task must not block a new runner-v1 request"
+    );
+}
+
+/// The trap this guard must not fall into: with orchestration effectively off
+/// (`AppConfig::default()` — `TACK_ORCH_ENABLE` unset, no `app_meta` override),
+/// a row stranded by a previously-enabled bridge — still `running` — must never
+/// block a new runner-v1 request. Blocking it would invert "runner-v1 is the
+/// plan of record."
+#[tokio::test]
+async fn create_execution_ignores_an_active_docket_task_when_orchestration_is_off() {
+    let (app, state) = app_with_state(AppConfig::default()).await;
+    let project_id = create_project(&app).await;
+    let item_id = create_item(&app, project_id).await;
+
+    insert_orch_task(&state, item_id, "remote-task-stranded", "running").await;
+
+    let res = attempt_create_execution(&app, item_id, "mirror-guard-off").await;
+
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "orchestration disabled must mean the stale docket row is never consulted: {:?}",
+        body_json(res).await
+    );
+    assert_eq!(
+        count_execution_requests_for_item(&state, item_id).await,
+        1,
+        "the runner-v1 request must have been created despite the stranded docket row"
     );
 }
