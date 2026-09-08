@@ -26,7 +26,7 @@ designing one has left the Part — write the question in the handoff and stop.
 |---|---|---|---|---|
 | 24 | VIII-A1 · VIII-B1 · VIII-B2 · VIII-C1 | yes — four disjoint file sets | nothing beyond ADR 0060 | `1b9b7e6` + the 2026-09-08 planning commit; **pin `git rev-parse --short develop` at dispatch**, not this line |
 | 25 | VIII-A2 · VIII-B3 | yes — disjoint files | ADR 0065 accepted (it is), plus VIII-A1 and VIII-B2 integrated (they are) | `7890673` |
-| 26 | VIII-C2 | — | Wave 25 integrated | the Wave 25 integration SHA |
+| 26 | VIII-C2 · VIII-A3 | yes — disjoint files | Wave 25 integrated (it is) | `b66ae27` |
 
 **Integration line: `develop`.** Every card branches as `agent/viii-<card>-<slug>`
 (`agent/viii-a1-dispatch`, `agent/viii-b1-mirror-guard`, …) and never merges itself.
@@ -149,3 +149,20 @@ which shipped that guard and records this path as untested; then the existing
 The one trap: the guard's condition, its status set and its enablement check are **settled** —
 VIII-B1 decided them and one of them was already returned once for a silent fail-open. This
 card proves a path and enriches a payload. It does not re-decide the guard.
+
+### VIII-A3 — a dispatched run's outcome can be read back
+
+Board: `TODO.md` §VIII.4 → VIII-A3. Owns one read route in `crates/tack-api/src/handlers/orch.rs`,
+its `tack orch run` client in `crates/tack-cli/`, `docs/API-REFERENCE.md`, the regenerated
+`docs/openapi.json` and `frontend/src/shared/api/schema.gen.ts`, and one new case under
+`crates/tack-api/tests/orchestration/`.
+
+Read, in this order: the board card (it carries the measurement that found this gap);
+ADR 0065 decisions 5 and 7, which you are working *between* and must not re-open;
+`list_orch_runs_for_item` in `handlers/orch.rs` as the item-scoped shape you are complementing;
+then `Repository::get_orch_run` and its only current caller in `crates/tack-api/src/orch_store.rs`.
+
+The one trap: this route reads **what the reconciler last mirrored**, never docket itself. Adding
+an inline fetch would be the second ingestion path decision 7 forbids, and it would also make a
+read route reach the network. An un-polled run is a legitimate, distinct answer — not an error,
+and not a fabricated state.

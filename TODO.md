@@ -84,8 +84,8 @@ card's block only.
 | Wave | Cards | Phase | Status |
 |---|---|---|---|
 | 24 — Close the four gaps | VIII-A1 · VIII-B1 · VIII-B2 · VIII-C1 | 62 | **Integrated 2026-09-08** on `integrate/viii-wave-24`. Four branches, **zero file overlap**, no conflicts. Gate green: `pre-push` clean, 1485 Rust tests (7 skipped), 857 frontend tests, type-check clean, no generated-file drift. **A1's finding is the wave's real result and it changed the ADR:** docket's dispatch route creates the run record and answers *before* the pipeline runs, on a daemon thread, so a `pre_input` block is never an HTTP error there the way it is on `enqueue_task` — a run id says a run started, never that it was permitted, and the reconciler `/runs` poll is the only place the verdict ever becomes visible. **C1 settled a claim two documents disagreed about:** neither staging table exists in a migrated database (48 tables), and the sibling "11 `orch_*` tables" was the same naive grep counting the staging names — the real figure is 9 plus `control_planes`. The integrator corrected both archive copies and replaced the wrong command beside one of them. **B1 was returned once** for reimplementing the orchestration-enabled resolver with a hardcoded `'orch_config'` where the original binds `ORCH_KEY` — it failed *open*, silently, which is the failure the card exists to prevent; now one resolver, injected as a callback because `executions.rs` must keep compiling standalone under `#[path]`. **C1 was returned once** for leaving the sibling miscount standing. One finding routed to VIII-B3 | 
-| 25 — The caller | VIII-A2 · VIII-B3 | 62 | **Dispatched 2026-09-08** off the Wave 24 integration SHA. ADR 0065 accepted 2026-09-08, and VIII-A1 and VIII-B2 are merged, so A2's three preconditions all hold. The two cards own disjoint files and run in parallel |
-| 26 — Proof | VIII-C2 | 62 | **Last.** Re-verifies the adapter live against a real `docket serve` built from `../rack-cli` at `v0.2.0-beta.2`, including whatever A1 and A2 landed. Not dispatchable until Wave 25 is integrated |
+| 25 — The caller | VIII-A2 · VIII-B3 | 62 | **Integrated 2026-09-08** on `integrate/viii-wave-25`. Two branches, **zero file overlap**, no conflicts. Gate green: `pre-push` clean, 1497 Rust tests (7 skipped), 857 frontend tests, type-check clean, no generated-file drift. **A2 shipped the caller** — the route, the fail-closed `TACK_ORCH_DISPATCH_TOKEN` on its own header, and `tack orch dispatch`; every operator-facing string was checked and each use of "permitted" is a negation. **A2's open question turned out to be a real hole and is now VIII-A3:** a dispatched run is stored in `orch_runs` with a null item correlation (the store permits that explicitly), but the only route reading that table is item-scoped, so the run id the CLI hands back is unusable through any Tack route. That is a gap between ADR 0065's decisions 5 and 7, not a defect in A2, which correctly refused to invent a read surface. **B3 was returned twice.** First for duplicating the active-status literal into a third query, which made a neighbouring doc comment's "defined once" claim false twelve lines away. The composition fix then orphaned `has_active_docket_task_for_item` and falsified a module doc in `legacy_bridge.rs` — the integrator called the removal (§VIII.1 rule 6 governs pre-existing dead code, not code a card just killed) and B3 recorded it as the integrator's call. Collapsing the guard to one read also retired the untestable race B3 had disclosed |
+| 26 — Proof and the missing read | VIII-C2 · VIII-A3 | 62 | **Last.** C2 re-verifies the adapter live against a real `docket serve` built from `../rack-cli` at `v0.2.0-beta.2`, including what A1 and A2 landed. A3 closes the observability gap Wave 25 found. Both dispatchable now that Wave 25 is integrated; they own disjoint files |
 
 ## §VIII.0 Cold-start context capsule
 
@@ -160,6 +160,7 @@ never called "running an item", because it claims no item (ADR 0065 decision 5).
 | `.claude/scope-discipline.md` (the `orch_*_new` bullet only) and any other document its own grep finds repeating that claim | VIII-C1 |
 | `crates/tack-api/src/handlers/orch.rs` (one new route), `crates/tack-api/src/config.rs` (`TACK_ORCH_DISPATCH_TOKEN`), the `tack orch dispatch` arm in `crates/tack-cli/`, `docs/CONFIG.md`, `docs/API-REFERENCE.md` | VIII-A2 — **after A1, B2 and ADR 0065 acceptance** |
 | The idempotent-replay case in `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs` and the conflict payload in `crates/tack-api/src/handlers/executions.rs` | VIII-B3 |
+| One read route in `crates/tack-api/src/handlers/orch.rs`, its `tack orch run` client in `crates/tack-cli/`, `docs/API-REFERENCE.md`, and the regenerated `docs/openapi.json` + `frontend/src/shared/api/schema.gen.ts` | VIII-A3 |
 | The "Verified live against a real docket server" section of `crates/tack-orch/src/adapters/docket.rs`, `docs/agent-handoffs/part-viii/VIII-C2.md` | VIII-C2 — **last** |
 | `TODO.md`, `docs/book/src/roadmap.md` statuses, ADR status lines | wave integrator only |
 
@@ -387,6 +388,45 @@ in between.
 those are settled and are not re-decided here.
 
 ---
+
+### VIII-A3 — a dispatched run's outcome can be read back
+
+Wave 26, parallel with VIII-C2. **Closes a gap between ADR 0065's decisions 5 and 7**, found
+while integrating Wave 25. It does not re-open either decision.
+
+**Owns:** one read route in `crates/tack-api/src/handlers/orch.rs`; its `tack orch run` client
+in `crates/tack-cli/`; `docs/API-REFERENCE.md`; the regenerated `docs/openapi.json` and
+`frontend/src/shared/api/schema.gen.ts`; one new case under `crates/tack-api/tests/orchestration/`;
+the VIII-A3 handoff.
+
+**The gap, measured 2026-09-08.** `reconciler::persist_runs` correlates each polled run to a
+Tack item and stores it either way — `ControlPlaneStore::find_item_for_remote_task`'s own doc
+says CLI-dispatched work must not error there, and `upsert_orch_runs` `COALESCE`s so a `None`
+never clobbers a learned attribution. So a pipeline run dispatched by VIII-A2 **is** ingested,
+with `orch_runs.item_id` null by ADR 0065 decision 5. But the only route that reads that table
+is `list_orch_runs_for_item` (`handlers/orch.rs`), which is item-scoped. The run id
+`tack orch dispatch` returns therefore reaches no Tack route at all: the outcome is recorded
+and unreachable, and only docket can answer for it.
+
+**Acceptance**
+
+1. An operator can read a dispatched run's mirrored state by its run id through Tack's own API,
+   without an item. `Repository::get_orch_run` already exists and is called only by
+   `orch_store.rs` — reuse it; do not add a second query.
+2. The route lives inside `orch_routes`, so `TACK_ORCH_ENABLE` off means unreachable. It is
+   **read-only**, so it takes no privileged token beyond `require_token` — the dispatch token
+   gates spending money, not reading what was spent.
+3. It reports the run's state as **mirrored at the last poll**, and says so. It never fetches
+   from docket inline: that would be the second ingestion path ADR 0065 decision 7 forbids.
+   An un-polled run is a legitimate answer, distinct from an unknown run id.
+4. `tack orch run <run_id>` is the in-tree caller, pairing with `tack orch dispatch`.
+5. **Unmeasured is nullable.** A run polled before its outcome exists reports null, never a
+   fabricated state, and never `0`/`success` standing in for "not yet known".
+6. Generated files regenerated with the documented commands, never hand-edited.
+
+**Must not:** attach the run to a Tack item, add a docket fetch on the read path, add a second
+`orch_runs` query, or widen this into a runs *listing* — one run by id is the gap; a fleet-wide
+run browser is a separate decision.
 
 ## §VIII.5 Definition of done, and deliberate exclusions
 
