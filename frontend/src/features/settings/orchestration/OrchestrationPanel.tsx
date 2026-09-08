@@ -5,6 +5,7 @@ import { orchestrationApi, isOrchDisabled, type OrchLink } from './api';
 import LinkForm from './LinkForm';
 import BudgetPanel from './BudgetPanel';
 import PolicyPanel from './PolicyPanel';
+import CompatibilityPanel from './CompatibilityPanel';
 
 export interface OrchestrationPanelProps {
   projectId: string;
@@ -80,6 +81,7 @@ const OrchestrationPanel: Component<OrchestrationPanelProps> = (props) => {
               onBudgetSaved={() => void refetch()}
             />
             <PolicyPanel projectId={props.projectId} />
+            <CompatibilityPanel link={l()} />
           </div>
         )}
       </Show>

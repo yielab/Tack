@@ -10144,6 +10144,8 @@
           "remote_project",
           "auto_dispatch",
           "status_map",
+          "compatibility_label",
+          "compatibility_policy",
           "created_at",
           "updated_at"
         ],
@@ -10164,6 +10166,14 @@
             ],
             "format": "double",
             "description": "User-set cap, not a derived spend figure — deliberately unsuffixed\nMatches `orch_links.budget_usd`."
+          },
+          "compatibility_label": {
+            "type": "string",
+            "description": "`tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_LABEL`,\nverbatim. Every control plane this API can register or link to is a\nlegacy Docket bridge (the only adapter `registry::build` accepts), so\nthis is unconditional rather than derived per-plane."
+          },
+          "compatibility_policy": {
+            "type": "string",
+            "description": "`tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_POLICY`,\nverbatim, so a caller can render or quote the justification without a\nsecond round trip to the source."
           },
           "control_plane_id": {
             "type": "string",

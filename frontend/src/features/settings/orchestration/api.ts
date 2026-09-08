@@ -46,6 +46,12 @@ export interface OrchLink {
   blueprint: string | null;
   auto_dispatch: boolean;
   budget_usd: number | null;
+  /** `tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_LABEL`,
+   *  verbatim — never a locally re-typed string. */
+  compatibility_label: string;
+  /** `tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_POLICY`,
+   *  verbatim. */
+  compatibility_policy: string;
   created_at: string;
   updated_at: string;
 }

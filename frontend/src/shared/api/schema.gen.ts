@@ -4412,6 +4412,19 @@ export interface components {
              *     Matches `orch_links.budget_usd`.
              */
             budget_usd?: number | null;
+            /**
+             * @description `tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_LABEL`,
+             *     verbatim. Every control plane this API can register or link to is a
+             *     legacy Docket bridge (the only adapter `registry::build` accepts), so
+             *     this is unconditional rather than derived per-plane.
+             */
+            compatibility_label: string;
+            /**
+             * @description `tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_POLICY`,
+             *     verbatim, so a caller can render or quote the justification without a
+             *     second round trip to the source.
+             */
+            compatibility_policy: string;
             /** Format: uuid */
             control_plane_id: string;
             /** Format: date-time */
