@@ -17,8 +17,6 @@ something that actually happened in this tree, and each one names it.
   health machine, 11 `orch_*` tables — against exactly one backend, then generalized it for
   backends that never arrived. Part III replaced the whole model. Both now coexist in the
   schema and the UI, and V-B2 exists to decide what to do about it.
-- **`orch_runs_new` and `orch_approvals_new`** are still in the schema: rebuild leftovers
-  from migration 037 that nothing cleaned up.
 - **234 Rust doc comments cite `TODO.md` section numbers.** That is what abstraction costs
   here after the fact: the docket surface cannot simply be deleted, because deleting it means
   updating 234 citations. Every mechanism you add is a mechanism someone later has to pay to
@@ -63,7 +61,7 @@ specific one existed.
 - You are writing a config flag whose off-state nothing will ever exercise.
 - Your test asserts that a mechanism exists rather than that a behaviour changed.
 - You are generalizing because "we'll need it for the next harness/backend/provider" — the
-  exact sentence that produced two of the five items in The evidence above.
+  exact sentence that produced two of the four items in The evidence above.
 
 ## Comments: explain the code, never the project's history
 
