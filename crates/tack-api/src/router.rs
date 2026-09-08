@@ -217,10 +217,23 @@ fn local_runner_routes() -> Router<AppState> {
 /// artifact storage below, for consistency.
 fn operator_execution_routes(state: &AppState) -> Router<AppState> {
     let clock: Arc<dyn ExecutionClock> = Arc::new(SystemExecutionClock);
+    // Closes over the startup env default so `create_execution`'s dual-scheduling
+    // guard can resolve the *effective* orchestration setting per request (an
+    // `app_meta` override if the UI has set one) without this crate's
+    // `handlers::executions` needing to name `handlers::settings` — see
+    // `OperatorExecutionState::orchestration_enabled`'s doc comment for why.
+    let orch_enable_default = state.config.orch_enable;
+    let orchestration_enabled: Arc<
+        dyn Fn(sqlx::SqlitePool) -> futures::future::BoxFuture<'static, bool> + Send + Sync,
+    > = Arc::new(move |pool| {
+        Box::pin(async move {
+            crate::handlers::settings::effective_orch_enabled_for(&pool, orch_enable_default).await
+        })
+    });
     let operator_state = executions::OperatorExecutionState::with_clock(
         state.repo.clone(),
         clock,
-        state.config.orch_enable,
+        orchestration_enabled,
     );
     let decision_clock: Arc<dyn ExecutionClock> = Arc::new(SystemExecutionClock);
     let decision_state =

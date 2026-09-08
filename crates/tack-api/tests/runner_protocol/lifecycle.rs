@@ -823,7 +823,7 @@ async fn operator_auth_cannot_substitute_for_runner_auth_and_vice_versa() {
     let operator_state = executions::OperatorExecutionState::with_clock(
         repo.clone(),
         Arc::new(clock.clone()),
-        false,
+        Arc::new(|_pool| Box::pin(async { false })),
     );
     let operator_app = executions::routes(operator_state);
     let runner_bearer_value = format!("Bearer {RUNNER_CREDENTIAL}");
