@@ -61,16 +61,15 @@
 //! the owner of a new runner request.
 //!
 //! [`decide_scheduling_owner`] is the pure decision function — no I/O, fully unit
-//! tested here. The actual enforcement (reading `execution_requests`, refusing to
-//! call docket) lives in `tack_api::dispatcher::dispatch_item`:
-//! `tack_db::repo::orch::Repository::has_active_execution_request_for_item` is a
-//! read-only query in `repo/orch.rs`, and `dispatcher.rs`'s call site is
-//! documented there. **The mirror guard is not implemented** —
-//! `tack-api::handlers::executions` (`POST /api/executions`) does not check
-//! `orch_tasks` before creating a new request, so a caller can still create a
-//! runner-v1 request that collides with an item Docket already owns. A collision
-//! test (`crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`)
-//! documents — rather than hides — this open asymmetry.
+//! tested here. The actual enforcement is two read-only queries in `repo/orch.rs`,
+//! one per direction: `tack_api::dispatcher::dispatch_item` calls
+//! `tack_db::repo::orch::Repository::has_active_execution_request_for_item` so a
+//! live runner-v1 request makes legacy Docket dispatch defer, and
+//! `tack-api::handlers::executions::create_execution` (`POST /api/executions`)
+//! calls `Repository::has_active_docket_task_for_item` so a live legacy Docket
+//! task makes a new runner-v1 request defer instead of colliding with it. Both
+//! directions are proven, including the case where orchestration is off, by
+//! `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`.
 //!
 //! # Provider-scoped ids and the normalized-attempt projection
 //!
