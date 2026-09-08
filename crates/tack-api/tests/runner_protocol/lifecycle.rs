@@ -820,8 +820,11 @@ async fn operator_auth_cannot_substitute_for_runner_auth_and_vice_versa() {
     // operator route: `principal()` in `executions.rs` reads only
     // `x-tack-principal`. This is the structural proof that a runner cannot
     // create, cancel, or otherwise mutate a PM execution request.
-    let operator_state =
-        executions::OperatorExecutionState::with_clock(repo.clone(), Arc::new(clock.clone()));
+    let operator_state = executions::OperatorExecutionState::with_clock(
+        repo.clone(),
+        Arc::new(clock.clone()),
+        false,
+    );
     let operator_app = executions::routes(operator_state);
     let runner_bearer_value = format!("Bearer {RUNNER_CREDENTIAL}");
     let runner_bearer: [(&str, &str); 1] = [("authorization", &runner_bearer_value)];
