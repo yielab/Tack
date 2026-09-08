@@ -1217,6 +1217,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{id}/orch-dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /api/projects/{id}/orch-dispatch` — trigger a full docket pipeline
+         *     run for the project's linked docket project. `variables` is forwarded to
+         *     docket exactly as received — an opaque `{name: value}` JSON object this
+         *     route never inspects, validates, or logs (ADR 0065 decision 6); omit the
+         *     field, or send `{}`, for a pipeline with no variables to resolve.
+         */
+        post: operations["dispatch_project_pipeline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{id}/orch-link": {
         parameters: {
             query?: never;
@@ -3711,6 +3734,42 @@ export interface components {
              */
             status_map_rejected?: string | null;
             task?: null | components["schemas"]["DispatchedTaskResponse"];
+        };
+        /** @description `POST /api/projects/{id}/orch-dispatch` request body. */
+        DispatchProjectPipelineRequest: {
+            /**
+             * @description Opaque `{name: value}` object, forwarded to docket verbatim as the
+             *     pipeline's `variables` — this route has no opinion on its shape
+             *     beyond "a JSON object" and never logs it. Omit for `{}`.
+             */
+            variables?: unknown;
+        };
+        /**
+         * @description `POST /api/projects/{id}/orch-dispatch` response.
+         *
+         *     **`run_id` is not a promise the run was permitted.** docket's
+         *     `POST /dispatch/{project}` creates the run record and answers before the
+         *     pipeline itself executes — guardrail evaluation included — on a thread
+         *     this response never waits on (ADR 0065, "A block is not synchronously
+         *     observable on this route"). This struct carries no `status`/`outcome`
+         *     field for that reason: the only fact this route can honestly report is
+         *     that docket accepted the request and started a run. What that run goes
+         *     on to do — success, failure, or a guardrail block — is not visible here;
+         *     it only becomes visible once the reconciler's own periodic poll of
+         *     docket's `/runs` endpoint mirrors this run's outcome into Tack.
+         */
+        DispatchProjectPipelineResponse: {
+            /**
+             * @description The docket project (`orch_links.remote_project`) the pipeline was
+             *     started against.
+             */
+            remote_project: string;
+            /**
+             * @description docket's own pipeline-run id — a different kind of id from an
+             *     `orch_tasks.remote_task_id`. Hand this to an operator who wants to
+             *     correlate what they see later once the reconciler mirrors it.
+             */
+            run_id: string;
         };
         /**
          * @description A dispatched (or already-in-flight) `orch_tasks` row, projected for the
@@ -7843,6 +7902,60 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    dispatch_project_pipeline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispatchProjectPipelineRequest"];
+            };
+        };
+        responses: {
+            /** @description docket accepted the request and started a pipeline run. This reports that the run started, never that it was permitted — poll the reconciler's mirrored run state for the eventual outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DispatchProjectPipelineResponse"];
+                };
+            };
+            /** @description Missing/invalid X-Tack-Dispatch-Token header, or TACK_ORCH_DISPATCH_TOKEN not configured on this server */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Project not found, project not linked to a control plane, or orchestration disabled */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description docket refused the request itself (malformed variables, the control plane unreachable, or — defensively, though not reachable on this route today — a synchronous guardrail refusal) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };

@@ -1310,6 +1310,7 @@ and for the orchestration layer that supervises those runs, lives under
 `/api/model-profiles`, `/api/local-runner*` (the runner embedded by `tack serve
 --with-runner` and its stored secrets), `/api/control-planes`, `/api/fleet`,
 `/api/items/{id}/dispatch`, `/api/sprints/{id}/dispatch` (+ its `dry-run`),
+`/api/projects/{id}/orch-dispatch`,
 `/api/items/{id}/agent-activity`, `/api/projects/{id}/agent-activity`,
 `/api/approvals`, `/api/projects/{id}/orch-budget`, `/api/projects/{id}/orch-policy`,
 `/api/projects/{id}/orch-link`, `/api/settings/orchestration`, `/api/economics/items`,
@@ -1390,6 +1391,19 @@ walkthrough linked above for the full attempt body.
 requires the separate `TACK_EXECUTION_DECISION_TOKEN` secret, fail-closed when unset —
 see [Authentication](#authentication) for how this differs from the ordinary API
 token.
+
+`dispatch_project_pipeline` (`POST /api/projects/{id}/orch-dispatch`, ADR 0065)
+similarly requires the separate `TACK_ORCH_DISPATCH_TOKEN` secret, fail-closed when
+unset. It resolves the docket project from the caller's existing `orch-link` and
+triggers a full pipeline run there — **the response reports only that docket accepted
+the request and started a run, never that the run was permitted.** docket's
+`POST /dispatch/{project}` creates the run record and answers before the pipeline
+itself executes (guardrail evaluation included), on a thread the response never waits
+on, so a guardrail block is not observable on this route the way it is on
+`/dispatch`'s item-level sibling. Whether the run succeeds, fails, or is blocked only
+becomes visible once Tack's reconciler next polls docket and mirrors that run's
+outcome — see `docs/adr/0065-docket-pipeline-dispatch-trigger.md` for the full
+reasoning. `tack orch dispatch <project>` is this route's in-tree CLI caller.
 
 ---
 

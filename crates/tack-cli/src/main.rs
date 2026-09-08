@@ -286,6 +286,12 @@ enum Commands {
         #[command(subcommand)]
         action: ModelProfileAction,
     },
+
+    /// Trigger a docket pipeline run for a project's linked docket project
+    Orch {
+        #[command(subcommand)]
+        action: OrchAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -844,6 +850,33 @@ enum ModelProfileAction {
     },
 }
 
+#[derive(Subcommand)]
+enum OrchAction {
+    /// Trigger a docket pipeline run for a project's linked docket project.
+    ///
+    /// docket answers before the pipeline itself runs, so this command can
+    /// only ever report that the run *started* — never that it was
+    /// permitted. Whether it succeeds, fails, or hits a guardrail block only
+    /// becomes visible once Tack's reconciler next polls docket and mirrors
+    /// that run's outcome.
+    Dispatch {
+        /// Tack project ID (must already be linked via the project's
+        /// docket link)
+        project: String,
+        /// Pipeline variables, as a JSON object (default: {})
+        #[arg(long)]
+        variables: Option<String>,
+        /// TACK_ORCH_DISPATCH_TOKEN — this server refuses the request
+        /// outright when it's unset, the same fail-closed default
+        /// TACK_ORCH_APPROVAL_TOKEN already uses
+        #[arg(long, env = "TACK_ORCH_DISPATCH_TOKEN")]
+        dispatch_token: Option<String>,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 fn main() -> anyhow::Result<()> {
@@ -1176,6 +1209,15 @@ fn main() -> anyhow::Result<()> {
                 cmd_model_profile_create(&client, name, provider, model_id, config_reference, json)
             }
             ModelProfileAction::List { json } => cmd_model_profile_list(&client, json),
+        },
+
+        Commands::Orch { action } => match action {
+            OrchAction::Dispatch {
+                project,
+                variables,
+                dispatch_token,
+                json,
+            } => cmd_orch_dispatch(&client, project, variables, dispatch_token, json),
         },
 
         // Already handled above; unreachable but required for exhaustiveness.
@@ -2428,6 +2470,51 @@ fn cmd_model_profile_list(client: &TackClient, as_json: bool) -> anyhow::Result<
             m["model_id"].as_str().unwrap_or("?"),
         ]);
     }
+    Ok(())
+}
+
+/// `tack orch dispatch <project>`. `variables` is an optional JSON object
+/// string forwarded to docket's pipeline dispatch verbatim; `dispatch_token`
+/// is required — the server refuses the request outright without it, so
+/// this says so plainly here rather than sending a request that can only
+/// come back `403`.
+fn cmd_orch_dispatch(
+    client: &TackClient,
+    project: String,
+    variables: Option<String>,
+    dispatch_token: Option<String>,
+    as_json: bool,
+) -> anyhow::Result<()> {
+    let Some(dispatch_token) = dispatch_token else {
+        anyhow::bail!(
+            "TACK_ORCH_DISPATCH_TOKEN is not set (and --dispatch-token was not given) — \
+             this server refuses to dispatch a docket pipeline without it"
+        );
+    };
+    let variables: serde_json::Value = match variables {
+        Some(raw) => serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("--variables must be a JSON object: {e}"))?,
+        None => json!({}),
+    };
+    let body = json!({ "variables": variables });
+    let resp = client.post_with_headers(
+        &format!("/projects/{project}/orch-dispatch"),
+        &body,
+        &[("x-tack-dispatch-token", dispatch_token.as_str())],
+    )?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+        return Ok(());
+    }
+    let run_id = resp["run_id"].as_str().unwrap_or("?");
+    let remote_project = resp["remote_project"].as_str().unwrap_or("?");
+    println!("Dispatch started for docket project {remote_project}: run {run_id}");
+    println!(
+        "  This confirms docket accepted the request and started the run — not that it was \
+         permitted. docket's own guardrails run after this response is sent; the outcome \
+         (success, failure, or a guardrail block) becomes visible in Tack once the \
+         reconciler's next poll mirrors it."
+    );
     Ok(())
 }
 
