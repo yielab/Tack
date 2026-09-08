@@ -1,6 +1,6 @@
 # VIII-C2 handoff
 
-- Base SHA / branch / final SHA: `0002136` / `agent/viii-c2-live-proof` / *(this commit)*
+- Base SHA / branch / final SHA: `0002136` / `agent/viii-c2-live-proof` / `89cab60`
 - Files changed (must equal ownership list): `crates/tack-orch/src/adapters/docket.rs`
   (the "Verified live against a real docket server" module-doc section, rewritten; plus one
   stale comment inside `decide_approval` that pointed at the old, now-outdated version of
