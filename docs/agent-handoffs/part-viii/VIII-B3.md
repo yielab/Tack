@@ -217,6 +217,4 @@ Re-verified after the change:
   workspace and `crates/tack-desktop` separately, `cargo clippy --workspace --all-targets --
   -D warnings`, generated-file freshness).
 
-Final SHA after this amendment: *(recorded at commit time, see the branch log — this file
-is written before that commit exists, per this repo's handoff convention of describing the
-change the commit will contain)*.
+Final SHA after this amendment: `c77bbe9`.
