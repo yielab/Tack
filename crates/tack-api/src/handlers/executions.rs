@@ -656,12 +656,38 @@ pub async fn create_execution(
                 )
             })?
     {
+        // Names the collision rather than only the item: the guard's own boolean
+        // read above already proved a live task exists, so this is a second,
+        // narrower read of the same table to fetch what that boolean does not
+        // carry. `None` here is a genuine race (the row resolved between the two
+        // reads) rather than a data gap, so it renders as an explicit `null`,
+        // never a fabricated placeholder.
+        let collision = state
+            .repo
+            .active_docket_task_for_item(input.item_id)
+            .await
+            .map_err(|_| {
+                error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StableErrorCode::InternalError,
+                    "Could not verify legacy Docket scheduling state",
+                    json!({}),
+                )
+            })?;
+        let (docket_task_id, docket_task_status) = match collision {
+            Some((task_id, status)) => (Value::from(task_id), Value::from(status)),
+            None => (Value::Null, Value::Null),
+        };
         return Err(error(
             StatusCode::CONFLICT,
             StableErrorCode::Conflict,
             "Item has an active legacy Docket task; refusing to create a runner-v1 \
              execution request to preserve one scheduling owner",
-            json!({"item_id": input.item_id}),
+            json!({
+                "item_id": input.item_id,
+                "docket_task_id": docket_task_id,
+                "docket_task_status": docket_task_status,
+            }),
         ));
     }
     // An exact retry must be allowed to reach the durable replay record even

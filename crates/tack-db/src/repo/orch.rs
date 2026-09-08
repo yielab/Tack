@@ -2039,6 +2039,37 @@ impl Repository {
         Ok(row.0 != 0)
     }
 
+    /// Names `item_id`'s active legacy Docket task — `(remote_task_id,
+    /// remote_status)` — for the mirror guard's `409` payload, so diagnosing a
+    /// collision no longer means reading `orch_tasks` by hand. `None` when
+    /// [`Self::has_active_docket_task_for_item`] would also be `false`; the two
+    /// share the same active-status literal set by construction (`pending`,
+    /// `running`, `waiting_approval` — `dispatcher::ACTIVE_TASK_STATUSES`'s exact
+    /// set), duplicated rather than composed because that function returns only a
+    /// `bool` and the mirror guard's condition already calls it unchanged. Multiple
+    /// active rows for one item are possible across dispatch attempts; the
+    /// most-recently-dispatched one is named, breaking any tie deterministically.
+    ///
+    /// Read-only, against the same table [`Self::has_active_docket_task_for_item`]
+    /// reads.
+    #[instrument(skip(self))]
+    pub async fn active_docket_task_for_item(
+        &self,
+        item_id: Uuid,
+    ) -> Result<Option<(String, String)>, sqlx::Error> {
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT remote_task_id, remote_status FROM orch_tasks
+             WHERE item_id = ?
+               AND remote_status IN ('pending', 'running', 'waiting_approval')
+             ORDER BY dispatched_at DESC
+             LIMIT 1",
+        )
+        .bind(item_id.to_string())
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row)
+    }
+
     /// Marks `orch_tasks` rows `remote_status = 'stale'` when all three hold: the row
     /// is currently "active" (`pending`/`running`/`waiting_approval`,
     /// `dispatcher::ACTIVE_TASK_STATUSES`'s exact set), its `dispatched_at` predates

@@ -650,3 +650,190 @@ async fn create_execution_ignores_an_active_docket_task_when_orchestration_is_of
         "the runner-v1 request must have been created despite the stranded docket row"
     );
 }
+
+// ─── The idempotent-replay case: the mirror guard must never turn a client's
+// retry of its own prior create into a new conflict ─────────────────────────
+
+/// The enrollment half of `attempt_create_execution`, split out so a replay
+/// test can submit the exact same `agent_profile_id`/`runner_id` twice — an
+/// idempotent replay only reaches the durable replay record when the stored
+/// request snapshot matches byte-for-byte, so two independently enrolled
+/// runners (what calling `attempt_create_execution` twice would do) would
+/// hit `idempotency_conflict`, not a replay.
+async fn enroll_g1_runner(app: &Router) -> (String, String) {
+    let profile_res = req(
+        app,
+        Method::POST,
+        "/api/agent-profiles",
+        Some(json!({"name": "g1 profile", "instructions": "work safely"})),
+    )
+    .await;
+    assert_eq!(profile_res.status(), StatusCode::OK);
+    let agent_profile_id = body_json(profile_res).await["agent_profile_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pending_res = req(
+        app,
+        Method::POST,
+        "/api/runners/enrollment",
+        Some(json!({"name": "g1-runner", "total_capacity": 1, "available_capacity": 1})),
+    )
+    .await;
+    assert_eq!(pending_res.status(), StatusCode::OK);
+    let pending = body_json(pending_res).await;
+    let runner_id = pending["runner_id"].as_str().unwrap().to_string();
+    let enrollment_token = pending["enrollment_token"].as_str().unwrap().to_string();
+
+    let enroll_now = Utc::now().to_rfc3339();
+    let enroll_res = req(
+        app,
+        Method::POST,
+        "/api/runner/v1/enroll",
+        Some(json!({
+            "protocol_version": 1,
+            "enrollment_token": enrollment_token,
+            "runner_name": "g1-runner",
+            "runner_version": "0.1.0",
+            "capabilities": {
+                "reported_at": enroll_now,
+                "labels": {"os": "linux"},
+                "concurrency": {"total": 1, "available": 1},
+                "harnesses": [{
+                    "harness_kind": "codex",
+                    "installed_version": "1.2.3",
+                    "probe_error": null,
+                    "probed_at": enroll_now,
+                    "model_combinations": [{
+                        "model_provider": "openai",
+                        "model_ids": ["opaque/model-g1"],
+                        "discovery": "reported"
+                    }],
+                }],
+                "features": {},
+                "limits": {"event_payload_bytes_max": 65536, "artifact_content_bytes_max": 52428800},
+            },
+        })),
+    )
+    .await;
+    assert_eq!(
+        enroll_res.status(),
+        StatusCode::OK,
+        "{:?}",
+        body_json(enroll_res).await
+    );
+
+    (agent_profile_id, runner_id)
+}
+
+/// Submits the exact create-execution body `attempt_create_execution` uses,
+/// against a caller-supplied (already enrolled) profile/runner pair, so a
+/// caller can submit the identical request twice for a genuine idempotent
+/// replay rather than two independently enrolled ones.
+async fn submit_execution_request(
+    app: &Router,
+    item_id: Uuid,
+    idempotency_key: &str,
+    agent_profile_id: &str,
+    runner_id: &str,
+) -> axum::response::Response {
+    req(
+        app,
+        Method::POST,
+        "/api/executions",
+        Some(json!({
+            "item_id": item_id,
+            "idempotency_key": idempotency_key,
+            "selector_kind": "exact_runner",
+            "selector_id": runner_id,
+            "agent_profile_id": agent_profile_id,
+            "requested_harness_kind": "codex",
+            "requested_model_provider": "openai",
+            "requested_model_id": "opaque/model-g1",
+            "agent_profile_snapshot": {"name": "profile", "instructions": "work safely", "tool_policy": {}, "timeout_seconds": 60, "budgets": {}},
+            "repository_snapshot": {"kind": "git", "remote": "https://example.test/g1.git", "base_revision": "deadbeef", "subdirectory": null},
+            "permission_policy": {"tools": ["shell"], "network": false},
+            "timeout_seconds": 60,
+            "budgets": {},
+            "environment": {},
+            "metadata": {},
+        })),
+    )
+    .await
+}
+
+/// The guard's `existing_snapshot.is_none()` arm exists so a client retrying a
+/// create it already made never starts getting a `409` because Docket claimed
+/// the item in between. This is that path, end to end: the first call creates
+/// the request while no Docket task exists; a Docket task then goes active on
+/// the same item; the exact same request (same idempotency key) is replayed
+/// and must still succeed, reaching the durable replay record rather than the
+/// mirror guard. Row count stays `1` — the replay must not create a second
+/// row, and the guard must not have refused it either.
+#[tokio::test]
+async fn create_execution_replay_succeeds_despite_an_active_docket_task() {
+    let (app, state) = app_with_state(orch_config()).await;
+    let project_id = create_project(&app).await;
+    let item_id = create_item(&app, project_id).await;
+    let (agent_profile_id, runner_id) = enroll_g1_runner(&app).await;
+
+    let first =
+        submit_execution_request(&app, item_id, "replay-key", &agent_profile_id, &runner_id).await;
+    assert_eq!(
+        first.status(),
+        StatusCode::OK,
+        "{:?}",
+        body_json(first).await
+    );
+
+    insert_orch_task(&state, item_id, "remote-task-after-create", "running").await;
+
+    let replay =
+        submit_execution_request(&app, item_id, "replay-key", &agent_profile_id, &runner_id).await;
+    let replay_status = replay.status();
+    let replay_body = body_json(replay).await;
+    assert_eq!(
+        replay_status,
+        StatusCode::OK,
+        "a replay of an existing request must never be blocked by a Docket task that \
+         went active after the original create: {replay_body:?}"
+    );
+    assert_eq!(
+        replay_body["replayed"],
+        Value::Bool(true),
+        "{replay_body:?}"
+    );
+    assert_eq!(
+        count_execution_requests_for_item(&state, item_id).await,
+        1,
+        "the replay must not create a second execution_requests row"
+    );
+}
+
+/// The `409` a fresh (non-replay) create gets while the item has an active
+/// Docket task names *which* task collided and its status, not only the
+/// `item_id` — before this, diagnosing a collision meant reading `orch_tasks`
+/// by hand.
+#[tokio::test]
+async fn create_execution_conflict_names_the_colliding_docket_task() {
+    let (app, state) = app_with_state(orch_config()).await;
+    let project_id = create_project(&app).await;
+    let item_id = create_item(&app, project_id).await;
+
+    insert_orch_task(&state, item_id, "remote-task-named", "waiting_approval").await;
+
+    let res = attempt_create_execution(&app, item_id, "mirror-guard-named").await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let body = body_json(res).await;
+    assert_eq!(
+        body["error"]["details"]["docket_task_id"],
+        Value::String("remote-task-named".to_string()),
+        "{body:?}"
+    );
+    assert_eq!(
+        body["error"]["details"]["docket_task_status"],
+        Value::String("waiting_approval".to_string()),
+        "{body:?}"
+    );
+}
