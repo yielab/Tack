@@ -218,3 +218,85 @@ Re-verified after the change:
   -D warnings`, generated-file freshness).
 
 Final SHA after this amendment: `c77bbe9`.
+
+**2026-09-08 — removed the wrapper the composition fix orphaned, at the integrator's direction.**
+
+The coordinator reviewed the composition fix above and confirmed all three of its checks
+(literal count back to two, `dispatched_at` confirmed `NOT NULL`, the guard collapsed to one
+read with the `Value::Null` arm removed entirely rather than merely dead) — and flagged two
+consequences the previous amendment did not report:
+
+1. **`has_active_docket_task_for_item` had no production caller left.** Delegating it to
+   `active_docket_task_for_item` (this card's earlier fix) removed the only reason
+   `create_execution`'s guard had to call the wrapper rather than the function it delegated
+   to — and the guard was, separately, rewritten in the same amendment to call
+   `active_docket_task_for_item` directly for the single-read collapse. The wrapper's three
+   remaining call sites were all its own unit test. This is this tree's named recurring
+   defect (a mechanism with no caller), and it was this card's own delegation that created it
+   — not pre-existing dead code discovered mid-Part.
+2. **`crates/tack-orch/src/adapters/legacy_bridge.rs` line 69 became false.** Its module doc,
+   in the "One scheduling owner" section, said the guard "calls `Repository::
+   has_active_docket_task_for_item`" — no longer true once the guard called
+   `active_docket_task_for_item` directly.
+
+**On §VIII.1 rule 6 ("no removal without a decision record"):** the coordinator's read is
+that the rule governs pre-existing dead code discovered during the Part (the situation
+VIII-C1 exists to avoid acting on unilaterally), not a function that went dead *inside this
+card*, as a direct and immediate result of a correction the coordinator itself asked for in
+the previous amendment. Recorded here as **the integrator's call**, not this agent's — per
+the coordinator's explicit instruction, the removal below was authorized as VIII-B3's
+integrator, not decided independently by the card.
+
+Changes, all still inside this card's owned files plus one accepted cross-ownership edit:
+
+- **Removed `has_active_docket_task_for_item` entirely** from `crates/tack-db/src/repo/orch.rs`.
+  The "Defined once, in this query" doc paragraph, previously on the wrapper and pointing at
+  `active_docket_task_for_item`, now lives directly on `active_docket_task_for_item` with no
+  forward reference to a delegating function, since none remains. The module-level "Two
+  problems" doc at the top of the Docket-bridge section no longer names the wrapper as a
+  second read-only query.
+- **Repointed all three of its tests** in `dual_scheduling.rs` to call
+  `active_docket_task_for_item` directly, renamed
+  `has_active_docket_task_for_item_ignores_terminal_statuses` to
+  `active_docket_task_for_item_ignores_terminal_statuses`, and changed every assertion from
+  `assert!`/`.is_some()`-or-`!` on a `bool` to `assert_eq!` against the full `Option` —
+  `None` for the empty/terminal/stale/unknown cases, `Some(("t-running".to_string(),
+  "running".to_string()))` for the active case. This pins the returned task id and status,
+  not only whether one exists — strictly more coverage than the three tests had before,
+  matching the coordinator's stated expectation.
+- **Corrected `legacy_bridge.rs` line 66–69** (inside VIII-B1's "One scheduling owner"
+  section, not this card's own ownership) to name `Repository::active_docket_task_for_item`
+  as what `create_execution` calls, and to note in the same sentence that it also names the
+  colliding task. **This edit is outside VIII-B3's ownership table row** — VIII-B1 owns this
+  paragraph, VIII-B1 is merged and closed, and the coordinator accepted this specific
+  cross-ownership correction as integrator, the same way VIII-B1's own out-of-ownership edits
+  to `router.rs` and two unrelated test files were accepted in that card's original handoff.
+  No other line in `legacy_bridge.rs` was touched.
+
+`grep -rn "has_active_docket_task_for_item" crates/` now returns no results — the name does
+not appear anywhere in the tree, code or comments.
+
+Re-verified after this change:
+- `cargo nextest run --workspace -E 'binary(orchestration)'` → `132 tests run: 132 passed, 0
+  skipped`.
+- `cargo nextest run --workspace -E 'binary(orchestration) and test(/dual_scheduling/)'` →
+  `9 tests run: 9 passed, 0 skipped`.
+- Full suite: `cargo nextest run --workspace` → `1487 tests run: 1487 passed, 7 skipped` on a
+  clean rerun. One run in between showed a single unrelated failure,
+  `tack-cli::local_runner::tests::setting_a_provider_secret_while_running_stops_the_old_task_before_anything_else`
+  — outside every file this card touches, and outside `crates/tack-api`/`crates/tack-db`/
+  `crates/tack-orch` entirely; an immediate rerun of the full suite passed clean, confirming
+  it as the same pre-existing parallel-load flake VIII-B1's own handoff recorded, not a
+  regression from this change.
+- Revert proof re-run against the current guard (removing `existing_snapshot.is_none() &&`
+  from the `if` that produces `active_docket_task`): the same single test failed —
+  `create_execution_replay_succeeds_despite_an_active_docket_task`, `200` where `409` was
+  expected — and no other test's outcome changed from either prior revert-proof run. Guard
+  restored, reran 9/9.
+- `.githooks/pre-push`: green after one `cargo fmt --all` pass (the repointed tests' assertion
+  calls needed reformatting to fit the line-length rule; applied, then the gate reran clean):
+  comments, test-hygiene, `cargo fmt --all --check` for the workspace and
+  `crates/tack-desktop` separately, `cargo clippy --workspace --all-targets -- -D warnings`,
+  generated-file freshness.
+
+Final SHA after this amendment: `5c77249`.
