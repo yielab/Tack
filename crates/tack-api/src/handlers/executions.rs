@@ -636,33 +636,18 @@ pub async fn create_execution(
     // already refuses legacy Docket dispatch when the item has a live runner-v1
     // request (`tack_db::repo::orch::Repository::has_active_execution_request_for_item`);
     // this is the missing other half, closed with that query's own mirror,
-    // `has_active_docket_task_for_item`. Skipped for an idempotent replay
-    // (`existing_snapshot.is_some()`) — a replay creates no new row, so there is
-    // nothing here to collide with — and consulted only while orchestration is
-    // effectively on, so a stale `orch_tasks` row from a previously-enabled bridge
-    // can never block runner-v1, which stays the plan of record either way.
-    if existing_snapshot.is_none()
+    // `active_docket_task_for_item`, which also names the colliding task for the
+    // `409` below. Skipped for an idempotent replay (`existing_snapshot.is_some()`)
+    // — a replay creates no new row, so there is nothing here to collide with — and
+    // consulted only while orchestration is effectively on, so a stale `orch_tasks`
+    // row from a previously-enabled bridge can never block runner-v1, which stays
+    // the plan of record either way. A single read: the same `Option` decides
+    // whether to refuse and, when it does, names what refused it — there is no
+    // window between a boolean check and a naming lookup for the row to change.
+    let active_docket_task = if existing_snapshot.is_none()
         && (state.orchestration_enabled)(state.repo.pool().clone()).await
-        && state
-            .repo
-            .has_active_docket_task_for_item(input.item_id)
-            .await
-            .map_err(|_| {
-                error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    StableErrorCode::InternalError,
-                    "Could not verify legacy Docket scheduling state",
-                    json!({}),
-                )
-            })?
     {
-        // Names the collision rather than only the item: the guard's own boolean
-        // read above already proved a live task exists, so this is a second,
-        // narrower read of the same table to fetch what that boolean does not
-        // carry. `None` here is a genuine race (the row resolved between the two
-        // reads) rather than a data gap, so it renders as an explicit `null`,
-        // never a fabricated placeholder.
-        let collision = state
+        state
             .repo
             .active_docket_task_for_item(input.item_id)
             .await
@@ -673,11 +658,11 @@ pub async fn create_execution(
                     "Could not verify legacy Docket scheduling state",
                     json!({}),
                 )
-            })?;
-        let (docket_task_id, docket_task_status) = match collision {
-            Some((task_id, status)) => (Value::from(task_id), Value::from(status)),
-            None => (Value::Null, Value::Null),
-        };
+            })?
+    } else {
+        None
+    };
+    if let Some((docket_task_id, docket_task_status)) = active_docket_task {
         return Err(error(
             StatusCode::CONFLICT,
             StableErrorCode::Conflict,

@@ -153,4 +153,70 @@ flagged here as `not_measured` rather than silently assumed correct.
 
 ## Amendments
 
-*(none yet)*
+**2026-09-08 — collapsed the duplicated active-status literal, and the guard's two reads into one.**
+
+The coordinator reviewed this card and correctly flagged that the original version left the
+active-status literal `IN ('pending', 'running', 'waiting_approval')` three times in
+`crates/tack-db/src/repo/orch.rs` (`has_active_docket_task_for_item`,
+`active_docket_task_for_item`, `reconcile_stale_orch_tasks`) where there had been two before
+this card, and that `has_active_docket_task_for_item`'s own doc comment — "Defined once, in
+this query... so a caller can never see a set that drifts... by accident" — became false
+twelve lines from the new duplicate. The original handoff's candour about duplicating rather
+than composing was the wrong resolution; the fix is to not duplicate.
+
+Two changes, both in this card's owned files, neither re-deciding the guard:
+
+- **`has_active_docket_task_for_item` now delegates**: `Ok(self.active_docket_task_for_item(item_id).await?.is_some())`.
+  `active_docket_task_for_item` is now the sole owner of the `WHERE` clause and carries the
+  "defined once" doc comment (moved from the other function, and updated to say it now
+  covers both functions because the other delegates rather than repeating the literal).
+  Both functions still exist and are both still public — nothing was removed, so §VIII.1
+  rule 6 is not engaged. The literal count in `orch.rs` is back to two (this query and
+  `reconcile_stale_orch_tasks`), matching the pre-card state.
+- **`create_execution`'s guard collapsed to a single read**: binds
+  `active_docket_task_for_item`'s `Option` once — under the same three-term condition as
+  before (`existing_snapshot.is_none() && orchestration_enabled && <a Docket task is
+  active>`), just restructured so the existence check and the naming read are the same
+  call — then matches on it once for both the boolean decision and the payload. The
+  condition's truth table is unchanged; only the plumbing is. This also retired the
+  original handoff's own recorded gap: the earlier version made two separate reads (a
+  boolean, then a naming query), leaving a race window where the row could resolve between
+  them and the payload would render `null`. With one read there is no window, so that
+  branch no longer exists in the code — the "What a stranger still cannot do" and "The
+  question you did not answer" sections above still describe that now-removed race as
+  `not_measured`; that description is now stale and is not the current behavior. Read this
+  amendment as the correction, per this Part's rule that corrections are appended rather
+  than rewriting the original text.
+
+**The nullability check the coordinator asked for, before delegating**:
+`orch_tasks.dispatched_at` is declared `TEXT NOT NULL DEFAULT (datetime('now'))` in
+`crates/tack-db/src/migrations.rs`'s `MIGRATION_021` (migration 021, the table's own
+creation — grepped directly, not assumed). Because it is `NOT NULL`, `ORDER BY dispatched_at
+DESC` can never place a row with a null sort key ahead of or behind the set `EXISTS` would
+count; more generally, the `WHERE` clause is byte-identical between the old `EXISTS` form and
+the new `SELECT ... LIMIT 1` form, and `ORDER BY`/`LIMIT` only select *which* matching row is
+returned, never *whether* one exists — so `.is_some()` and `EXISTS` are the same truth for
+every row shape this table permits, independent of the nullability finding. Both are recorded
+here because the coordinator asked for the check to be done, not assumed.
+
+Re-verified after the change:
+- `cargo nextest run --workspace -E 'binary(orchestration)'` → `132 tests run: 132 passed, 0
+  skipped`.
+- `cargo nextest run --workspace -E 'binary(orchestration) and test(/dual_scheduling/)'` →
+  `9 tests run: 9 passed, 0 skipped`.
+- Full suite: `cargo nextest run --workspace` → `1487 tests run: 1487 passed, 7 skipped`.
+- `cargo nextest run --workspace -E 'binary(openapi_contract)'` → `5 tests run: 5 passed, 0
+  skipped` — still no spec drift; `details` is still a free-form `Value`.
+- Revert proof re-run against the collapsed guard (removing `existing_snapshot.is_none() &&`
+  from the single `if` that now produces `active_docket_task`): same single test failed —
+  `create_execution_replay_succeeds_despite_an_active_docket_task`, `200` where `409` was
+  expected, all other 8 tests in the file unaffected. The set of failing tests did not
+  change from the pre-amendment revert proof; no test was adjusted to preserve this result.
+  Guard restored, reran 9/9.
+- `.githooks/pre-push`: green (comments, test-hygiene, `cargo fmt --all --check` for the
+  workspace and `crates/tack-desktop` separately, `cargo clippy --workspace --all-targets --
+  -D warnings`, generated-file freshness).
+
+Final SHA after this amendment: *(recorded at commit time, see the branch log — this file
+is written before that commit exists, per this repo's handoff convention of describing the
+change the commit will contain)*.

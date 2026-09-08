@@ -1951,12 +1951,14 @@ impl Repository {
 //    legacy Docket bridge) are two fully independent write paths that can both target
 //    the same `item_id` with no coordination whatsoever. [`Repository::
 //    has_active_execution_request_for_item`] and [`Repository::
-//    has_active_docket_task_for_item`] are the two **read-only** queries, one against
+//    active_docket_task_for_item`] are the two **read-only** queries, one against
 //    each plane's own table, that make "one scheduling owner" enforceable in both
 //    directions: `tack-api::dispatcher::dispatch_item` calls the first so a live
 //    runner-v1 request makes legacy Docket dispatch defer, and `tack-api::handlers::
 //    executions::create_execution` calls the second so a live legacy Docket task
-//    makes a new runner-v1 request defer. Neither write path touches the other
+//    makes a new runner-v1 request defer, and also names which task and status.
+//    [`Repository::has_active_docket_task_for_item`] delegates to the second query
+//    rather than repeating its `WHERE` clause. Neither write path touches the other
 //    plane's table directly. No schema changes; both read tables `migrations.rs`
 //    already creates.
 //
@@ -2005,53 +2007,46 @@ impl Repository {
         Ok(row.0 != 0)
     }
 
-    /// `true` iff `item_id` has an `orch_tasks` row whose `remote_status` is
-    /// `pending`, `running`, or `waiting_approval` — legacy Docket is still working
-    /// on it, or waiting on a human. This is the exact set `dispatcher.rs`'s
-    /// `ACTIVE_TASK_STATUSES` names and the only set `Self::
-    /// reconcile_stale_orch_tasks`'s own `WHERE` clause treats as active; every
-    /// other value, including `stale`, a terminal docket status, or one this
-    /// version of Tack has never seen, is *not* active — a redispatch (or, here, a
-    /// new runner-v1 request) is safe against it. Defined once, in this query,
-    /// rather than filtering rows in Rust after a broader read, so a caller can
-    /// never see a set that drifts from `ACTIVE_TASK_STATUSES` by accident.
-    ///
-    /// This is the mirror-direction read for "one scheduling owner": [`Self::
+    /// `true` iff `item_id` has an active legacy Docket task. Delegates to [`Self::
+    /// active_docket_task_for_item`], which is where the active-status set is
+    /// defined — a caller of either function can never see the two disagree, because
+    /// there is only one `WHERE` clause between them. This is the mirror-direction
+    /// read for "one scheduling owner": [`Self::
     /// has_active_execution_request_for_item`] lets legacy Docket dispatch defer to
     /// a live runner-v1 request; this lets a new runner-v1 request defer to a live
-    /// legacy Docket task. Read-only against a table this file already writes
-    /// elsewhere (`Self::upsert_orch_tasks`).
+    /// legacy Docket task.
     #[instrument(skip(self))]
     pub async fn has_active_docket_task_for_item(
         &self,
         item_id: Uuid,
     ) -> Result<bool, sqlx::Error> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT EXISTS(
-                SELECT 1 FROM orch_tasks
-                WHERE item_id = ?
-                  AND remote_status IN ('pending', 'running', 'waiting_approval')
-             )",
-        )
-        .bind(item_id.to_string())
-        .fetch_one(self.pool())
-        .await?;
-        Ok(row.0 != 0)
+        Ok(self.active_docket_task_for_item(item_id).await?.is_some())
     }
 
-    /// Names `item_id`'s active legacy Docket task — `(remote_task_id,
-    /// remote_status)` — for the mirror guard's `409` payload, so diagnosing a
-    /// collision no longer means reading `orch_tasks` by hand. `None` when
-    /// [`Self::has_active_docket_task_for_item`] would also be `false`; the two
-    /// share the same active-status literal set by construction (`pending`,
-    /// `running`, `waiting_approval` — `dispatcher::ACTIVE_TASK_STATUSES`'s exact
-    /// set), duplicated rather than composed because that function returns only a
-    /// `bool` and the mirror guard's condition already calls it unchanged. Multiple
-    /// active rows for one item are possible across dispatch attempts; the
-    /// most-recently-dispatched one is named, breaking any tie deterministically.
+    /// `Some((remote_task_id, remote_status))` iff `item_id` has an `orch_tasks` row
+    /// whose `remote_status` is `pending`, `running`, or `waiting_approval` — legacy
+    /// Docket is still working on it, or waiting on a human; `None` otherwise. This
+    /// is the exact set `dispatcher.rs`'s `ACTIVE_TASK_STATUSES` names and the only
+    /// set `Self::reconcile_stale_orch_tasks`'s own `WHERE` clause treats as active;
+    /// every other value, including `stale`, a terminal docket status, or one this
+    /// version of Tack has never seen, is *not* active — a redispatch (or, here, a
+    /// new runner-v1 request) is safe against it. **Defined once, in this query**,
+    /// rather than filtering rows in Rust after a broader read, so a caller can never
+    /// see a set that drifts from `ACTIVE_TASK_STATUSES` by accident — [`Self::
+    /// has_active_docket_task_for_item`] delegates here rather than repeating the
+    /// literal set, so that guarantee covers both functions, not just this one.
     ///
-    /// Read-only, against the same table [`Self::has_active_docket_task_for_item`]
-    /// reads.
+    /// Multiple active rows for one item are possible across dispatch attempts; the
+    /// most-recently-dispatched one is named, breaking any tie deterministically.
+    /// `dispatched_at` is `NOT NULL` (see `migrations.rs`'s `orch_tasks` definition),
+    /// so `ORDER BY dispatched_at DESC` cannot pick a row `EXISTS` would not have
+    /// counted — which row is returned is the only thing the ordering affects; the
+    /// `Some`/`None` distinction depends solely on the `WHERE` clause above, so
+    /// `.is_some()` and the `EXISTS` form this query replaced are the same truth for
+    /// every row shape this table permits.
+    ///
+    /// Read-only against a table this file already writes elsewhere (`Self::
+    /// upsert_orch_tasks`).
     #[instrument(skip(self))]
     pub async fn active_docket_task_for_item(
         &self,
