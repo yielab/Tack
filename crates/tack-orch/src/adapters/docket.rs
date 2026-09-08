@@ -29,14 +29,16 @@
 //!
 //! # Write methods
 //!
-//! **`enqueue_task`, `decide_approval`, and `provision_pod` are all
-//! implemented** — see below. [`ControlPlane::dispatch`]
-//! still returns [`OrchError::Disabled`] unconditionally — not because
-//! docket lacks the route (`POST /dispatch/{project}` is a real,
-//! live-verified endpoint too) but because it's a distinct
-//! pipeline-run trigger (body = arbitrary `variables`) with no consumer in
-//! Tack yet. Wiring it now, with no caller and no design for the
-//! surrounding safety properties, would just be dead code.
+//! **`enqueue_task`, `decide_approval`, `provision_pod`, and `dispatch` are
+//! all implemented** — see below. [`ControlPlane::dispatch`] POSTs to
+//! `POST /dispatch/{project}`, a distinct pipeline-run trigger (body =
+//! arbitrary `variables`) from `enqueue_task`'s pod-queue route, and returns
+//! docket's own run id. Docket hands that id back before the pipeline
+//! itself actually runs — the dispatch (including any `pre_input` guardrail
+//! evaluation inside it) executes afterwards, off the request thread — so a
+//! `block` verdict is never observable as this method's `Err` the way it is
+//! for `enqueue_task`; it can only surface later, as the run's own failed
+//! state. See [`DocketAdapter::dispatch`]'s own doc comment for detail.
 //!
 //! `decide_approval`'s implementation sends a fixed `channel: "tack"` on
 //! every decision (verified against `approval.APPROVAL_CHANNELS` in
@@ -366,6 +368,18 @@ struct EnqueueTaskResponse {
     task: String,
 }
 
+/// `POST /dispatch/{project}`'s success response —
+/// `{"ok": true, "run": "<id>", "project": "...", "status": "dispatched"}`
+/// (`serve.py`'s `do_POST`, the `/dispatch/` branch). Only `run` is
+/// modeled — `ok`/`project`/`status` are never read, same "unmodeled keys
+/// cost nothing" discipline as [`EnqueueTaskResponse`]. The id lands under
+/// `"run"`, not `"task"`: docket's own vocabulary split between a pod
+/// *task* (`EnqueueTaskResponse`) and a pipeline *run*.
+#[derive(Debug, Deserialize)]
+struct DispatchResponse {
+    run: String,
+}
+
 /// `POST /approvals/{token}` request body — `serve.py`'s `do_POST` reads
 /// exactly these two keys. `channel` is optional on the wire (docket
 /// defaults to `"http"` if absent) but this adapter always sends it — see
@@ -417,15 +431,12 @@ impl ControlPlane for DocketAdapter {
     /// do. See `docs/book/src/developer/orchestration.md`.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            // `ControlPlane::dispatch` (the trait method literally named
-            // `dispatch`) always returns `OrchError::Disabled` — see this
-            // module's own doc comment, "Write methods". But the capability
-            // named here is "can this plane accept new work at all," and
-            // docket answers that with `enqueue_task`
-            // (`POST /tasks/{project}`, live-verified), which
-            // this adapter fully implements and `dispatcher.rs` actually
-            // calls. `false` here would misreport what docket can do to
-            // satisfy the name of one dead trait method.
+            // "Can this plane accept new work at all?" docket answers yes
+            // two ways: `enqueue_task` (`POST /tasks/{project}`, queues a
+            // task against an existing pod, and what `dispatcher.rs` calls
+            // today) and the trait's own `dispatch` method
+            // (`POST /dispatch/{project}`, triggers a full pipeline run).
+            // Both routes are live and this adapter implements both.
             dispatch: true,
             // No cancel route exists anywhere in docket's HTTP surface —
             // `serve.py`'s full route table (this module's "Verified live"
@@ -647,17 +658,67 @@ impl ControlPlane for DocketAdapter {
         Ok(parsed.task)
     }
 
-    async fn dispatch(
-        &self,
-        _project: &str,
-        _vars: serde_json::Value,
-    ) -> Result<String, OrchError> {
-        // Gated behind TACK_ORCH_ENABLE — see the
-        // module doc's "Write methods" section. Unlike `enqueue_task`,
-        // `POST /dispatch/{project}` is a real, working docket route today;
-        // it stays disabled here purely for the gate, not for lack of a
-        // server-side endpoint.
-        Err(OrchError::Disabled)
+    async fn dispatch(&self, project: &str, vars: serde_json::Value) -> Result<String, OrchError> {
+        // POST /dispatch/{project}, Bearer-authed. Built by hand rather than
+        // through `get_authed`/`send`, the same reason `enqueue_task` does:
+        // a 400 here needs distinct handling before `send`'s generic
+        // non-2xx branch would collapse it.
+        //
+        // `vars` is sent as the request body verbatim — docket reads it as
+        // a plain `{name: value}` object and resolves it against the
+        // project's pipeline variable namespace; this adapter never
+        // inspects or reshapes it.
+        let url = self.url(&format!("dispatch/{project}"))?;
+        let mut req = self.client.post(url).json(&vars);
+        if let Some(token) = &self.token {
+            req = req.bearer_auth(token);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| OrchError::Http(format!("request failed: {e}")))?;
+        let status = resp.status();
+
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            return Err(OrchError::Auth);
+        }
+        if status == StatusCode::NOT_FOUND {
+            let text = resp.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ErrorBody>(&text)
+                .ok()
+                .and_then(|b| (!b.error.is_empty()).then_some(b.error))
+                .unwrap_or_else(|| text.trim().to_string());
+            return Err(OrchError::NotFound(message));
+        }
+        if status == StatusCode::BAD_REQUEST {
+            let text = resp.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ErrorBody>(&text)
+                .ok()
+                .and_then(|b| (!b.error.is_empty()).then_some(b.error))
+                .unwrap_or_else(|| text.trim().to_string());
+            // Reuses `enqueue_task`'s policy-block parser for the one shape
+            // that would mean the same thing here — but every 400
+            // `serve.py`'s `/dispatch/` branch can actually raise today
+            // (malformed JSON, a non-object body, an unresolved pipeline
+            // variable) predates any guardrail check: the `pre_input` gate
+            // runs later, inside the async dispatch this response doesn't
+            // wait on (see the module doc). A message that doesn't name a
+            // guardrail policy is a plain request error, not a block.
+            if message.contains("guardrail policy") {
+                return Err(parse_policy_block(message));
+            }
+            return Err(OrchError::Http(format!("unexpected status 400: {message}")));
+        }
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let snippet: String = text.chars().take(ERROR_BODY_SNIPPET_LEN).collect();
+            return Err(OrchError::Http(format!(
+                "unexpected status {status}: {snippet}"
+            )));
+        }
+
+        let parsed: DispatchResponse = Self::decode_json(resp).await?;
+        Ok(parsed.run)
     }
 
     async fn decide_approval(&self, token: &str, grant: bool) -> Result<ApprovalState, OrchError> {

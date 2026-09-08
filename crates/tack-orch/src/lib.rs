@@ -812,6 +812,27 @@ pub trait ControlPlane: Send + Sync {
     async fn traces(&self, project: &str, since: Option<&str>) -> Result<TracesPage, OrchError>;
     // Write side, gated behind TACK_ORCH_ENABLE.
     async fn enqueue_task(&self, project: &str, task: NewRemoteTask) -> Result<String, OrchError>;
+    /// Trigger a full pipeline dispatch for `project` — `POST
+    /// /dispatch/{project}`. `vars` is sent as the request body verbatim (a
+    /// plain `{name: value}` JSON object) and becomes the pipeline's
+    /// resolved variable namespace on the plane's side; this trait has no
+    /// opinion on its shape beyond "an object", since that's the plane's
+    /// own pipeline definition to interpret.
+    ///
+    /// Success carries the plane's own run id as `Ok(String)` — a
+    /// different kind of id from what [`ControlPlane::enqueue_task`]
+    /// returns: a pipeline *run* ([`ControlPlane::get_run`]), not a pod
+    /// *task* ([`ControlPlane::list_tasks`]).
+    ///
+    /// **The id can come back before the dispatched work actually runs.**
+    /// docket's implementation creates the run record and responds
+    /// immediately; the pipeline itself executes afterwards, off the
+    /// request thread. A caller that needs to know whether the dispatch was
+    /// *accepted for execution* rather than merely *recorded* has to poll
+    /// [`ControlPlane::get_run`] or [`ControlPlane::traces`] with the
+    /// returned id — this method's `Err` only ever means the plane refused
+    /// to record the run at all (bad credentials, an unresolvable variable,
+    /// the plane unreachable), never that the run subsequently failed.
     async fn dispatch(&self, project: &str, vars: serde_json::Value) -> Result<String, OrchError>;
     /// Grant (`grant: true`) or deny (`grant: false`) a pending approval —
     /// `POST /approvals/{token}`. Success
