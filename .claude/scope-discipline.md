@@ -14,9 +14,10 @@ something that actually happened in this tree, and each one names it.
   in this tree ever asks a mid-run question. Correctly documented as a scope limit, but it
   was built before anything needed it.
 - **Parts I and II built an entire control plane** — a `ControlPlane` trait, a reconciler, a
-  health machine, 11 `orch_*` tables — against exactly one backend, then generalized it for
-  backends that never arrived. Part III replaced the whole model. Both now coexist in the
-  schema and the UI, and V-B2 exists to decide what to do about it.
+  health machine, 9 `orch_*`-prefixed tables plus `control_planes` (10 Docket-specific
+  tables total) — against exactly one backend, then generalized it for backends that never
+  arrived. Part III replaced the whole model. Both now coexist in the schema and the UI,
+  and V-B2 exists to decide what to do about it.
 - **234 Rust doc comments cite `TODO.md` section numbers.** That is what abstraction costs
   here after the fact: the docket surface cannot simply be deleted, because deleting it means
   updating 234 citations. Every mechanism you add is a mechanism someone later has to pay to

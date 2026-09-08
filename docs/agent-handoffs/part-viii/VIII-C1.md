@@ -286,3 +286,76 @@ longer learns something false about the schema; that is the entire effect.
 ## Amendments
 
 *(Appended by later readers, dated. The original text above is never rewritten.)*
+
+### 2026-09-08 — the "11 `orch_*` tables" count, in the same two files
+
+The coordinator flagged that the same root miscount survives in both files this card
+already corrected: "11 `orch_*` tables" in `.claude/scope-discipline.md` and
+"11 `orch_*` tables, a `control_planes` table" (reading as 12) in
+`docs/book/src/roadmap.md`. ADR 0060's own Measurement section names this explicitly as
+*the other half* of the same error — a naive `grep -c 'orch_'` over
+`crates/tack-db/src/migrations.rs` counts 11 only because it also matches the literal
+strings `orch_runs_new` and `orch_approvals_new` inside the migration source, the same
+two names this card already proved never exist as tables after a completed migration.
+
+**Re-measured, not copied from ADR 0060's prose.** Extended the same out-of-tree harness
+(`/tmp/claude-1000/-home-ox-Sites-objetivosMios/af5361b3-09d8-48cc-848e-51a01823b6db/scratchpad/orch-new-measure/src/main.rs`,
+same `Cargo.toml`, same path-dependency on this worktree's `tack-db`) to also filter the
+already-fetched `sqlite_master` table list for the `orch_` prefix and check for
+`control_planes` by name.
+
+**Command:**
+
+```
+export CARGO_TARGET_DIR=/tmp/tack-agent-targets/viii-c1
+cd /tmp/claude-1000/-home-ox-Sites-objetivosMios/af5361b3-09d8-48cc-848e-51a01823b6db/scratchpad/orch-new-measure
+cargo run --release
+```
+
+**Raw output (new lines only — `TOTAL_TABLES=48` and the full table list are identical to
+the first measurement above and are not repeated):**
+
+```
+ORCH_PREFIXED_COUNT=9
+orch_prefixed: orch_approvals
+orch_prefixed: orch_events
+orch_prefixed: orch_events_daily
+orch_prefixed: orch_links
+orch_prefixed: orch_metrics
+orch_prefixed: orch_metrics_daily
+orch_prefixed: orch_runs
+orch_prefixed: orch_tasks
+orch_prefixed: orch_trace_cursors
+HAS_control_planes=true
+DOCKET_SPECIFIC_TOTAL(orch_prefixed+control_planes)=10
+```
+
+**Result: 9 tables are literally `orch_`-prefixed; `control_planes` is a 10th
+Docket-specific table that does not carry the prefix.** This agrees with ADR 0060's stated
+enumeration (`control_planes`, `orch_links`, `orch_tasks`, `orch_runs`, `orch_events`,
+`orch_approvals`, `orch_metrics`, `orch_events_daily`, `orch_metrics_daily`,
+`orch_trace_cursors` — 10 Docket-specific, 9 of them `orch_*`) exactly, table for table. My
+measurement does not disagree with ADR 0060's number here — only with the two documents
+that had re-derived "11" from the naive grep instead of from this count. No further
+escalation needed.
+
+**Documents corrected (in addition to the two changes recorded above):**
+
+- `.claude/scope-discipline.md` — "11 `orch_*` tables" → "9 `orch_*`-prefixed tables plus
+  `control_planes` (10 Docket-specific tables total)", in the same "Parts I and II built an
+  entire control plane" bullet the first amendment did not touch.
+- `docs/book/src/roadmap.md` — "11 `orch_*` tables, a `control_planes` table" (which read
+  as 12 tables total) → "9 `orch_*`-prefixed tables plus a `control_planes` table (10
+  Docket-specific tables total)", in the same "Two execution models coexist" paragraph the
+  first amendment already touched.
+
+Both now state the count as "10 Docket-specific tables total" so a future reader cannot
+re-derive 11 or 12 from the sentence — the ambiguity the coordinator asked to close.
+
+**Left alone, per explicit instruction:** `TODO.md:3399` (own evidence row already citing
+the naive-grep command as its source) and `TODO.md:3797` (the V-B2 archive context this
+card's first pass already declined to edit) both still say "11". The coordinator confirmed
+they will handle `TODO.md` at integration; this amendment does not touch it.
+
+**Gate:** `.githooks/pre-push` re-run after both edits, green, zero code diff (fmt, clippy,
+check-comments, check-test-hygiene, generated-files freshness all passed).

@@ -3156,10 +3156,11 @@ build identity.
 ### Two execution models coexist in the schema and the UI
 
 Parts I and II built a complete control plane against exactly one backend (docket): a
-`ControlPlane` trait, a reconciler, an adapter, 11 `orch_*` tables, a `control_planes` table,
-an Approvals inbox and a ControlPlanesManager. Part III replaced that model with the native
-pull-based runner and kept docket as an optional legacy bridge. Both now sit side by side,
-and a reader cannot tell which "fleet" is current.
+`ControlPlane` trait, a reconciler, an adapter, 9 `orch_*`-prefixed tables plus a
+`control_planes` table (10 Docket-specific tables total), an Approvals inbox and a
+ControlPlanesManager. Part III replaced that model with the native pull-based runner and
+kept docket as an optional legacy bridge. Both now sit side by side, and a reader cannot
+tell which "fleet" is current.
 
 The cost of removing it is not trivial and the audit will not pretend otherwise: **234 Rust
 doc comments cite `TODO.md` section numbers** from those cycles, and the docket half of
