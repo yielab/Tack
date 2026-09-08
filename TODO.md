@@ -10,6 +10,7 @@
 
 | Part | Cycle | Phases | Status | Where |
 |---|---|---|---|---|
+| **VIII** | **Docket bridge hardening** | 62 | **ACTIVE — opened 2026-09-08.** Four gaps ADR 0060 left open: a `ControlPlane::dispatch` that returns `Disabled` unconditionally, the one-scheduling-owner guard enforced in only one direction, a compatibility label no route surfaces, and an `orch_*_new` schema claim that `.claude/scope-discipline.md` and ADR 0060 state oppositely. **ADR 0065 proposed 2026-09-08** — the pipeline-dispatch trigger's caller, its own fail-closed token, and its deliberate non-claim on any Tack item; only VIII-A2 waits on its acceptance. **Wave 24 dispatched 2026-09-08** (VIII-A1, VIII-B1, VIII-B2, VIII-C1 — four Sonnet agents, disjoint files) | [§VIII](#part-viii--docket-bridge-hardening-phase-62), top of this file |
 | **VII** | **Desktop app & background service** | 61 | **Done 2026-09-07** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. **VII-C2 integrated 2026-09-06** — the README now leads with the download and shows the app. Its correction to `crate-tour.md` exposed that the tray's agent-execution entry still says the route it reads does not exist, which is now **VII-B4** (Wave 22); **VII-B4 integrated 2026-09-06** — the tray now reads `GET /api/local-runner` and reports six typed states, so the app and the README screenshot beside it finally agree. **VII-D1 integrated 2026-09-07 — Wave 21 is done and so is this Part.** A stranger on this machine went from a downloaded AppImage to a finished attempt with artifacts using only a mouse, closed the window and reopened it from the tray to the same unbroken session, and got a real "1 agent attempt is running. Quit anyway?" from Quit — 50 screenshots and process checks around every lifecycle step. Two limits are stated, not hidden: the completed attempt used a fake harness shim, because neither bundled harness offers an in-app login and the Agents page only detects binaries on `PATH`; and the release page still carries no desktop bundle at all (the bundles exist only from the next tag's release run), so the walk used a local build. One product defect fell out and is carded as **VI-C36**: `POST /api/executions` can answer `internal_error` "Could not enqueue execution" with `retryable: true` for an item that no retry ever recovers — reproduced over plain `curl`. macOS and Windows rows are `not_measured`; no machine **Reopened and closed again 2026-09-07 for one card, VII-B5 (Wave 23):** the app now notices a server that dies or stops answering under it — VII-C3's recorded gap — unit-proven, with the live walk `not_measured` until the display is free; integrating it removed a per-tick event drain that would have stalled the server's own output | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
 | **VI** | **Agent Onboarding & Provider UX** | 60 | **Cards done 2026-09-07** — every card on this board has an accepted integration and a handoff; nothing is open. What is left is not card work: no harness offers in-app login, so the completed-attempt claim rests on a fake-harness shim, and the live tray/AppImage walks are recorded but not re-run. Original note follows. Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation. **VI-C20 integrated 2026-09-06** — the shared project is resolved once by name in a global setup step before any worker forks, so it no longer means "whichever project sorted first"; six of eight spec files depended on that stability without saying so, and one test wrote `default_model` straight onto it, which a stable identity would have turned from racy into permanently corrupting. Verifying it showed VI-C24 is **two** failing tests sharing one cause, not one. **VI-C24 integrated 2026-09-06 — the full chromium suite is green for the first time, 71/71.** The token was never at fault: the drawer's own mount animations ramped CSS `opacity` 0→1, and `opacity` composites the whole subtree, so every descendant rendered briefly below AA while axe was reading it. That is why three handoffs called it a flake — it was genuinely intermittent, because it depended on scan timing rather than any declared colour. Reverting the keyframes fails 8 of 15 repeats; restored, 15 of 15 pass. The alternative fix — making the test wait for animations to settle — was foreclosed by that card's own "do not touch the spec" rule and is worth knowing was never weighed. Its out-of-scope probe of another palette became **VI-C26**, **integrated 2026-09-06** — five of six token cells are scanned now, four were clean, and `graphite`/light is genuinely broken in a way no value change fixes: its `primary-600` is both text on light surfaces and the background under a deliberately dark `on-accent`, and the required ranges do not overlap (proven by trying the darkening and watching the other pairing drop to 2.92:1). The only shape that clears both flips `on-accent` to white, which changes what the palette *is* — escalated as a design decision, tracked with a disable scoped to that one scan so the other five stay real gates. **VI-D1 integrated 2026-09-06.** Both smoke steps proved able to fail by injected breakage, and a stranger reached a completed attempt in a clean `ubuntu:24.04` container typing only the command the container prints. **But it is not the end of this Part.** The run found two real defects, now **VI-C27** and **VI-C28**, and the first of them breaks this Part's own goal: a gateway key pasted while execution is already on never reaches the running runner, the Agents page reports success anyway, and the attempt sits at `preparing` silently — the exact failure this Part exists to rule out. The integrator's own review of VI-D1 also found its loopback guard compared the host by prefix, accepting `localhost.attacker.example` and handing it the stored credential; fixed at merge. Reviewing VI-C26 surfaced **VI-C29**: the comment gate has never scanned `frontend/e2e`, which exits 1 with 77 findings across its own categories. **VI-C27 integrated 2026-09-06 — worked by the integrator directly, at the user's request to audit it to its origin.** Two root causes, one per layer, and the symptom needed both: the control hands the runner its configuration **by value** and then mutates only its own copy (which is also what `catalog()` reads, so the page reported success from a view the runner never shared); and the engine dropped a typed pre-spawn rejection on the floor after announcing `preparing`, which is why the failure was silent and applied to every such rejection, not only this one. A change to a configured provider's credential is now a new runner lifetime — old task joined first, since no journal lock exists — and a `validate` refusal becomes a reported `failed` with `harness_rejected` through the existing outbox. Proven end to end against a fake gateway and a fake harness in the Agents page's own order with no Re-check; each half fails its own test when reverted (60.75 s at the snapshot wait; 0.01 s at the engine). The shared-handle alternative was weighed and rejected: it fights the runner's own fixed-per-lifetime model and would still need a capabilities-changed signal to keep the server's snapshot honest. The limitation VI-C21 documented is now **VI-C25**, and reading `engine.rs` to card it showed the handoff's "harmless" understates it: a `RecoveryPending` outcome keeps the workspace checkout on purpose, so a record naming an attempt the recreated database never had costs a retry every boot *and* holds its checkout indefinitely. **VI-C25 integrated 2026-09-06** — `stale_lease` is the one answer that settles the report, because the fencing token is fixed for the life of an attempt, so a miss on it will never match again; an absent reply or a transport failure keep their existing behaviour untouched. Retired means quarantined, not deleted: the record leaves the restart scan and the checkout stays as operator evidence, so the disk is not reclaimed automatically and that is the deliberate trade. **VI-C29 integrated 2026-09-06** — the comment gate scans `frontend/e2e` by default; 21 of the 22 "missing file" pointers were the gate's own bug (a citation wrapped across two lines left a `spec.ts` fragment that, as a search pattern, matched every real spec citation), one was genuinely stale and is repointed, and 69 comment lines across six specs were rewritten to keep what the test protects and drop the board pointer. The dead-pointer check now drops a candidate that is the tail of a real tracked filename, which also hides a stale name that happens to be a suffix of a live one — a known, smaller blind spot than the false-positive storm it replaces. **VI-C28 is integrated on `integrate/vi-c28` and held back from `develop`**: its real-browser spec passed for its agent only against a hand-started server, because the Playwright config never set `TACK_ALLOWED_ORIGINS` and the Vite proxy forwards the page's origin unchanged; with that env line added (from-scratch: 1 failed → 1 passed) the socket delivers events in the suite for the first time, and `execution-attempt-detail.spec.ts` then fails in 2 of 2 full runs and 1 of 2 three-spec runs. The cause is not the socket: `store.ts#loadAttempts` replaces ready data with `{status: 'loading'}` on every 4 s realtime tick, and the timeline only renders the attempt list under `status === 'ready'`, so the whole panel — decisions, the chosen option, the typed token — unmounts and remounts every tick; live events from the other worker make the click land on the gap. Carded as **VI-C31**. **VI-C31 and VI-C28 integrated 2026-09-06.** The store now writes nothing it already holds: `loadAttempts` keeps `ready` data rendered through a refresh and stores the result only when it differs, and `recordFor` hands back the same record while its parts are unchanged, because the timeline's `<For>` matches rows by reference and a fresh object for an unchanged row reads as remove-and-add. The card's other option, a `refreshing` flag on `ready`, was tried and does not hold here — flipping it needs a new object, and every reader of `attemptsFor()` re-runs on the reference, not the label. The agent had also projected `GET /executions/{id}`'s envelope down to the five summary fields inside the store; moved at merge to `executionsApi.get`, where the shape is decided, so the store compares like with like. Proof: choose an option and type a token in the Execution tab, wait past a poll tick, and the same Resolve node is still attached; red with `store.ts` reverted. Full chromium suite 77/77 for VI-C31 alone; with VI-C28 on top, the suite that failed 2 of 2 before it passes 3 of 3 (numbers below in the VI-C28 handoff amendment). With both in, the socket delivers events in the suite and the developer-port gap is **VI-C30**, still open. Reviewing `develop`'s last fourteen CI runs for a main merge found two misses of the embedded runner's own liveness backstops on CI (15 s to health, 30 s to active), green locally and on the next push — carded as **VI-C32** with a measured lead (the one sibling test that neuters D-Bus has never missed). **VI-C30 integrated 2026-09-07** — a loopback-bound board now trusts a loopback browser origin on the live socket, the same posture ADR 0059 gives the rest of the API on one machine; the two rejected shapes (a dev port in every install's defaults; a manual step in four docs) are weighed in its handoff. The integrator tightened it: the card judged the host by string prefix, which would have trusted `127.attacker.example`; it is parsed as an address now, bracketed IPv6 included, and the bind-address check shares the rule. **Two Dependabot majors landed the same day** (`toml` 1.1 + `validator` 0.21; nine GitHub Actions on their Node 24 majors). `sqlx` 0.9 stays out — its own `rust-version` is 1.94, the floor here is 1.89, and raising it is the user's call. Landing the actions bump exercised the two CI jobs that never run on a `develop` push and found both red on every pull request and every push to `main`, for reasons older than the bump: carded as **VI-C33** (tracing initialised twice under llvm-cov) and **VI-C34** (the embedded SPA answers unmatched `/api` routes with HTML 200 — a product defect as much as a gate one); and a local `cargo deny check` disagrees with CI's — **VI-C35**. **VI-C32 integrated 2026-09-07, and its card was wrong about what it was chasing:** read past the panic's line number, neither CI miss was a slow boot. One was `tack serve` exiting 1 in 3.3 s on `Address already in use` — the bind-then-drop port helper that `.config/nextest.toml` already isolated for the scheduler E2E was shared by the three embedded-runner binaries with no such isolation; the other was a bare `is_file()` on `session.json` taken the instant the server reported `active`, while the runner writes that file only after the enrolment reply — an ordering the sibling test already waited out. Both closed in the tests, no deadline touched, no product code changed; the D-Bus keychain probe the card suspected is real (a ≥30 s hang with a bus and no secret service) but explains neither miss and is left with its owner. **npm-major landed** (`@solidjs/router` 1.0 — functionally the 0.16 line, verified by diffing the tarballs — and `@types/node` 26); `typescript` 7 stays out because the OpenAPI generator's peer range is `^5.x`, and `jsdom` 30 because CI still pins Node 20 while it needs 22+ — both ignored in Dependabot with the reason written beside them. That Node 20 pin is worth a card of its own when the next frontend major needs it. **VI-C33 and VI-C34 integrated 2026-09-07** — the two jobs that only run on pull requests and `main` are green again on their card branches: tracing initialisation is `try_init` (the first call in a process installs the subscriber, a later one is a deliberate no-op, and all five crates clear their coverage floors: core 89.3 %, db 71.5 %, api 72.1 %, orch 94.8 %, runner 93.4 %); and each API surface now owns its own 404 as a fallback that travels with its `nest`, so the embedded SPA's catch-all never sees `/api` or `/api/runner/v1` — a mistyped path on the single binary answers `404 Not Found` instead of `index.html` with `200`, and deep links still get the page. Neither the CLI nor the frontend ever depended on the old 200: both parse every body as JSON. **VI-C35 integrated 2026-09-07** — CI's `cargo-deny` job ran `licenses bans` only while a developer's `cargo deny check` ran all four categories; now both run the unrestricted check and both are green. Nothing needed an exception: the three yanked crates took compatible bumps, and `proc-macro-error2` (unmaintained, "no safe upgrade") vanished because `validator_derive` 0.20.1 had already moved off it — which also silenced the future-incompat warning every build printed. The two MIT rejections VI-C35's card quoted did not reproduce on a clean checkout and are recorded as stale. `crates/tack-desktop` is the exception that stays: its advisories are deliberately outside the gate, because Tauri's GTK/WebKit bindings carry fifteen pre-existing "unmaintained" findings with no upstream fix — carded as **VI-C37**. **Three decisions the user took 2026-09-07 became cards**: VI-C38 (graphite's `on-accent` goes white), VI-C39 (the floor rises to Rust 1.94, the lowest the latest stable `sqlx` needs, and `sqlx` 0.9 lands) and VI-C40 (Node 22 LTS). **VI-C40 integrated 2026-09-07** — CI's eight `node-version` pins moved from 20 to 22 LTS (resolving to 22.23.2 today), `jsdom` 30 landed and its Dependabot ignore is gone; 851/851 unit tests on 22.23.2, and also on the machine's 22.17.1 despite `jsdom`'s declared `^22.22.2` floor — the Node 20 crash the ignore recorded was undici's, not a version gate. **VI-C38 integrated 2026-09-07** — graphite is dark olive (`#3f6a0c`) with a white `on-accent`, the pairing teal and clay already use, instead of bright lime with dark text; every text-role pairing that read at 1.97:1 now clears AA at 5.6–6.4:1, graphite/dark shares no token and was untouched, and the a11y spec has no suppressed rule left: all six palette × mode cells are unsuppressed gates (41/41, full chromium 78/78). Clay/light's latent `primary-600`-on-`bg-sidebar` pairing (4.38:1, rendered by nothing today) is the one known gap VI-C26 recorded and still stands. **VI-C39 integrated 2026-09-07** — the floor is Rust 1.94 (CI pins 1.94.1) because that is what the latest stable `sqlx` needs, and `sqlx` 0.9.0 is in; the only break was 0.9's `SqlSafeStr` requirement, so 38 dynamically built SQL strings across twelve files now carry `AssertSqlSafe` (each built from constant column lists or placeholder counts, never from a bound value), the migration runner is hand-rolled and WAL is an explicit pragma, so neither of 0.9's `Migrate`/driver breaks applied; `--locked` builds on 1.94.1 and refuses on 1.89.0 naming `sqlx`, 1463/1463, CI 10/10 with the MSRV job on the new pin. The lockfile also lost the RSA/MySQL tree 0.8 dragged in. **VI-C37 integrated 2026-09-07** — sixteen `unmaintained` advisories in the desktop workspace, not fifteen (VI-C35 missed `unic-ucd-version`), each closed by a dated `ignore` with its path: ten gtk-rs GTK3 bindings plus `proc-macro-error` because `wry`'s newest release still pins GTK3, and five `unic-*` crates because `tauri-utils` still pins `urlpattern` 0.3 (0.6 already dropped them). Every Tauri 2 crate is at its newest release, so no bump helps and the Tauri-major stop clause never fired. `scripts/gen-deny-toml.sh` writes one policy per workspace, and CI's desktop step and `make deny` run the same unrestricted check the root runs; removing one ignore makes the gate fire. VII-D1's AppImage walk was not re-run (no GUI while the user is at the machine), and nothing in the diff touches runtime code. **VI-C36 integrated 2026-09-07, stopped by its own clause**: the persistent per-item enqueue failure did not reproduce by any route — the real router with a finished and with an abandoned first attempt, a file-backed `tack serve` replayed at the transcript's six-second gap, and forty concurrent enqueues against one item, all 200 — and neither of the card's suspects exists (no one-live-request-per-item rule, no row a previous attempt leaves behind; a test now guards the repeat enqueue). What was wrong for certain: the handler discarded the underlying `sqlx::Error`, so nothing could name the condition; it is logged now (ids and the driver message only, never a bound value). No new error code was added for a condition nobody could confirm, and the Run-with-agent modal already shows the server's message verbatim. The suspect that remains is write contention under a live embedded runner's own traffic, which no tool here can drive; the next occurrence is diagnosable from the `enqueue_execution failed` line **Wave 18 dispatched and integrated 2026-09-07** — VI-C41 (harness discovery beyond the launcher's `PATH`), VI-C42 (a bound on the platform secret store's answer, with the reason logged and shown by `doctor`) and VI-C43 (the fleet-member routes get their UI caller): the three uncarded findings VII-D1, VI-C32 and VI-D1 left behind | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
 | **V** | **Adoption & First Public Release** | 59 | **Cards done 2026-09-06** — every card has an accepted integration and a handoff. What is left is publishing, which is a human action outside this repository: the list is in `docs/LAUNCH-CHECKLIST.md`, and its first item is tagging a release, since nothing since `v0.1.0-beta.7` is downloadable. Original note follows. Waves 11–12 done. **V-C2 and V-C3 both integrated 2026-09-06**; V-C3 published nothing, by design, and its walk of the stranger's path found that `install.sh` had installed nothing since `v0.1.0-beta.7` (fixed in the same change). **V-C4** carries the two CI checks that stayed green through it. The publish list — posts, issues, Discussions, GitHub description — is the user's to run, and is in `docs/LAUNCH-CHECKLIST.md` | [§V](#part-v--adoption--first-public-release-phase-59) |
@@ -18,7 +19,7 @@
 | II | Agnostic Control Plane | 39–49 | Superseded after Wave B by Part III | [§II](#part-ii--agnostic-control-plane-phases-3949), archive |
 | I | Agent-Factory Control Center | 33–38 | Complete 2026-08-05 | [§I](#part-i--agent-factory-control-center-phases-3338), archive |
 
-**No Part has an open card.** Part V is distribution and launch — everything between
+**Part VIII is the only Part with open cards.** Parts I–VII are closed. Part V is distribution and launch — everything between
 "it works here" and "a stranger can use it". Part VI is the agent onboarding and provider
 flow — everything between "a stranger installed it" and "a stranger ran an item with the
 model they chose, without opening this file". Part IV is done. They share `README.md` and
@@ -61,6 +62,282 @@ therefore **reordered below the active boards, not extracted**. Its numbering na
 - No card edits a status board. The wave integrator does that, after independent
   verification by someone who did not author the code.
 - Never `git commit` without the user asking; never add AI attribution to a commit message.
+
+---
+
+# Part VIII — Docket bridge hardening (Phase 62)
+
+**Status: ACTIVE — opened 2026-09-08 from a CTO/CEO review of the docket ⇄ Tack
+integration. ADR 0065 is proposed, not accepted; only VIII-A2 waits on it.** ADR 0060
+decided the Docket bridge is maintained, optional and never the owner of a runner-v1
+request. It left four things unfinished, and this Part finishes them: a trait method with
+no caller, a guard enforced in one direction only, a compatibility decision no operator can
+see, and a documented claim about the schema that two documents disagree about.
+
+This Part adds **no new capability to the bridge's shape**. It closes gaps ADR 0060 named
+and one it created. A card that finds itself designing a new Docket surface has left the
+Part — say so in the handoff and stop.
+
+Dispatch plan: **`docs/agent-handoffs/part-viii/README.md`** — read its header and your
+card's block only.
+
+| Wave | Cards | Phase | Status |
+|---|---|---|---|
+| 24 — Close the four gaps | VIII-A1 · VIII-B1 · VIII-B2 · VIII-C1 | 62 | **Dispatched 2026-09-08** from the `develop` tip the prompts pin. Four independent cards, disjoint files, Sonnet agents in worktrees |
+| 25 — The caller | VIII-A2 | 62 | **Blocked on ADR 0065 acceptance**, and on VIII-A1 and VIII-B2 merging. Do not dispatch before all three |
+| 26 — Proof | VIII-C2 | 62 | **Last.** Re-verifies the adapter live against a real `docket serve` built from `../rack-cli` at `v0.2.0-beta.2`, including whatever A1 and A2 landed. Not dispatchable until Wave 25 is integrated |
+
+## §VIII.0 Cold-start context capsule
+
+**What this Part is for, in one sentence.** The Docket bridge is maintained by decision;
+this Part makes the code, the guard and the documentation say the same thing the decision
+does.
+
+**The decisions of record are ADR 0060** (`docs/adr/0060-docket-control-plane-disposition.md`,
+accepted 2026-08-31 — the bridge is maintained, optional, never the owner of a runner-v1
+request) **and ADR 0065** (`docs/adr/0065-docket-pipeline-dispatch-trigger.md`, **proposed**
+2026-09-08 — the pipeline-dispatch trigger's caller, token and non-claim on an item). Read
+0065's decision table, not a paraphrase. No card re-decides one; a card that finds a
+decision impossible stops and says so in its handoff.
+
+### Evidence base, measured 2026-09-08
+
+| Fact | Value | How it was checked |
+|---|---|---|
+| `ControlPlane::dispatch` | returns `OrchError::Disabled` unconditionally; the recorded reason is "no consumer in Tack yet", not a missing docket route | read `crates/tack-orch/src/adapters/docket.rs` module doc |
+| docket's own route | `POST /dispatch/{project}`, bearer-authenticated, alongside `/tasks/{project}`, `/approvals/{token}`, `/pods` | read `../rack-cli/src/docket/serve.py` `do_POST` |
+| docket's read routes | `/status.json`, `/metrics`, `/health` unauthenticated; `/runs`, `/runs/{id}`, `/approvals`, `/tasks/{project}`, `/traces/{project}` bearer | same file, `do_GET` |
+| docket knows Tack by name | `APPROVAL_CHANNELS` includes `"tack"` beside `cli`/`http`/`mcp`/`telegram`/`timeout` | `../rack-cli/src/docket/core/approval.py:65` |
+| The legacy→runner-v1 guard **is** enforced | `dispatcher.rs:329` calls `has_active_execution_request_for_item` and returns a `Conflict` | read |
+| The mirror guard is **not** | `handlers/executions.rs` (`POST /api/executions`) does not consult `orch_tasks`; `legacy_bridge.rs`'s module doc says so in bold and a test documents it | read `crates/tack-orch/src/adapters/legacy_bridge.rs`, "One scheduling owner" |
+| The compatibility label | `LEGACY_DOCKET_COMPATIBILITY_LABEL = "legacy-docket:maintained-bridge-v1"`, plus a prose `..._POLICY`; **no route surfaces either** | `grep -rn LEGACY_DOCKET_COMPATIBILITY` — hits only `legacy_bridge.rs` |
+| `orch_runs_new` / `orch_approvals_new` | `.claude/scope-discipline.md` calls them leftovers still in the schema; **ADR 0060 measured the opposite** — transient staging names inside the 037/038 rebuild, `ALTER TABLE orch_runs_new RENAME TO orch_runs`. Two documents disagree; VIII-C1 measures | `grep -n 'orch_runs_new' crates/tack-db/src/migrations.rs` |
+| docket on this machine | `~/.local/bin/docket`, version `0.2.0b1` — **older than the repo's `v0.2.0-beta.2`**. VIII-C2 builds from `../rack-cli`, it does not use this one | `docket --version` |
+| Docket state dir in use | `~/.docket` holds real approvals and an audit log, and a worktree of *this* repo | `ls ~/.docket` |
+
+### Vocabulary
+
+*The bridge* is the legacy Docket control plane. *runner-v1* is the native execution
+domain. *A pipeline dispatch* is docket's project-level `POST /dispatch/{project}` — it is
+never called "running an item", because it claims no item (ADR 0065 decision 5).
+
+---
+
+## §VIII.1 Rules for simultaneous agents
+
+**All of §III.2, §V.1, §VI.1 and §VII.1 apply unchanged.** Six rules are specific to this Part:
+
+1. **This Part closes gaps; it does not design surfaces.** Every card's Acceptance is
+   satisfiable by reading ADR 0060, ADR 0065 and the code. A card that needs a new decision
+   stops and writes the question in its handoff — it does not decide.
+2. **docket's source is the contract, not Tack's types.** When a card needs to know what
+   docket sends or accepts, the answer comes from reading `../rack-cli/src/docket/`, never
+   from a Tack DTO, a fixture, or this board's prose. `../rack-cli` is a **separate
+   repository — read it, never write to it**, and never commit anything from it into this tree.
+3. **Never touch `~/.docket`.** It holds the user's real approvals and audit log. Any card
+   that runs docket sets an isolated `DOCKET_HOME` to a temporary directory it owns, and
+   says in its handoff which one.
+4. **`cargo` writes outside `/home`.** That partition is 94% full (41G free) and this tree's
+   `target/` is already 87G. Every card exports `CARGO_TARGET_DIR` to the path its dispatch
+   prompt pins, on `/`. A card that fills the disk fails the whole wave, not just itself.
+5. **Generated files are regenerated once, by the integrator.** VIII-B2 changes an API
+   response shape. It regenerates `docs/openapi.json` and `schema.gen.ts` with the documented
+   commands so its own branch is coherent, and the integrator regenerates once at the end.
+   Neither is ever hand-edited or hand-merged.
+6. **No removal without a decision record.** Scope-discipline rule 6 is live in this Part
+   because VIII-C1 looks like a deletion card and is not. Finding dead code is a handoff
+   note; deleting it needs its own card and its own decision.
+
+---
+
+## §VIII.2 Shared-file ownership
+
+| Chokepoint | Owner |
+|---|---|
+| `crates/tack-orch/src/adapters/docket.rs` (the `dispatch` method and the "Write methods" paragraph of its module doc), the `dispatch` trait doc in `crates/tack-orch/src/lib.rs`, new cases in `crates/tack-orch/tests/docket_adapter_test.rs` and `docket_wire_contract_test.rs` | VIII-A1 |
+| `crates/tack-api/src/handlers/executions.rs`, one read-only query in `crates/tack-db/src/repo/orch.rs`, `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`, and the "One scheduling owner" paragraph of `crates/tack-orch/src/adapters/legacy_bridge.rs` | VIII-B1 |
+| One response shape in `crates/tack-api/src/handlers/orch.rs`, its frontend renderer under `frontend/src/features/settings/orchestration/`, `docs/openapi.json` + `frontend/src/shared/api/schema.gen.ts` (regenerated, never hand-edited) | VIII-B2 |
+| `.claude/scope-discipline.md` (the `orch_*_new` bullet only) and any other document its own grep finds repeating that claim | VIII-C1 |
+| `crates/tack-api/src/handlers/orch.rs` (one new route), `crates/tack-api/src/config.rs` (`TACK_ORCH_DISPATCH_TOKEN`), the `tack orch dispatch` arm in `crates/tack-cli/`, `docs/CONFIG.md`, `docs/API-REFERENCE.md` | VIII-A2 — **after A1, B2 and ADR 0065 acceptance** |
+| The "Verified live against a real docket server" section of `crates/tack-orch/src/adapters/docket.rs`, `docs/agent-handoffs/part-viii/VIII-C2.md` | VIII-C2 — **last** |
+| `TODO.md`, `docs/book/src/roadmap.md` statuses, ADR status lines | wave integrator only |
+
+---
+
+## §VIII.3 Dependency graph and merge policy
+
+```text
+ADR 0060 (accepted) ─┬─ VIII-A1 (adapter dispatch) ────────┐
+                     ├─ VIII-B1 (mirror guard) ─────────┐  │
+                     ├─ VIII-B2 (compatibility label) ──┼──┴─ VIII-A2 (route + token + CLI) ── VIII-C2 (live proof)
+                     └─ VIII-C1 (measure orch_*_new) ───┘
+ADR 0065 (proposed) ──────────────────────────────────────── required before VIII-A2 only
+```
+
+**Wave 24's four cards are independent and own disjoint files.** A1 is `tack-orch/adapters/
+docket.rs`; B1 is `tack-api/handlers/executions.rs` plus `legacy_bridge.rs`; B2 is
+`tack-api/handlers/orch.rs` plus the frontend; C1 is documentation. The only crate two cards
+share is `tack-orch`, and A1 and B1 touch different files in it.
+
+**A2 waits for three things**, not one: ADR 0065 accepted, A1's method to call, and B2's
+`handlers/orch.rs` edit to merge before it adds a route to the same file.
+
+### Cross-Part conflicts
+
+None. Parts IV–VII are closed and no card here writes `README.md`, `docs/screenshots/**`
+or any file those Parts' §.3 sections reserve. A card that finds a collision anyway states
+it in the handoff and stops.
+
+---
+
+## §VIII.4 Cards
+
+### VIII-A1 — `DocketAdapter::dispatch`, implemented
+
+Wave 24, parallel. **Does not need ADR 0065 accepted** — decision 1 only restates what
+docket's route already is, and this card adds no caller.
+
+**Owns:** the `dispatch` method in `crates/tack-orch/src/adapters/docket.rs` and the
+"Write methods" paragraph of its module doc; the `dispatch` trait doc in
+`crates/tack-orch/src/lib.rs`; new cases in `crates/tack-orch/tests/docket_adapter_test.rs`
+and `docket_wire_contract_test.rs`; the VIII-A1 handoff.
+
+**Acceptance**
+
+1. `dispatch(project, vars)` POSTs to `/dispatch/{project}` with the bearer token.
+   **Read `../rack-cli/src/docket/serve.py`'s `do_POST` for the exact body shape and
+   response before writing a line of it** — docket's source is the contract (§VIII.1 rule 2).
+   State in the handoff what you read and what it said.
+2. It returns docket's run id as `Ok(String)`, matching what `enqueue_task` does with a task id.
+3. A `pre_input` policy block maps to `OrchError::PolicyBlocked` by **reusing**
+   `parse_policy_block` — do not write a second parser. If docket's dispatch route reports
+   blocks differently from its task route, that is a finding: say so and map it honestly.
+4. 401 → `Auth`, 404 → `NotFound`, other non-2xx → `Http`. No new error variant.
+5. A wiremock case in `docket_wire_contract_test.rs` pins the request Tack sends — method,
+   path, headers, body — and the response it decodes, and the file's oracle table gains its row.
+6. The module doc no longer says `dispatch` returns `Disabled`. It says what the method does,
+   in the present tense, with no account of what it used to do.
+7. **Reverting the method body fails exactly the new test**, and the handoff records that run.
+
+**Must not:** touch `legacy_bridge.rs`, any `tack-api` or `tack-cli` file, `docs/openapi.json`
+or `schema.gen.ts`. The route and the CLI are VIII-A2's, and adding them here is the
+scope-widening §VIII.1 rule 1 forbids.
+
+### VIII-B1 — the mirror guard, enforced
+
+Wave 24, parallel.
+
+**Owns:** `crates/tack-api/src/handlers/executions.rs`; one read-only query in
+`crates/tack-db/src/repo/orch.rs`; `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`;
+the "One scheduling owner" paragraph of `crates/tack-orch/src/adapters/legacy_bridge.rs`;
+the VIII-B1 handoff.
+
+**Acceptance**
+
+1. `POST /api/executions` refuses to create a request for an item an active Docket
+   `orch_tasks` row already owns, with a conflict whose message names the collision —
+   mirroring the shape `dispatcher.rs:332` already returns in the other direction.
+2. **"Active" is defined once, in the query, and its doc comment says which
+   `orch_tasks.status` values count and why.** Derive that list by reading the statuses the
+   reconciler actually writes, not by guessing from names.
+3. **The guard consults `orch_tasks` only when orchestration is enabled.** With
+   `TACK_ORCH_ENABLE` off, a stale row from a previously-enabled bridge must never block
+   runner-v1 — that would invert "runner-v1 is the plan of record". A test pins both states.
+4. `dual_scheduling.rs` stops documenting the asymmetry and proves the guard in **both**
+   directions. Prove the absence directly (no `execution_requests` row written), not by
+   status code alone.
+5. **Reverting the guard fails exactly that test**, and the handoff records the run.
+6. `legacy_bridge.rs`'s "**The mirror guard is not implemented**" sentence is replaced by
+   what is now true. Change nothing else in that module doc.
+
+**Escalate, do not decide:** if adding a conflict response to `POST /api/executions`
+requires a new documented status code or error code in `docs/openapi.json`, **stop** — that
+is a response-shape change this card does not own. Write the question in the handoff.
+
+**Must not:** touch `adapters/docket.rs`, `dispatcher.rs`'s existing guard, or any file
+VIII-B2 owns.
+
+### VIII-B2 — the compatibility decision reaches an operator
+
+Wave 24, parallel.
+
+**Owns:** one response shape in `crates/tack-api/src/handlers/orch.rs`; its renderer under
+`frontend/src/features/settings/orchestration/`; the regenerated `docs/openapi.json` and
+`frontend/src/shared/api/schema.gen.ts`; one new case under `crates/tack-api/tests/orchestration/`;
+the VIII-B2 handoff.
+
+**Acceptance**
+
+1. One existing orch response carries `LEGACY_DOCKET_COMPATIBILITY_LABEL`, **imported from
+   `tack_orch::adapters::legacy_bridge` and never re-typed as a literal**. A test asserts the
+   response value equals the constant, so the wire cannot silently diverge from the decision.
+2. Which response, decided by reading `handlers/orch.rs`. Name the one you chose and the one
+   you rejected in the handoff, with the reason.
+3. Decide where `LEGACY_DOCKET_COMPATIBILITY_POLICY` (the prose) belongs — rendered beside
+   the label in the UI, or carried in the JSON. Either is acceptable; **say which and why**.
+4. The frontend renders the label from the API, never from a hardcoded string. A unit test
+   with a mocked response pins that, and colours come from `--color-*` tokens only.
+5. Regenerate both generated files with the documented commands (`UPDATE_OPENAPI=1 cargo
+   nextest run --workspace -E 'binary(openapi_contract)'`, then `cd frontend && npm run
+   gen:api`, or `./scripts/regen-generated.sh`). Never hand-edit or hand-merge either.
+
+**Must not:** add a route (that is A2's), or change any behaviour the label describes. This
+card surfaces a decision; it does not alter one.
+
+### VIII-C1 — measure the `orch_*_new` claim, then correct what repeats it
+
+Wave 24, parallel. **Documentation only.**
+
+**Owns:** the `orch_runs_new`/`orch_approvals_new` bullet in `.claude/scope-discipline.md`,
+any other in-tree document its own grep finds repeating that claim, and the VIII-C1 handoff.
+
+**Acceptance**
+
+1. Run the measurement ADR 0060 documents — migrate a fresh in-memory database and read
+   `sqlite_master`. **Record the exact command and its output in the handoff.** A load-bearing
+   number carries the command that produces it.
+2. Read the 037/038 rebuild in `crates/tack-db/src/migrations.rs` and state *why* the answer
+   is what it is — not just that it is.
+3. Correct every document the grep finds. **If the claim turns out to be true, correct
+   nothing and say so.** This card is the measurement; the edit is whatever the measurement
+   licenses.
+4. **Delete no table, migration or code.** If the measurement shows a real leftover, that is
+   a finding for a new card — §VIII.1 rule 6.
+5. The handoff carries the command, its output, and the list of documents changed.
+
+**Why this card exists:** `.claude/scope-discipline.md` and ADR 0060 state opposite things
+about the same two names, and the scope-discipline bullet is cited as evidence for how much
+the bridge costs. One of the two is wrong and has been quoted since.
+
+---
+
+## §VIII.5 Definition of done, and deliberate exclusions
+
+**Done** is `.githooks/pre-push` green on the integration branch, every card's handoff
+written, and the wave's generated files regenerated once by the integrator. A green test
+suite is not a finished change: `cargo fmt` for the workspace *and* `crates/tack-desktop`
+separately, `check-comments.sh`, and `check-test-hygiene.sh` are part of the gate, and
+formatting is invisible until a push is attempted.
+
+**Deliberately not in this Part**
+
+- **A UI for pipeline dispatch.** ADR 0065 decision 8 makes the CLI the caller. A settings
+  panel is a separate decision.
+- **Attaching a Docket pipeline run to a Tack item.** ADR 0065 decision 5 is a boundary, not
+  a first step; crossing it re-opens the ADR.
+- **Deleting anything from the bridge.** ADR 0060 decided maintain. This Part does not
+  re-litigate it, and VIII-C1 explicitly may not act on what it finds.
+- **`github_actions.rs`.** The compile-only second adapter stays exactly as it is. Removing
+  it needs its own decision record.
+
+## §VIII.6 Handoff additions for this Part
+
+Every handoff in `docs/agent-handoffs/part-viii/` adds, beyond the standard sections:
+
+1. **What you read in `../rack-cli`**, if anything — file, what it said, and what you
+   changed because of it.
+2. **The revert proof**, where the card asks for one: the command, and the test that went red.
+3. **The question you did not answer**, if §VIII.1 rule 1 stopped you.
 
 ---
 
