@@ -84,7 +84,7 @@ card's block only.
 | Wave | Cards | Phase | Status |
 |---|---|---|---|
 | 24 — Close the four gaps | VIII-A1 · VIII-B1 · VIII-B2 · VIII-C1 | 62 | **Integrated 2026-09-08** on `integrate/viii-wave-24`. Four branches, **zero file overlap**, no conflicts. Gate green: `pre-push` clean, 1485 Rust tests (7 skipped), 857 frontend tests, type-check clean, no generated-file drift. **A1's finding is the wave's real result and it changed the ADR:** docket's dispatch route creates the run record and answers *before* the pipeline runs, on a daemon thread, so a `pre_input` block is never an HTTP error there the way it is on `enqueue_task` — a run id says a run started, never that it was permitted, and the reconciler `/runs` poll is the only place the verdict ever becomes visible. **C1 settled a claim two documents disagreed about:** neither staging table exists in a migrated database (48 tables), and the sibling "11 `orch_*` tables" was the same naive grep counting the staging names — the real figure is 9 plus `control_planes`. The integrator corrected both archive copies and replaced the wrong command beside one of them. **B1 was returned once** for reimplementing the orchestration-enabled resolver with a hardcoded `'orch_config'` where the original binds `ORCH_KEY` — it failed *open*, silently, which is the failure the card exists to prevent; now one resolver, injected as a callback because `executions.rs` must keep compiling standalone under `#[path]`. **C1 was returned once** for leaving the sibling miscount standing. One finding routed to VIII-B3 | 
-| 25 — The caller | VIII-A2 · VIII-B3 | 62 | **VIII-A2 is blocked on ADR 0065 acceptance**, and on VIII-A1 and VIII-B2 merging (both now merged). **VIII-B3 is not blocked and is dispatchable now** — the two own disjoint files and may run in parallel |
+| 25 — The caller | VIII-A2 · VIII-B3 | 62 | **Dispatched 2026-09-08** off the Wave 24 integration SHA. ADR 0065 accepted 2026-09-08, and VIII-A1 and VIII-B2 are merged, so A2's three preconditions all hold. The two cards own disjoint files and run in parallel |
 | 26 — Proof | VIII-C2 | 62 | **Last.** Re-verifies the adapter live against a real `docket serve` built from `../rack-cli` at `v0.2.0-beta.2`, including whatever A1 and A2 landed. Not dispatchable until Wave 25 is integrated |
 
 ## §VIII.0 Cold-start context capsule
@@ -95,7 +95,7 @@ does.
 
 **The decisions of record are ADR 0060** (`docs/adr/0060-docket-control-plane-disposition.md`,
 accepted 2026-08-31 — the bridge is maintained, optional, never the owner of a runner-v1
-request) **and ADR 0065** (`docs/adr/0065-docket-pipeline-dispatch-trigger.md`, **proposed**
+request) **and ADR 0065** (`docs/adr/0065-docket-pipeline-dispatch-trigger.md`, **accepted**
 2026-09-08 — the pipeline-dispatch trigger's caller, token and non-claim on an item). Read
 0065's decision table, not a paraphrase. No card re-decides one; a card that finds a
 decision impossible stops and says so in its handoff.
@@ -172,7 +172,7 @@ ADR 0060 (accepted) ─┬─ VIII-A1 (adapter dispatch) ───────�
                      ├─ VIII-B1 (mirror guard) ─────────┐  │
                      ├─ VIII-B2 (compatibility label) ──┼──┴─ VIII-A2 (route + token + CLI) ── VIII-C2 (live proof)
                      └─ VIII-C1 (measure orch_*_new) ───┘
-ADR 0065 (proposed) ──────────────────────────────────────── required before VIII-A2 only
+ADR 0065 (accepted) ──────────────────────────────────────── required before VIII-A2 only
 ```
 
 **Wave 24's four cards are independent and own disjoint files.** A1 is `tack-orch/adapters/
@@ -309,6 +309,53 @@ any other in-tree document its own grep finds repeating that claim, and the VIII
 **Why this card exists:** `.claude/scope-discipline.md` and ADR 0060 state opposite things
 about the same two names, and the scope-discipline bullet is cited as evidence for how much
 the bridge costs. One of the two is wrong and has been quoted since.
+
+### VIII-A2 — the trigger gets a caller: route, token, CLI
+
+Wave 25, parallel with VIII-B3. **Binding decision record: ADR 0065, accepted 2026-09-08 —
+read its decision table and its "A block is not synchronously observable on this route"
+section, not a paraphrase.** Needs VIII-A1's method and VIII-B2's `handlers/orch.rs` edit,
+both merged.
+
+**Owns:** one new route in `crates/tack-api/src/handlers/orch.rs` and its registration in
+`crates/tack-api/src/router.rs`; `TACK_ORCH_DISPATCH_TOKEN` in `crates/tack-api/src/config.rs`;
+a new `orch dispatch` command in `crates/tack-cli/`; `docs/CONFIG.md`; `docs/API-REFERENCE.md`;
+the regenerated `docs/openapi.json` and `frontend/src/shared/api/schema.gen.ts`;
+one new case under `crates/tack-api/tests/orchestration/`; the VIII-A2 handoff.
+
+**Acceptance**
+
+1. `POST /api/projects/{id}/orch-dispatch` calls `ControlPlane::dispatch` with the docket
+   project resolved from that project's **existing** `orch_links` row (decision 2). No second
+   way to name a docket project is invented; a project with no link is a `404`, never a guess.
+2. It requires **`TACK_ORCH_DISPATCH_TOKEN`**, checked inside the handler on top of
+   `require_token`, and **fail-closed when unset** — mirror `require_approval_token`
+   (`handlers/orch.rs`, ~line 2688) including its "unset means nothing on this server is
+   dispatchable" reasoning. A test proves a server with the variable unset refuses.
+3. It sits inside `orch_routes`, so with `TACK_ORCH_ENABLE` off the route is not reachable at
+   all (decision 4). No new gate shape is invented.
+4. **It writes nothing about a Tack item** (decision 5): no `orch_tasks` row, no
+   `execution_requests` row, no item id in the request body, and `decide_scheduling_owner` is
+   not consulted. **Assert the absence directly** — row counts unchanged, not a status code alone.
+5. The `variables` body is passed through as opaque JSON and **never logged** (decision 6). A
+   test asserts the redaction, the way this tree's existing redaction tests do.
+6. **The response says a run started, never that it was permitted.** ADR 0065's
+   "not synchronously observable" section binds the wording of the response, the handler doc
+   comment, the CLI output and `docs/API-REFERENCE.md`. Each points the reader at the
+   reconciler `/runs` poll as the only place the verdict appears (decision 7).
+7. `tack orch dispatch <project>` is the in-tree caller (decision 8) — HTTP-only like every
+   other CLI command, never opening the database. It reads its token from the environment and
+   says plainly when it is unset.
+8. `docs/CONFIG.md` gains `TACK_ORCH_DISPATCH_TOKEN` in the orchestration table, stating
+   fail-closed-when-unset; `docs/API-REFERENCE.md` gains the route.
+9. Generated files are **regenerated with the documented commands**, never hand-edited.
+10. **Reverting the token check fails exactly the test from acceptance 2**, and the handoff
+    records that run.
+
+**Must not:** build a UI, attach the run to a Tack item, touch `decide_scheduling_owner`, add
+retry/schedule/cancel (`capabilities.cancel` is `false` and the route must not imply
+otherwise), add a second ingestion path for the run, or change
+`crates/tack-orch/src/adapters/docket.rs` — VIII-A1 settled that file.
 
 ### VIII-B3 — prove the replay case, and name the collision
 

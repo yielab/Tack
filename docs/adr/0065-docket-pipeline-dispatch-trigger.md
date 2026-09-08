@@ -38,7 +38,7 @@ of these calls; nothing above depends on anything below it.
 
 ---
 
-- **Status:** proposed 2026-09-08.
+- **Status:** accepted 2026-09-08.
 - **Date:** 2026-09-08
 - **Relationship to earlier ADRs:** does not supersede anything. **Extends ADR 0060**
   ("the Docket control plane stays a maintained, optional legacy bridge") by closing one of
