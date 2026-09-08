@@ -53,6 +53,13 @@ of these calls; nothing above depends on anything below it.
 
 Every claim below was read from the tree on 2026-09-08, not assumed.
 
+**Corrected 2026-09-08, after acceptance.** The disabled-route row originally read "Orch routes 404",
+sourced to `docs/CONFIG.md` rather than to the code. It is a `409` with a stable `orchestration_disabled`
+code, which eight test sites already asserted while three documents repeated the `404`. No decision in the
+table above depends on which code it is — decision 4 only requires that the route stay behind the same
+gate as its siblings, which it does. The row is corrected in place because a false fact left standing in a
+measured table is what gets quoted next.
+
 | Fact | Where |
 |---|---|
 | `ControlPlane::dispatch` returns `OrchError::Disabled` unconditionally | `crates/tack-orch/src/adapters/docket.rs`, module doc "Write methods" |
@@ -61,7 +68,7 @@ Every claim below was read from the tree on 2026-09-08, not assumed.
 | `enqueue_task`, `decide_approval` and `provision_pod` on the same adapter **are** implemented | `adapters/docket.rs` |
 | A `pre_input` policy block arrives as HTTP 400 and maps to `OrchError::PolicyBlocked` | `adapters/docket.rs`, `parse_policy_block` |
 | Two privileged actions already carry their own fail-closed token | `TACK_ORCH_APPROVAL_TOKEN`, `TACK_EXECUTION_DECISION_TOKEN` in `docs/CONFIG.md` |
-| Orch routes 404 with `TACK_ORCH_ENABLE` unset; no reconciler spawns | `docs/CONFIG.md` line 35 |
+| Orch routes answer `409 orchestration_disabled` with `TACK_ORCH_ENABLE` unset; no reconciler spawns | `require_orch_enabled` in `crates/tack-api/src/handlers/orch.rs`, and the eight test sites asserting that code — `grep -rn orchestration_disabled crates/tack-api/tests/` |
 | The route answers **before** the pipeline runs — it creates the run record, hands back `{"ok", "run", "project", "status"}`, and starts the work on a daemon thread | `../rack-cli/src/docket/serve.py`, the `/dispatch/` branch |
 | The run id arrives under `run`, not `task` — docket's own split between a pod *task* and a pipeline *run* | same |
 | The request body is a plain `{name: value}` object, bound to the pipeline's declared `variables`; an absent body means `{}` | same |
