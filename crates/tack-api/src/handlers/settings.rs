@@ -263,10 +263,19 @@ async fn save_orch(pool: &sqlx::SqlitePool, settings: &OrchSettings) -> Result<(
 /// read, same cost class as the existing Bearer-token check, so the gate
 /// stays correct even if a toggle happened without a restart.
 pub async fn effective_orch_enabled(state: &AppState) -> bool {
-    load_orch(state.pool())
-        .await
-        .enabled
-        .unwrap_or(state.config.orch_enable)
+    effective_orch_enabled_for(state.pool(), state.config.orch_enable).await
+}
+
+/// Same result as [`effective_orch_enabled`], for a caller that has a pool and
+/// its own env-default but not a full [`AppState`] — `router.rs` closes over
+/// `AppState::config.orch_enable` and wires this function into
+/// `handlers::executions::OperatorExecutionState::orchestration_enabled`, the
+/// callback `create_execution`'s dual-scheduling guard resolves against per
+/// request. Both `effective_orch_enabled` and this function read the one
+/// `app_meta` row through [`load_orch`]; there is no second parser of that
+/// JSON anywhere.
+pub(crate) async fn effective_orch_enabled_for(pool: &sqlx::SqlitePool, env_default: bool) -> bool {
+    load_orch(pool).await.enabled.unwrap_or(env_default)
 }
 
 /// Full effective view shared by `GET` and `PUT` — both return exactly the

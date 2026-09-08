@@ -1950,15 +1950,15 @@ impl Repository {
 //    the neutral runner-v1 domain) and `orch_tasks` (migration 021, this file, the
 //    legacy Docket bridge) are two fully independent write paths that can both target
 //    the same `item_id` with no coordination whatsoever. [`Repository::
-//    has_active_execution_request_for_item`] is a **read-only** query against the
-//    neutral domain's table so `tack-api::dispatcher::dispatch_item` can enforce "one
-//    scheduling owner": if the item already has a live runner-v1 request, legacy Docket
-//    dispatch defers rather than racing it. This is the only direction this file's
-//    ownership (`existing orch_*, Docket adapter/reconciler`) can enforce — the mirror
-//    guard on the `execution_requests` creation path belongs to `handlers/executions.rs`,
-//    and is a request rather than added here. No schema
-//    changes; this reads a table `execution_requests` already exposes with no
-//    modification to `migrations.rs`.
+//    has_active_execution_request_for_item`] and [`Repository::
+//    has_active_docket_task_for_item`] are the two **read-only** queries, one against
+//    each plane's own table, that make "one scheduling owner" enforceable in both
+//    directions: `tack-api::dispatcher::dispatch_item` calls the first so a live
+//    runner-v1 request makes legacy Docket dispatch defer, and `tack-api::handlers::
+//    executions::create_execution` calls the second so a live legacy Docket task
+//    makes a new runner-v1 request defer. Neither write path touches the other
+//    plane's table directly. No schema changes; both read tables `migrations.rs`
+//    already creates.
 //
 // 2. **Stale rows.** Nothing has ever updated `orch_tasks.remote_status` /
 //    `orch_approvals.state` after the initial dispatch/poll except a fresh poll of a
@@ -1997,6 +1997,40 @@ impl Repository {
                 SELECT 1 FROM execution_requests
                 WHERE item_id = ?
                   AND state NOT IN ('succeeded', 'failed', 'cancelled')
+             )",
+        )
+        .bind(item_id.to_string())
+        .fetch_one(self.pool())
+        .await?;
+        Ok(row.0 != 0)
+    }
+
+    /// `true` iff `item_id` has an `orch_tasks` row whose `remote_status` is
+    /// `pending`, `running`, or `waiting_approval` — legacy Docket is still working
+    /// on it, or waiting on a human. This is the exact set `dispatcher.rs`'s
+    /// `ACTIVE_TASK_STATUSES` names and the only set `Self::
+    /// reconcile_stale_orch_tasks`'s own `WHERE` clause treats as active; every
+    /// other value, including `stale`, a terminal docket status, or one this
+    /// version of Tack has never seen, is *not* active — a redispatch (or, here, a
+    /// new runner-v1 request) is safe against it. Defined once, in this query,
+    /// rather than filtering rows in Rust after a broader read, so a caller can
+    /// never see a set that drifts from `ACTIVE_TASK_STATUSES` by accident.
+    ///
+    /// This is the mirror-direction read for "one scheduling owner": [`Self::
+    /// has_active_execution_request_for_item`] lets legacy Docket dispatch defer to
+    /// a live runner-v1 request; this lets a new runner-v1 request defer to a live
+    /// legacy Docket task. Read-only against a table this file already writes
+    /// elsewhere (`Self::upsert_orch_tasks`).
+    #[instrument(skip(self))]
+    pub async fn has_active_docket_task_for_item(
+        &self,
+        item_id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT EXISTS(
+                SELECT 1 FROM orch_tasks
+                WHERE item_id = ?
+                  AND remote_status IN ('pending', 'running', 'waiting_approval')
              )",
         )
         .bind(item_id.to_string())

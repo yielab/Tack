@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -167,16 +168,40 @@ pub enum ModelProvenanceSchema {
 }
 
 /// State for the operator execution router — constructed from the shared
-/// API state's repository and clock when mounted in `router.rs`.
+/// API state's repository, clock and orchestration-enabled resolver when
+/// mounted in `router.rs`.
+///
+/// `orchestration_enabled` is a callback, not a direct call into
+/// `handlers::settings::effective_orch_enabled_for`, because this file must
+/// keep compiling standalone when its regression tests load it via
+/// `#[path]` from a separate test-binary crate root (see
+/// `RunnerV1ErrorEnvelope`'s doc comment above), where a
+/// `crate::handlers::settings` reference would not resolve. `router.rs`
+/// closes over `AppState::config.orch_enable` and wires this to that one
+/// real implementation — nothing in this file re-implements the `app_meta`
+/// read. Same shape as `clock` above: a trait-object seam for a dependency
+/// this file cannot name directly.
 #[derive(Clone)]
 pub struct OperatorExecutionState {
     pub repo: Repository,
     pub clock: Arc<dyn ExecutionClock>,
+    pub orchestration_enabled:
+        Arc<dyn Fn(sqlx::SqlitePool) -> BoxFuture<'static, bool> + Send + Sync>,
 }
 
 impl OperatorExecutionState {
-    pub fn with_clock(repo: Repository, clock: Arc<dyn ExecutionClock>) -> Self {
-        Self { repo, clock }
+    pub fn with_clock(
+        repo: Repository,
+        clock: Arc<dyn ExecutionClock>,
+        orchestration_enabled: Arc<
+            dyn Fn(sqlx::SqlitePool) -> BoxFuture<'static, bool> + Send + Sync,
+        >,
+    ) -> Self {
+        Self {
+            repo,
+            clock,
+            orchestration_enabled,
+        }
     }
 }
 
@@ -607,6 +632,38 @@ pub async fn create_execution(
             json!({}),
         )
     })?;
+    // One scheduling owner, the mirror direction: `dispatcher::dispatch_item`
+    // already refuses legacy Docket dispatch when the item has a live runner-v1
+    // request (`tack_db::repo::orch::Repository::has_active_execution_request_for_item`);
+    // this is the missing other half, closed with that query's own mirror,
+    // `has_active_docket_task_for_item`. Skipped for an idempotent replay
+    // (`existing_snapshot.is_some()`) — a replay creates no new row, so there is
+    // nothing here to collide with — and consulted only while orchestration is
+    // effectively on, so a stale `orch_tasks` row from a previously-enabled bridge
+    // can never block runner-v1, which stays the plan of record either way.
+    if existing_snapshot.is_none()
+        && (state.orchestration_enabled)(state.repo.pool().clone()).await
+        && state
+            .repo
+            .has_active_docket_task_for_item(input.item_id)
+            .await
+            .map_err(|_| {
+                error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StableErrorCode::InternalError,
+                    "Could not verify legacy Docket scheduling state",
+                    json!({}),
+                )
+            })?
+    {
+        return Err(error(
+            StatusCode::CONFLICT,
+            StableErrorCode::Conflict,
+            "Item has an active legacy Docket task; refusing to create a runner-v1 \
+             execution request to preserve one scheduling owner",
+            json!({"item_id": input.item_id}),
+        ));
+    }
     // An exact retry must be allowed to reach the durable replay record even
     // if a mutable runner status changed after the original create.
     if existing_snapshot.is_none() && input.selector_kind == "exact_runner" {

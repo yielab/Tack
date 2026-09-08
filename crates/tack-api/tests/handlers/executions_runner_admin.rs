@@ -93,6 +93,7 @@ async fn setup() -> (axum::Router, Repository, String) {
     let state = executions::OperatorExecutionState::with_clock(
         repo.clone(),
         std::sync::Arc::new(SystemExecutionClock),
+        std::sync::Arc::new(|_pool| Box::pin(async { false })),
     );
     let app = executions::routes(state.clone()).merge(runner_admin::routes(state));
     (app, repo, item.id.to_string())
