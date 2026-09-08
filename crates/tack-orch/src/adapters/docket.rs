@@ -69,59 +69,117 @@
 //!
 //! # Verified live against a real docket server
 //!
-//! Every route this adapter uses was
-//! exercised against a real, isolated `docket serve` instance — not just
-//! read from `serve.py`/`core/dispatch.py` source. The facts below are
-//! recorded because some directly contradict what docket's own docs say:
+//! Every route this adapter uses was exercised against a real, isolated
+//! `docket serve` instance — not just read from `serve.py`/`core/dispatch.py`
+//! source. First captured against docket `0.2.0b1`; **recaptured against
+//! `v0.2.0-beta.2`**, since `serve.py`, `core/dispatch.py`,
+//! `core/approval.py` and `core/policy.py` each grew by hundreds to
+//! thousands of lines between those two releases and nothing below was
+//! assumed to still hold. Every bullet states what changed, if anything, or
+//! that it was confirmed unchanged; a claim this crate could not re-run is
+//! marked as such rather than left to read as current.
 //!
-//! - **`POST /tasks/{project}`'s success response is `{"ok": true, "task":
-//!   "<id>", "project": "...", "status": "pending"|"waiting_approval",
-//!   "approvalToken"?: "..."}`, not `{"taskId": "..."}`.** The task id is
-//!   under the key `"task"`, and a `require_approval`
-//!   verdict adds `"approvalToken"` alongside `"status": "waiting_approval"`
-//!   rather than a separate response shape. [`NewRemoteTask`] (the request
-//!   body this adapter would send) is unaffected — only the response this
-//!   adapter doesn't parse yet (because [`ControlPlane::enqueue_task`] is
-//!   disabled) differs from docket's own docs. Whoever wires this up must
-//!   not deserialize a `taskId` field — it doesn't exist on the wire.
-//! - **The `pre_input` gate's three outcomes, and the `trusted` boundary,**
-//!   confirmed against a real server: a `block` verdict returns HTTP 400 with
-//!   `{"ok": false, "error": "task rejected by guardrail policy '<id>' at
-//!   enqueue: <message>"}`; a `require_approval` verdict returns HTTP 200
-//!   with the task's real `status` (`"waiting_approval"`, never
-//!   `"pending"`) and its `approvalToken`; and passing `trusted: false`
-//!   explicitly in the request body genuinely flips a `prompt-injection`-id
-//!   policy from silently skipped to evaluated — while omitting `trusted`
-//!   entirely reproduces every existing caller's behavior (operator trust,
-//!   the policy skipped) exactly as `core/dispatch.py::enqueue_task`'s
-//!   docstring says. This is a prompt-injection boundary; it is confirmed
-//!   real, not just read from source.
-//! - **`POST /approvals/{token}` grant genuinely resumes a gated task**
-//!   (`waiting_approval` → `pending`, confirmed via a follow-up `GET
-//!   /tasks/{project}`) and returns `{"ok": true, "token": "...", "state":
-//!   "granted"}`; an unknown token 404s with `{"ok": false, "error":
-//!   "Approval not found: <token>"}`. `deny` and the
-//!   409/`ApprovalNoop` (already-decided) path were not verified live — read
-//!   directly from `core/approval.py`'s source instead (`approval_grant`/
-//!   `approval_deny` raise `ApprovalNoop` only for "already granted"/
-//!   "already denied or expired" respectively; any other non-`pending` state
-//!   raises the plain `ApprovalError` that `serve.py` maps to 404 alongside
-//!   a genuinely unknown token) — `decide_approval`'s classification below
-//!   follows that reading, not a live capture, for the 409/404 split.
-//! - **`POST /pods`**, against an isolated `docket serve`
-//!   (`DOCKET_HOME` pointed at a scratch dir, `~/.docket`'s mtime confirmed
-//!   unchanged before and after): a fresh `POST /pods` returns `201
-//!   {"ok": true, "project", "blueprint", "members": [{"id", "role",
-//!   "model"}]}` exactly as [`ProvisionedPod`]/[`ProvisionedPodMember`]
-//!   model it; a second call for the same `project` returns `409
-//!   {"ok": false, "error": "'<project>' already exists"}`; an unknown
-//!   blueprint, a missing `project`, and a `pod` value other than `"full"`
-//!   each return `400` with a plain `{"ok": false, "error": "..."}` body
-//!   (same shape [`ErrorBody`] already extracts for `enqueue_task`/
-//!   `decide_approval`); a request with no `Authorization` header returns
-//!   `401`. Ran this crate's own compiled [`DocketAdapter::provision_pod`]
-//!   against the live server (not just a hand-built `curl`), confirming the
-//!   happy path and the 409 both decode correctly end to end.
+//! - **`POST /tasks/{project}`'s success response — confirmed unchanged at
+//!   `v0.2.0-beta.2`.** `{"ok": true, "task": "<id>", "project": "...",
+//!   "status": "pending"|"waiting_approval", "approvalToken"?: "..."}`, not
+//!   `{"taskId": "..."}`. The task id is under the key `"task"`, and a
+//!   `require_approval` verdict adds `"approvalToken"` alongside `"status":
+//!   "waiting_approval"` rather than a separate response shape.
+//!   [`NewRemoteTask`] (the request body this adapter would send) is
+//!   unaffected — only the response this adapter doesn't parse yet (because
+//!   [`ControlPlane::enqueue_task`] is disabled) differs from docket's own
+//!   docs. Whoever wires this up must not deserialize a `taskId` field — it
+//!   doesn't exist on the wire.
+//! - **The `pre_input` gate's three outcomes, and the `trusted` boundary —
+//!   confirmed unchanged at `v0.2.0-beta.2`.** A `block` verdict returns
+//!   HTTP 400 with `{"ok": false, "error": "task rejected by guardrail
+//!   policy '<id>' at enqueue: <message>"}`; a `require_approval` verdict
+//!   returns HTTP 200 with the task's real `status` (`"waiting_approval"`,
+//!   never `"pending"`) and its `approvalToken`; and passing `trusted:
+//!   false` explicitly in the request body genuinely flips a
+//!   `prompt-injection`-id policy from silently skipped to evaluated — while
+//!   omitting `trusted` entirely reproduces every existing caller's behavior
+//!   (operator trust, the policy skipped) exactly as
+//!   `core/dispatch.py::enqueue_task`'s docstring says. `core/dispatch.py`'s
+//!   own module doc is explicit that `pre_input` is evaluated **once, at
+//!   enqueue, and never re-evaluated** for a task already on the queue —
+//!   confirmed by the fact that a `/dispatch/{project}` run against a task
+//!   this gate had already passed never re-trips it (see the `dispatch`
+//!   bullet below).
+//! - **`POST /approvals/{token}` — grant confirmed unchanged; `deny` and the
+//!   409/404 split are now closed, both live.** Grant genuinely resumes a
+//!   gated task (`waiting_approval` → `pending`, confirmed via a follow-up
+//!   `GET /tasks/{project}`) and returns `{"ok": true, "token": "...",
+//!   "state": "granted"}`. **`deny`, `ApprovalNoop` and the unknown-token
+//!   404 were never captured live before this — all three now are:** `deny`
+//!   returns `{"ok": true, "token": "...", "state": "denied"}` and
+//!   terminalizes the gated task immediately with no agent turn spent
+//!   (`reason: "approval denied"`); replaying a decision against an
+//!   already-decided token returns `409 {"ok": false, "error": "Already
+//!   granted: <token>"}` (the `ApprovalNoop` path `core/approval.py` raises);
+//!   a genuinely unknown token 404s with `{"ok": false, "error": "Approval
+//!   not found: <token>"}`. `decide_approval`'s classification below now
+//!   matches a live capture on every branch it handles, not a source
+//!   reading for two of the four.
+//! - **`POST /pods` — confirmed unchanged at `v0.2.0-beta.2`**, against an
+//!   isolated `docket serve` (`DOCKET_HOME` pointed at a scratch dir,
+//!   `~/.docket`'s mtime confirmed unchanged before and after): a fresh
+//!   `POST /pods` returns `201 {"ok": true, "project", "blueprint",
+//!   "members": [{"id", "role", "model"}]}` exactly as
+//!   [`ProvisionedPod`]/[`ProvisionedPodMember`] model it; a second call for
+//!   the same `project` returns `409 {"ok": false, "error": "'<project>'
+//!   already exists"}`; an unknown blueprint, a missing `project`, and a
+//!   `pod` value other than `"full"` each return `400` with a plain `{"ok":
+//!   false, "error": "..."}` body (same shape [`ErrorBody`] already extracts
+//!   for `enqueue_task`/`decide_approval`); a request with no
+//!   `Authorization` header returns `401`. Ran this crate's own compiled
+//!   [`DocketAdapter::provision_pod`] against the live server again (not
+//!   just a hand-built `curl`), confirming the happy path and the 409 both
+//!   still decode correctly end to end.
+//! - **`POST /dispatch/{project}` — verified live for the first time.** This
+//!   method shipped with no server ever having answered it. Ran this crate's
+//!   own compiled [`DocketAdapter::dispatch`] (and [`ControlPlane::get_run`]
+//!   to observe the outcome) against the isolated server: `dispatch`
+//!   returns the id under `"run"`, exactly as [`DispatchResponse`] decodes
+//!   it, and a request with no `Authorization` header is rejected before
+//!   anything is created. A missing body is treated as `{}` — a
+//!   no-variables dispatch, not an error. Provisioning a real pod, enqueuing
+//!   one task, then dispatching it with no provider credential configured
+//!   anywhere the isolated server could reach (`ANTHROPIC_API_KEY` and
+//!   every equivalent absent from its process environment) reproduces the
+//!   whole path for zero cost: the response returns `{"ok": true, "run":
+//!   "<id>", ...}` before the pipeline has done anything, and only a
+//!   follow-up `GET /runs/{id}` shows the Lead's one hop failing with `no
+//!   endpoint configured for model '<model>'` — a local resolution failure,
+//!   never a rejected call to a real provider, confirmed by `costUsd`
+//!   staying `0.0` on the task record throughout. **One assumption this
+//!   crate carried into the Part turned out false: an unknown/unprovisioned
+//!   project does not 404 on this route.** `/dispatch/{project}` never
+//!   checks whether `project` has a pod before creating the run record —
+//!   dispatching a project docket has never heard of returns the same `200`
+//!   happy-path response, and the failure (`DispatchError: no pod found for
+//!   '<project>'`) only surfaces on the same asynchronous `GET /runs/{id}`
+//!   path. [`OrchError::NotFound`]'s mapping in `dispatch` below is
+//!   defensive, not dead — docket returns `404` from other authenticated
+//!   routes on this same server — but no server-side branch in
+//!   `/dispatch/{project}` itself produces one; nothing here decodes it
+//!   incorrectly, so no ownership widening was needed to record this.
+//!
+//!   **ADR 0065's central claim — a guardrail block is not synchronously
+//!   observable on this route — held, and this capture sharpens it.** No
+//!   verdict of any kind reached the caller synchronously in either capture
+//!   above (a hard local failure, not just a guardrail verdict): the run id
+//!   is returned before the outcome exists, full stop. What this capture
+//!   could **not** reproduce is a genuine `pre_input` **block** occurring
+//!   inside a dispatch — and per `core/dispatch.py`'s own module doc (see
+//!   the `pre_input` bullet above), it structurally cannot: that hook
+//!   evaluates once, at a task's own enqueue, never again when the task is
+//!   later dispatched. The one guardrail hook that *can* fire asynchronously
+//!   on this route is `pre_output`, scanning a real hop's real output — and
+//!   reproducing that live needs a real agent turn, which the no-credential
+//!   constraint this capture depends on forecloses. Recorded as
+//!   `not_measured`: a `pre_output` block on a real `/dispatch/{project}`
+//!   run, blocked on a working (and therefore costed) provider credential.
 //!
 //! # `list_tasks` / `traces`
 //!
@@ -726,8 +784,9 @@ impl ControlPlane for DocketAdapter {
         // through `get_authed`/`send` — those only ever GET, and this route
         // needs 409 classified distinctly from `send`'s generic non-2xx
         // branch, the same reason `enqueue_task` builds its own request
-        // (see the module doc's "Verified live" section for the grant/404
-        // facts and the read-from-source 409/404 split this implements).
+        // (see the module doc's "Verified live" section — grant, deny, the
+        // 409 `ApprovalNoop` replay and the unknown-token 404 are all
+        // captured against a real server there).
         let url = self.url(&format!("approvals/{token}"))?;
         let body = DecideApprovalRequest {
             action: if grant { "grant" } else { "deny" },
