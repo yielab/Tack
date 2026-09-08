@@ -62,6 +62,29 @@ Every claim below was read from the tree on 2026-09-08, not assumed.
 | A `pre_input` policy block arrives as HTTP 400 and maps to `OrchError::PolicyBlocked` | `adapters/docket.rs`, `parse_policy_block` |
 | Two privileged actions already carry their own fail-closed token | `TACK_ORCH_APPROVAL_TOKEN`, `TACK_EXECUTION_DECISION_TOKEN` in `docs/CONFIG.md` |
 | Orch routes 404 with `TACK_ORCH_ENABLE` unset; no reconciler spawns | `docs/CONFIG.md` line 35 |
+| The route answers **before** the pipeline runs — it creates the run record, hands back `{"ok", "run", "project", "status"}`, and starts the work on a daemon thread | `../rack-cli/src/docket/serve.py`, the `/dispatch/` branch |
+| The run id arrives under `run`, not `task` — docket's own split between a pod *task* and a pipeline *run* | same |
+| The request body is a plain `{name: value}` object, bound to the pipeline's declared `variables`; an absent body means `{}` | same |
+
+## A block is not synchronously observable on this route
+
+Measured while implementing decision 1, and it constrains decisions 7 and 8 rather than
+changing them. `enqueue_task`'s route evaluates the `pre_input` guardrail gate inline, so a
+policy block comes back as an HTTP 400 this adapter maps to `OrchError::PolicyBlocked`.
+**The dispatch route does not.** It creates the run record, returns its id, and runs the
+pipeline — guardrail evaluation included — on a thread the response never waits on. Every
+400 it can actually send is a request defect (bad JSON, a non-object body, an unresolvable
+variable), not a verdict.
+
+Two consequences, both of which the implementation must state rather than paper over:
+
+- **A run id is not a promise the run was allowed.** `tack orch dispatch` (decision 8) may
+  report that a run was *started*, never that it was *permitted*. Any wording stronger than
+  that is a claim docket's own route cannot support.
+- **Decision 7 is how a block surfaces at all.** docket writes the outcome into its run
+  registry rather than dropping it, so a blocked pipeline appears as that run's own failed
+  state on the next reconciler `/runs` poll. The existing ingestion path is not merely
+  sufficient here — it is the only place the verdict ever becomes visible to Tack.
 
 ## What this deliberately does not do
 
