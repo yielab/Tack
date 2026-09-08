@@ -662,25 +662,154 @@ async fn unauthenticated_routes_never_send_authorization_header() {
 }
 
 // ---------------------------------------------------------------------------
-// Write methods: `dispatch` disabled unconditionally — a real docket route
-// (V1, live-verified) with no Tack consumer yet, see the module doc's
-// "Write methods" section. `enqueue_task` and
-// `decide_approval` are both implemented — their outcomes
-// are covered above (`enqueue_task`) and below (`decide_approval`).
+// dispatch — POST /dispatch/{project}
+//
+// A distinct pipeline-run trigger from `enqueue_task`'s pod-queue route: the
+// run id comes back under the `"run"` key, and docket creates the run record
+// before the pipeline itself executes (see the module doc). The one real
+// divergence from `enqueue_task`'s error mapping: docket's `/dispatch/`
+// branch never evaluates the `pre_input` guardrail synchronously, so its
+// observed 400s (bad JSON, a non-object body, an unresolved pipeline
+// variable) are plain request errors, not policy blocks.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn dispatch_is_still_disabled() {
+async fn dispatch_happy_path_returns_the_run_id() {
     let server = MockServer::start().await;
-    // No mocks registered at all — if `dispatch` actually made an HTTP call,
-    // this test would fail on the unmatched request, not just on a wrong
-    // return value.
-    let adapter = adapter_for(&server);
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .and(header("Authorization", format!("Bearer {TOKEN}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true, "run": "run-1", "project": "demo", "status": "dispatched"
+        })))
+        .mount(&server)
+        .await;
 
-    assert!(matches!(
-        adapter.dispatch("demo", serde_json::json!({})).await,
-        Err(OrchError::Disabled)
-    ));
+    let adapter = adapter_for(&server);
+    let run_id = adapter
+        .dispatch("demo", serde_json::json!({"branch": "main"}))
+        .await
+        .expect("a dispatched run must succeed");
+    assert_eq!(run_id, "run-1");
+}
+
+#[tokio::test]
+async fn dispatch_sends_vars_as_the_request_body_verbatim() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .and(wiremock::matchers::body_json(serde_json::json!({
+            "branch": "main", "retries": 2
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true, "run": "run-vars", "project": "demo", "status": "dispatched"
+        })))
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server);
+    let run_id = adapter
+        .dispatch("demo", serde_json::json!({"branch": "main", "retries": 2}))
+        .await
+        .expect("wiremock only matches if vars was sent as the body, unwrapped");
+    assert_eq!(run_id, "run-vars");
+}
+
+#[tokio::test]
+async fn dispatch_unauthorized_maps_to_auth_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server);
+    let err = adapter
+        .dispatch("demo", serde_json::json!({}))
+        .await
+        .expect_err("401 must not be Ok");
+    assert!(matches!(err, OrchError::Auth));
+}
+
+#[tokio::test]
+async fn dispatch_404_maps_to_not_found() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "ok": false, "error": "not found"
+        })))
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server);
+    let err = adapter
+        .dispatch("demo", serde_json::json!({}))
+        .await
+        .expect_err("404 must not be Ok");
+    assert!(matches!(err, OrchError::NotFound(_)));
+}
+
+#[tokio::test]
+async fn dispatch_bad_request_without_guardrail_wording_maps_to_http_not_policy_blocked() {
+    // The finding: unlike `enqueue_task`, `/dispatch/{project}` never runs
+    // the `pre_input` gate before responding — every 400 it can actually
+    // send (this one models `resolve_variables`'s `VariableError`) is a
+    // plain request error. Mapping it to `PolicyBlocked` would misreport a
+    // caller-supplied-variable mistake as a guardrail refusal.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "ok": false, "error": "unknown variable 'nope' has no default"
+        })))
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server);
+    let err = adapter
+        .dispatch("demo", serde_json::json!({}))
+        .await
+        .expect_err("a non-guardrail 400 must not be Ok");
+    match err {
+        OrchError::Http(message) => {
+            assert!(
+                message.contains("unknown variable"),
+                "docket's own message must still reach the caller: {message}"
+            );
+        }
+        other => panic!("expected Http, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn dispatch_bad_request_with_guardrail_wording_maps_to_policy_blocked() {
+    // Defensive: if a future docket build ever does report a `pre_input`
+    // block synchronously from this route, using the same wording
+    // `enqueue_task`'s route does, this adapter classifies it the same way
+    // — reusing `parse_policy_block` rather than a second parser.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "ok": false,
+            "error": "task rejected by guardrail policy 'prompt-injection' at enqueue: untrusted input matched a deny rule"
+        })))
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server);
+    let err = adapter
+        .dispatch("demo", serde_json::json!({}))
+        .await
+        .expect_err("a block verdict must not be Ok");
+    match err {
+        OrchError::PolicyBlocked { policy_id, message } => {
+            assert_eq!(policy_id, "prompt-injection", "message was: {message}");
+        }
+        other => panic!("expected PolicyBlocked, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------

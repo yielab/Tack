@@ -27,7 +27,7 @@
 //! - `requests` — the **ordered** list of HTTP requests the call issued
 //!   (method, path, query pairs sorted by key, the *names* of headers
 //!   present, and the canonicalised JSON body). Zero entries for `kind`
-//!   (pure, synchronous, no I/O) and for `dispatch` (see below).
+//!   (pure, synchronous, no I/O).
 //! - `result` — the decoded outcome: `{"outcome":"ok","value":...}` with the
 //!   DTO serialized through `serde_json::to_value`, or
 //!   `{"outcome":"err","error":"<Display text>"}` for a method that errors.
@@ -45,16 +45,13 @@
 //! stable field order" property this oracle needs falls out of the existing
 //! workspace configuration.
 //!
-//! # `dispatch` — no request, and that absence is the point
+//! # `dispatch`
 //!
-//! [`ControlPlane::dispatch`] returns `OrchError::Disabled` unconditionally
-//! today and issues no HTTP call at all (see `adapters::docket`'s module
-//! doc, "Write methods"). That is captured here as a golden with zero
-//! requests and an `err` outcome, exactly like every other method — not
-//! skipped. The day this method is wired up for real, this
-//! golden fails immediately (a `requests: []` golden gaining entries, or an
-//! `err` outcome turning into `ok`) rather than letting "obviously nothing
-//! to test" reasoning skip it.
+//! `POST /dispatch/{project}`, the same "one request, snapshot both sides"
+//! treatment as every other write method — see `adapters::docket`'s module
+//! doc, "Write methods", for the shape of its response and why a `pre_input`
+//! block is never observable synchronously on this route the way it is on
+//! `enqueue_task`'s.
 //!
 //! # Auth split, preserved in the golden
 //!
@@ -545,15 +542,22 @@ async fn enqueue_task_wire_contract() {
 
 #[tokio::test]
 async fn dispatch_wire_contract() {
-    // No mock mounted at all — if `dispatch` ever actually made an HTTP
-    // call, `wiremock` would fail the request as unmatched rather than this
-    // test silently recording one. See the module doc's "dispatch" section
-    // for why an empty `requests` + `err` outcome is the correct golden,
-    // not something to skip.
     let server = MockServer::start().await;
-    let adapter = adapter_for(&server);
+    Mock::given(method("POST"))
+        .and(path("/dispatch/demo"))
+        .and(header("Authorization", format!("Bearer {TOKEN}").as_str()))
+        .and(body_partial_json(serde_json::json!({"branch": "main"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true, "run": "run-1", "project": "demo", "status": "dispatched"
+        })))
+        .mount(&server)
+        .await;
 
-    let result = match adapter.dispatch("demo", serde_json::json!({})).await {
+    let adapter = adapter_for(&server);
+    let result = match adapter
+        .dispatch("demo", serde_json::json!({"branch": "main"}))
+        .await
+    {
         Ok(v) => ok(v),
         Err(e) => err(e),
     };

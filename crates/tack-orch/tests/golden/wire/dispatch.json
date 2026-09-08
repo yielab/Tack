@@ -1,8 +1,25 @@
 {
   "method": "dispatch",
-  "requests": [],
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/dispatch/demo",
+      "query": [],
+      "header_names": [
+        "accept",
+        "authorization",
+        "content-length",
+        "content-type",
+        "host",
+        "user-agent"
+      ],
+      "body": {
+        "branch": "main"
+      }
+    }
+  ],
   "result": {
-    "outcome": "err",
-    "error": "control plane feature disabled"
+    "outcome": "ok",
+    "value": "run-1"
   }
 }
