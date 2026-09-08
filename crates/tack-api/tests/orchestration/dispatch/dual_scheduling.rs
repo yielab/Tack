@@ -531,19 +531,22 @@ async fn has_active_execution_request_for_item_ignores_terminal_states() {
 /// Direct, unit-level proof of the read the mirror guard is built on —
 /// isolates the "which `remote_status` values count as active" claim from any
 /// HTTP/enrollment noise the full-router tests below can't fully separate out.
+/// Asserts on the full `Option` (not just its `.is_some()`), so this also pins
+/// which task and status a caller actually gets back once one is active.
 #[tokio::test]
-async fn has_active_docket_task_for_item_ignores_terminal_statuses() {
+async fn active_docket_task_for_item_ignores_terminal_statuses() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = create_project(&app).await;
     let item_id = create_item(&app, project_id).await;
 
-    assert!(
-        !state
+    assert_eq!(
+        state
             .repo
-            .has_active_docket_task_for_item(item_id)
+            .active_docket_task_for_item(item_id)
             .await
             .unwrap(),
-        "no rows yet: must be false"
+        None,
+        "no rows yet: must be None"
     );
 
     for (task_id, status) in [
@@ -554,23 +557,25 @@ async fn has_active_docket_task_for_item_ignores_terminal_statuses() {
     ] {
         insert_orch_task(&state, item_id, task_id, status).await;
     }
-    assert!(
-        !state
+    assert_eq!(
+        state
             .repo
-            .has_active_docket_task_for_item(item_id)
+            .active_docket_task_for_item(item_id)
             .await
             .unwrap(),
+        None,
         "terminal, stale, and unrecognised statuses must all read as inactive"
     );
 
     insert_orch_task(&state, item_id, "t-running", "running").await;
-    assert!(
+    assert_eq!(
         state
             .repo
-            .has_active_docket_task_for_item(item_id)
+            .active_docket_task_for_item(item_id)
             .await
             .unwrap(),
-        "running counts as active"
+        Some(("t-running".to_string(), "running".to_string())),
+        "running counts as active, and is the task named"
     );
 }
 

@@ -1956,11 +1956,9 @@ impl Repository {
 //    directions: `tack-api::dispatcher::dispatch_item` calls the first so a live
 //    runner-v1 request makes legacy Docket dispatch defer, and `tack-api::handlers::
 //    executions::create_execution` calls the second so a live legacy Docket task
-//    makes a new runner-v1 request defer, and also names which task and status.
-//    [`Repository::has_active_docket_task_for_item`] delegates to the second query
-//    rather than repeating its `WHERE` clause. Neither write path touches the other
-//    plane's table directly. No schema changes; both read tables `migrations.rs`
-//    already creates.
+//    makes a new runner-v1 request defer, and also names which task and status. Neither
+//    write path touches the other plane's table directly. No schema changes; both read
+//    tables `migrations.rs` already creates.
 //
 // 2. **Stale rows.** Nothing has ever updated `orch_tasks.remote_status` /
 //    `orch_approvals.state` after the initial dispatch/poll except a fresh poll of a
@@ -2007,22 +2005,6 @@ impl Repository {
         Ok(row.0 != 0)
     }
 
-    /// `true` iff `item_id` has an active legacy Docket task. Delegates to [`Self::
-    /// active_docket_task_for_item`], which is where the active-status set is
-    /// defined — a caller of either function can never see the two disagree, because
-    /// there is only one `WHERE` clause between them. This is the mirror-direction
-    /// read for "one scheduling owner": [`Self::
-    /// has_active_execution_request_for_item`] lets legacy Docket dispatch defer to
-    /// a live runner-v1 request; this lets a new runner-v1 request defer to a live
-    /// legacy Docket task.
-    #[instrument(skip(self))]
-    pub async fn has_active_docket_task_for_item(
-        &self,
-        item_id: Uuid,
-    ) -> Result<bool, sqlx::Error> {
-        Ok(self.active_docket_task_for_item(item_id).await?.is_some())
-    }
-
     /// `Some((remote_task_id, remote_status))` iff `item_id` has an `orch_tasks` row
     /// whose `remote_status` is `pending`, `running`, or `waiting_approval` — legacy
     /// Docket is still working on it, or waiting on a human; `None` otherwise. This
@@ -2032,9 +2014,12 @@ impl Repository {
     /// version of Tack has never seen, is *not* active — a redispatch (or, here, a
     /// new runner-v1 request) is safe against it. **Defined once, in this query**,
     /// rather than filtering rows in Rust after a broader read, so a caller can never
-    /// see a set that drifts from `ACTIVE_TASK_STATUSES` by accident — [`Self::
-    /// has_active_docket_task_for_item`] delegates here rather than repeating the
-    /// literal set, so that guarantee covers both functions, not just this one.
+    /// see a set that drifts from `ACTIVE_TASK_STATUSES` by accident. This is the
+    /// mirror-direction read for "one scheduling owner": [`Self::
+    /// has_active_execution_request_for_item`] lets legacy Docket dispatch defer to a
+    /// live runner-v1 request; this lets a new runner-v1 request defer to a live
+    /// legacy Docket task, and name it. A caller that only needs the boolean binds
+    /// this `Option` and calls `.is_some()` rather than a separate existence query.
     ///
     /// Multiple active rows for one item are possible across dispatch attempts; the
     /// most-recently-dispatched one is named, breaking any tie deterministically.
