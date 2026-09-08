@@ -66,10 +66,10 @@
 //! `tack_db::repo::orch::Repository::has_active_execution_request_for_item` so a
 //! live runner-v1 request makes legacy Docket dispatch defer, and
 //! `tack-api::handlers::executions::create_execution` (`POST /api/executions`)
-//! calls `Repository::has_active_docket_task_for_item` so a live legacy Docket
-//! task makes a new runner-v1 request defer instead of colliding with it. Both
-//! directions are proven, including the case where orchestration is off, by
-//! `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`.
+//! calls `Repository::active_docket_task_for_item` so a live legacy Docket task
+//! makes a new runner-v1 request defer instead of colliding with it, and names
+//! the task. Both directions are proven, including the case where orchestration
+//! is off, by `crates/tack-api/tests/orchestration/dispatch/dual_scheduling.rs`.
 //!
 //! # Provider-scoped ids and the normalized-attempt projection
 //!
