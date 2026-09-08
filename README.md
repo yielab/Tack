@@ -10,26 +10,40 @@ Codex — and track the run as part of the item's history.** Self-hosted, one bi
 no cloud account.
 
 <p align="center">
-  <img src="docs/screenshots/hero.gif" width="98%" alt="Board, Timeline, and vocabulary editor — project-management views only; no agent run is shown in this recording" />
+  <img src="docs/screenshots/hero.gif" width="98%" alt="A board item assigned to Claude Code through Run with agent, tracked live from Leased to Succeeded, with its Execution tab showing the matched model and measured cost" />
 </p>
 
 ## What it is
 
-- **A project manager** — board, list, table, calendar, timeline and dashboard views;
-  configurable Scrum/Kanban/phase workflows; vocabulary you rename to match your domain
-  (`Task` → `Work Order`, `Sprint` → `Phase`).
-- **An agent runner** — assign any item to `claude-code` or `codex` and it runs as a
-  tracked, durable attempt: events, decisions and artifacts land back on the item,
-  not a fire-and-forget shell command.
-- **Self-hosted** — one binary, one SQLite file. No accounts, no subscriptions, nothing
-  running in someone else's cloud.
+In priority order — what Tack is built around, what it's built on top of, and what
+it costs you to run:
+
+- **An agent execution engine, first.** Assign any board item to `claude-code` or
+  `codex` and it runs as a tracked, durable attempt — events, decisions, and
+  artifacts land back on the item, not a fire-and-forget shell command. Most of
+  this README is about this one capability, because it's the reason to pick Tack
+  over a plain project tracker.
+- **A full project manager underneath it.** Board, list, table, calendar, timeline,
+  and dashboard views; configurable Scrum/Kanban/phase workflows; vocabulary you
+  rename to match your domain (`Task` → `Work Order`, `Sprint` → `Phase`). None of
+  this needs an agent turned on to be useful on day one.
+- **Self-hosted, with nothing else to run.** One binary, one SQLite file. No
+  accounts, no subscriptions, nothing running in someone else's cloud.
 
 <p align="center">
-  <img src="docs/screenshots/agents.png" width="49%" alt="The Agents page, fully earned: agent execution on, Codex and Claude Code both detected, Claude Code's own login verified by a real test run, a project default model saved, and that test run's own attempt shown Succeeded." />
+  <img src="docs/screenshots/agents-flow.gif" width="49%" alt="The Agents page's Test run control: a real dispatch against claude-code, watched live to Succeeded, with the harness's login flipping to Verified and its measured cost shown" />
   <img src="docs/screenshots/attempt.png" width="49%" alt="An item's Execution tab: a real attempt shown Succeeded, its requested-vs-actual model matched against claude-sonnet-4-5, and its usage economics — token cost measured, wall-clock cost explicitly Not measured rather than shown as zero." />
 </p>
 
-## How it works
+## Running an agent
+
+This is Tack's headline feature — the rest of this README is either the
+project-manager surface that plans and displays the work, or the self-hosted
+footprint that keeps all of it on your own infrastructure. The three parts below are
+one story: how a run starts, exactly which agent and credential do the work, and what
+happens when one gets killed halfway through.
+
+### How it works
 
 1. **Plan it on the board** — create an item, assign it to an agent profile, set its
    budget and policy.
@@ -38,7 +52,47 @@ no cloud account.
 3. **The run is recorded on the item** — events, decisions, and artifacts land back on
    the board as they happen, and the finished attempt stays in the item's history.
 
-## Durable by design
+### Which agent runs it, and how it's credentialed
+
+This is the part most agent tooling blurs together, so Tack keeps it as two separate
+choices: **which coding agent does the work**, and **how that agent gets paid for**.
+
+**The harness** is the actual coding agent CLI that runs. Today there are two, each
+driven through a real adapter — not a hand-rolled prompt loop bolted onto an API —
+behind one `HarnessAdapter` trait, so the next one is a new module, not a rewrite:
+
+- **Claude Code** (`claude-code`)
+- **Codex** (`codex`)
+
+**The credential mode** is how that harness is authenticated, chosen per runner, per
+harness. There are exactly two, never a third:
+
+1. **Its own subscription.** The harness logs in the way you already log in —
+   Claude Max/Pro, a ChatGPT plan through `codex login`. Tack never sees that
+   credential, your existing plan decides which models exist, and there's no
+   per-attempt bill to track.
+2. **An API key against an endpoint**, held only by the runner — never the board,
+   never its database — and injected straight into the subprocess at the moment
+   it's spawned, never written to a config file on disk. A **gateway** (Vercel AI
+   Gateway, which proxies dozens of vendors' models behind one key) and a vendor's
+   **own direct API** (`api.anthropic.com`) are the same mode as far as Tack is
+   concerned, just a different endpoint — switch between them from one field on
+   the Agents page, with no restart and nothing to edit by hand.
+
+| | Its own subscription | API key + endpoint |
+| --- | --- | --- |
+| **Claude Code** | Claude Max / Pro | Vercel AI Gateway, or Anthropic directly |
+| **Codex** | ChatGPT plan | Vercel AI Gateway |
+
+Either way, the model catalog behind the key is real, not hand-maintained — fetched
+live from that provider's own endpoint, with price and context window shown only
+where the provider actually publishes them, never estimated and never a silent `0`
+standing in for "unknown." Which exact model a given request gets is a separate,
+deterministic decision Tack makes server-side before a runner ever sees the request —
+the [full precedence order](docs/book/src/user-guide/agent-runners.md#choosing-a-model-and-a-provider)
+lives in the book.
+
+### Durable by design
 
 An attempt in progress can be killed — a crashed machine, a lost connection — without
 losing track of it or silently running it twice. This is a runner killed mid-attempt
@@ -100,23 +154,42 @@ Under the hood, Tack is two components, built to be one product.
 
 ## Why Tack
 
-Most open-source project managers — Plane, Huly, Focalboard, Leantime, Vikunja —
-track work but execute none of it. The open-source agent orchestrators that used to
-sit alongside them have mostly shut down or gone closed-source. Tack does both at
-once: a real project manager (boards, timelines, dashboards, per-project vocabulary)
-and a real, multi-harness agent execution fleet, in one self-hosted binary with no
-external services.
+Tack isn't another agent framework and it doesn't replace the coding agent you
+already trust. It's the layer between them: the thing that turns "run Claude Code
+on this ticket" from a copy-paste-and-hope shell command into a governed,
+auditable operation with a history.
+
+| | Agent frameworks (LangGraph, CrewAI, AutoGen…) | Project trackers (Linear, Jira, Plane…) | **Tack** |
+| --- | --- | --- | --- |
+| Drives Claude Code / Codex for you | you wire the loop yourself | no — nothing executes | ✅ pull-based, out of the box |
+| Survives a crash mid-run with no duplicate work | you build the fencing/lease logic | n/a, nothing runs | ✅ built in, [demonstrated](#durable-by-design) |
+| Records cost, decisions, and full history per work item | you build the store | tracks the ticket, not the run | ✅ per attempt, measured not estimated |
+| Self-hosted, no cloud account, no vendor lock-in | a library you host yourself | usually a hosted SaaS | ✅ one binary, one SQLite file |
+
+If you already build agents with a framework, Tack is not a competitor to it — a
+framework gives you primitives to construct an agent loop; Tack assumes you'd
+rather point it at Claude Code or Codex, tools that already do that well, and
+instead solves the problem those frameworks leave on the table: who ran what,
+against which item, at what cost, with what to show for it when it crashes
+halfway through.
 
 ## Features
 
+Same priority order as above: the capability Tack is built around, the project
+manager it's built on top of, and the surfaces for reaching either one from outside
+a browser.
+
 ### Agent execution
 
-- Assign a board item to `claude-code` or `codex` and it runs as a
-  tracked, durable attempt — not a fire-and-forget shell command
-- Pull-based runner protocol: a lightweight `tack-runner` claims eligible work and
-  executes near its own repo and credentials; Tack never calls into your machine
-- Fenced leases (one active attempt per request), decisions for human-in-the-loop
-  approval, and structured artifacts on every run
+The headline capability, and the reason this document leads with it. It needs at
+least one runner attached — embedded (`tack serve --with-runner`) or a separate
+`tack-runner` process — and one harness, Claude Code or Codex, installed and
+credentialed on that runner's machine. [Running an agent](#running-an-agent) above
+covers exactly which agent runs, how it's credentialed, and what happens when one
+crashes mid-attempt; this list covers what else that buys you:
+
+- Structured decisions for human-in-the-loop approval, and structured artifacts on
+  every run — not a log dump to grep through
 - Measured usage only — cost and token counts are shown as measured or explicitly
   **not measured**, never estimated or silently shown as zero
 - One **Agents** page owns the path from an installed binary to a finished run: turn
@@ -124,11 +197,11 @@ external services.
   whether their vendor login already works, paste a provider key, pick a default model
   from a real catalog, and dispatch a test run. Every status on it is earned by an
   observation, never asserted
-- Bring your own provider: a Vercel AI Gateway or Anthropic key, held by the runner on
-  its own machine and resolved from the OS keychain. The board and its database never
-  receive it
 
 ### Project management
+
+Works the moment `tack serve` starts, with zero configuration and no runner
+attached — nothing below needs an agent to be useful:
 
 - Configurable workflows — Scrum, Kanban, or phase-based — with per-project vocabulary
   so the UI, CLI, and API all speak the language of your domain
@@ -140,6 +213,10 @@ external services.
 
 ### Automation surfaces
 
+Ways to reach the board from outside a browser — a script, another agent, your own
+CI, or a webhook consumer. None of these require agent execution to be turned on
+either:
+
 - A REST API described by a checked-in [OpenAPI spec](docs/openapi.json), plus a CLI
   with JSON output and shell completions
 - `tack mcp` — lets Claude Code, Codex, and other MCP clients read and update the
@@ -150,22 +227,26 @@ external services.
 
 ## Screenshots
 
-More views — the board and the Agents page are up top, this is the rest of it.
+The board and the Agents page are up top — these two carry the rest of the signal
+that's specific to Tack rather than table stakes for any PM tool.
 
 <p align="center">
-  <img src="docs/screenshots/board.png" width="49%" alt="Board — Kanban with WIP limits and drag-and-drop" />
-  <img src="docs/screenshots/timeline.png" width="49%" alt="Timeline — Gantt view with draggable bars" />
+  <img src="docs/screenshots/timeline.png" width="49%" alt="Timeline — dependency-aware Gantt view; the same DAG that decides what an agent is eligible to pick up next" />
+  <img src="docs/screenshots/dashboard.png" width="49%" alt="Dashboard — status distribution and throughput, the same measured-not-estimated posture applied to project-level reporting" />
 </p>
-<p align="center">
-  <img src="docs/screenshots/dashboard.png" width="49%" alt="Dashboard — status distribution and sprint throughput" />
-  <img src="docs/screenshots/list.png" width="49%" alt="List — sortable rows with inline editing" />
-</p>
+
+**Timeline** is the dependency DAG that also gates agent eligibility — an item
+blocked on an unfinished dependency isn't just visually behind a bar, it isn't
+handed to a runner yet either. **Dashboard** applies the same "measured, not
+estimated" rule the Agents page uses for run cost to project-level throughput.
 
 <details>
-<summary>Vocabulary editor — rename any term to match your domain</summary>
+<summary>Plain Kanban and list views, plus the vocabulary editor</summary>
 <br>
 
-![Vocabulary editor](docs/screenshots/settings-vocabulary.png)
+![Board — Kanban with WIP limits and drag-and-drop](docs/screenshots/board.png)
+![List — sortable rows with inline editing](docs/screenshots/list.png)
+![Vocabulary editor — rename any term to match your domain](docs/screenshots/settings-vocabulary.png)
 
 </details>
 

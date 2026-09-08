@@ -6,7 +6,7 @@
 Codex — and track the run as part of the item's history.** Self-hosted, one binary,
 no cloud account.
 
-<img src="screenshots/hero.gif" width="98%" alt="Board, Timeline, and vocabulary editor — project-management views only; no agent run is shown in this recording">
+<img src="screenshots/hero.gif" width="98%" alt="A board item assigned to Claude Code through Run with agent, tracked live from Leased to Succeeded, with its Execution tab showing the matched model and measured cost">
 
 Tack tracks work for any domain — software sprints, a kitchen renovation, thesis chapters, a
 maintenance schedule — through fully configurable vocabulary and workflow columns, and can hand
