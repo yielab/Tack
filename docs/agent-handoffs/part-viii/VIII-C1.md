@@ -1,6 +1,6 @@
 # VIII-C1 handoff
 
-- Base SHA / branch / final SHA: `abfd24b` / `agent/viii-c1-orch-new-measurement` / (set at commit)
+- Base SHA / branch / final SHA: `abfd24b` / `agent/viii-c1-orch-new-measurement` / `9d46e45`
 - Files changed (must equal ownership list): `.claude/scope-discipline.md` (the `orch_runs_new`/`orch_approvals_new` bullet), `docs/book/src/roadmap.md` (one paragraph repeating the same claim), this handoff. Equals ownership.
 - Contract fixtures consumed: none — documentation-only card, no runner-v1 contract involved.
 - Behavior implemented: none. No `.rs` file, migration, `docs/openapi.json` or `schema.gen.ts` touched.
