@@ -57,6 +57,24 @@ impl TackClient {
         extract(resp)
     }
 
+    /// POST with extra request headers on top of the ordinary auth header —
+    /// for a route gated on its own privileged token
+    /// (`orch dispatch`'s `X-Tack-Dispatch-Token`), which is never the same
+    /// value as `token`/`TACK_API_TOKEN` and must be sent alongside it, not
+    /// instead of it.
+    pub fn post_with_headers<T: Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+        extra_headers: &[(&str, &str)],
+    ) -> anyhow::Result<serde_json::Value> {
+        let resp = self
+            .request(reqwest::Method::POST, path, extra_headers)
+            .json(body)
+            .send()?;
+        extract(resp)
+    }
+
     pub fn patch<T: Serialize>(&self, path: &str, body: &T) -> anyhow::Result<serde_json::Value> {
         let resp = self
             .request(reqwest::Method::PATCH, path, &[])

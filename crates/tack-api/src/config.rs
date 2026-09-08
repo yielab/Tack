@@ -117,6 +117,16 @@ pub struct AppConfig {
     #[serde(default)]
     pub orch_approval_token: Option<String>,
 
+    /// Shared secret required to trigger a docket pipeline run via
+    /// `POST /api/projects/{id}/orch-dispatch`. Deliberately separate from
+    /// `TACK_API_TOKEN`, mirroring `orch_approval_token`'s own precedent
+    /// exactly: this spends money on a remote fleet and cannot be cancelled,
+    /// a materially higher-privilege act than the ordinary operator gate
+    /// already covers. **Fail-closed when unset** — see
+    /// `handlers::orch::require_dispatch_token`'s doc comment. Never logged.
+    #[serde(default)]
+    pub orch_dispatch_token: Option<String>,
+
     // ── Embedded runner (ADR 0061 decisions 2 and 6) ───────────────────────
     /// The env/CLI-flag default for whether the in-process embedded runner
     /// starts. `--with-runner`/`TACK_LOCAL_RUNNER_ENABLE` set this; the UI
@@ -215,6 +225,7 @@ impl Default for AppConfig {
             orch_poll_secs: default_orch_poll_secs(),
             orch_event_retention_days: default_orch_event_retention_days(),
             orch_approval_token: None,
+            orch_dispatch_token: None,
             local_runner_enable: false,
             execution_retention_enable: default_execution_retention_enable(),
             execution_retention_days: default_execution_retention_days(),
@@ -495,6 +506,13 @@ impl AppConfig {
             && !v.is_empty()
         {
             config.orch_approval_token = Some(v);
+        }
+        // Never log the dispatch-token value — same posture as the
+        // approval-token parse above.
+        if let Ok(v) = std::env::var("TACK_ORCH_DISPATCH_TOKEN")
+            && !v.is_empty()
+        {
+            config.orch_dispatch_token = Some(v);
         }
         if let Ok(v) = std::env::var("TACK_EXECUTION_RETENTION_ENABLE") {
             config.execution_retention_enable = v == "1" || v.eq_ignore_ascii_case("true");

@@ -130,6 +130,10 @@ fn orch_routes(state: AppState) -> Router<AppState> {
         // ─── Approvals + provisioning ───────────────────────────────
         .route("/approvals", get(orch::list_pending_approvals)) // fleet-wide inbox, read-only
         .route("/approvals/{token}", post(orch::decide_approval)) // also gated on TACK_ORCH_APPROVAL_TOKEN (checked inside the handler, not this layer)
+        .route(
+            "/projects/{id}/orch-dispatch",
+            post(orch::dispatch_project_pipeline),
+        ) // also gated on TACK_ORCH_DISPATCH_TOKEN (checked inside the handler, not this layer)
         .route("/projects/{id}/orch-budget", get(orch::get_orch_budget)) // budget cap vs. mirrored spend
         .route("/projects/{id}/orch-policy", get(orch::get_orch_policy)) // guardrail/tool-call/approval metrics (control-plane-wide)
         .route(

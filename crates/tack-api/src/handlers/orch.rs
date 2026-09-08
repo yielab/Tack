@@ -2838,3 +2838,153 @@ pub async fn decide_approval(
         state: result_state.as_str().to_string(),
     }))
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// POST /api/projects/{id}/orch-dispatch — trigger a docket pipeline run
+// ════════════════════════════════════════════════════════════════════════════
+//
+// ADR 0065. Distinct from every dispatch route above: this one claims no
+// Tack item. It resolves the docket project from the caller's *existing*
+// `orch_links` row (no second way to name one is invented), writes no
+// `orch_tasks`/`execution_requests` row of its own, and never consults
+// `decide_scheduling_owner` — a project-level pipeline run cannot collide
+// with the one-item invariant those rows exist to enforce.
+
+/// Header carrying the operator's `TACK_ORCH_DISPATCH_TOKEN` on
+/// `POST /api/projects/{id}/orch-dispatch`. Distinct from
+/// [`APPROVAL_TOKEN_HEADER`] — a different privileged action gets a
+/// different token and a different header, never a shared one two unrelated
+/// checks could be satisfied with by accident.
+pub const DISPATCH_TOKEN_HEADER: &str = "x-tack-dispatch-token";
+
+/// Triggering a docket pipeline run spends money on a remote fleet and
+/// cannot be called back afterward (`DocketAdapter::capabilities().cancel`
+/// is `false`) — a materially higher-privilege action than the ordinary
+/// `TACK_API_TOKEN` Bearer gate covers. This mirrors
+/// [`require_approval_token`] exactly, including its safe default: **an
+/// unconfigured `TACK_ORCH_DISPATCH_TOKEN` means "nothing on this server is
+/// configured to trigger a pipeline run," not "anyone holding the ordinary
+/// API token can."** See that function's own doc comment for the full
+/// "why" this differs from `TACK_API_TOKEN`'s own unset-means-trust-the-
+/// network-boundary default.
+fn require_dispatch_token(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
+    let Some(expected) = &state.config.orch_dispatch_token else {
+        return Err(ApiError::Forbidden(
+            "dispatching a docket pipeline run requires TACK_ORCH_DISPATCH_TOKEN to be \
+             configured on this server"
+                .to_string(),
+        ));
+    };
+    let provided = headers
+        .get(DISPATCH_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok());
+    match provided {
+        Some(tok) if crate::middleware::constant_time_eq(tok.as_bytes(), expected.as_bytes()) => {
+            Ok(())
+        }
+        _ => Err(ApiError::Forbidden(format!(
+            "missing or invalid {DISPATCH_TOKEN_HEADER} header"
+        ))),
+    }
+}
+
+/// `POST /api/projects/{id}/orch-dispatch` response.
+///
+/// **`run_id` is not a promise the run was permitted.** docket's
+/// `POST /dispatch/{project}` creates the run record and answers before the
+/// pipeline itself executes — guardrail evaluation included — on a thread
+/// this response never waits on (ADR 0065, "A block is not synchronously
+/// observable on this route"). This struct carries no `status`/`outcome`
+/// field for that reason: the only fact this route can honestly report is
+/// that docket accepted the request and started a run. What that run goes
+/// on to do — success, failure, or a guardrail block — is not visible here;
+/// it only becomes visible once the reconciler's own periodic poll of
+/// docket's `/runs` endpoint mirrors this run's outcome into Tack.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DispatchProjectPipelineResponse {
+    /// The docket project (`orch_links.remote_project`) the pipeline was
+    /// started against.
+    pub remote_project: String,
+    /// docket's own pipeline-run id — a different kind of id from an
+    /// `orch_tasks.remote_task_id`. Hand this to an operator who wants to
+    /// correlate what they see later once the reconciler mirrors it.
+    pub run_id: String,
+}
+
+/// `POST /api/projects/{id}/orch-dispatch` — trigger a full docket pipeline
+/// run for the project's linked docket project. `variables` is forwarded to
+/// docket exactly as received — an opaque `{name: value}` JSON object this
+/// route never inspects, validates, or logs (ADR 0065 decision 6); omit the
+/// field, or send `{}`, for a pipeline with no variables to resolve.
+#[utoipa::path(
+    post,
+    path = "/api/projects/{id}/orch-dispatch",
+    tag = "orchestration",
+    params(("id" = Uuid, Path, description = "Project ID")),
+    request_body = DispatchProjectPipelineRequest,
+    responses(
+        (status = 200, description = "docket accepted the request and started a pipeline run. This reports that the run started, never that it was permitted — poll the reconciler's mirrored run state for the eventual outcome", body = DispatchProjectPipelineResponse),
+        (status = 403, description = "Missing/invalid X-Tack-Dispatch-Token header, or TACK_ORCH_DISPATCH_TOKEN not configured on this server", body = ErrorEnvelope),
+        (status = 404, description = "Project not found, project not linked to a control plane, or orchestration disabled", body = ErrorEnvelope),
+        (status = 409, description = "docket refused the request itself (malformed variables, the control plane unreachable, or — defensively, though not reachable on this route today — a synchronous guardrail refusal)", body = ErrorEnvelope),
+    ),
+)]
+#[instrument(skip(state, headers, body))]
+pub async fn dispatch_project_pipeline(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<DispatchProjectPipelineRequest>,
+) -> ApiResult<Json<DispatchProjectPipelineResponse>> {
+    require_dispatch_token(&state, &headers)?;
+
+    state
+        .repo
+        .get_project(project_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} not found")))?;
+
+    let Some(link) = state.repo.get_orch_link(project_id).await? else {
+        return Err(ApiError::NotFound(format!(
+            "project {project_id} is not linked to a control plane"
+        )));
+    };
+
+    let control_plane = build_control_plane_for_decision(&state, link.control_plane_id).await?;
+
+    let run_id = match control_plane
+        .dispatch(&link.remote_project, body.variables)
+        .await
+    {
+        Ok(id) => id,
+        Err(OrchError::PolicyBlocked { policy_id, message }) => {
+            return Err(ApiError::Conflict(format!(
+                "docket refused the dispatch: guardrail policy {policy_id} — {message}"
+            )));
+        }
+        Err(e) => {
+            return Err(ApiError::Conflict(format!(
+                "failed to dispatch pipeline on control plane: {e}"
+            )));
+        }
+    };
+
+    Ok(Json(DispatchProjectPipelineResponse {
+        remote_project: link.remote_project,
+        run_id,
+    }))
+}
+
+/// `POST /api/projects/{id}/orch-dispatch` request body.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct DispatchProjectPipelineRequest {
+    /// Opaque `{name: value}` object, forwarded to docket verbatim as the
+    /// pipeline's `variables` — this route has no opinion on its shape
+    /// beyond "a JSON object" and never logs it. Omit for `{}`.
+    #[serde(default = "default_dispatch_variables")]
+    pub variables: serde_json::Value,
+}
+
+fn default_dispatch_variables() -> serde_json::Value {
+    serde_json::json!({})
+}
