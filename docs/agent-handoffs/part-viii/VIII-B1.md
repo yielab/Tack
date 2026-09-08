@@ -146,4 +146,68 @@ angle instead of the env-unset angle. If this reasoning is wrong, the fix is nar
 
 ## Amendments
 
-*(none yet)*
+**2026-09-08 — collapsed the duplicated `app_meta` read the coordinator flagged.**
+
+The coordinator reviewed this card and correctly flagged
+`orchestration_effectively_enabled` (the local helper originally added to
+`handlers/executions.rs`) as a duplicate of `handlers/settings.rs`'s existing
+`load_orch`/`effective_orch_enabled`: same `app_meta` key, same JSON shape, and —
+worse — the key was a hardcoded string literal rather than a bound reference to
+`settings.rs`'s `ORCH_KEY` constant, so the two copies could silently drift.
+Asked to collapse it onto one implementation.
+
+The direct fix (`executions.rs` calling `settings::effective_orch_enabled_for`
+via `crate::handlers::settings::...`) does not compile. `executions.rs` is
+loaded standalone via `#[path]` into two test binaries
+(`tests/handlers/executions_runner_admin.rs`, `tests/runner_protocol/lifecycle.rs`)
+that declare no `handlers` module at their crate root — a `crate::handlers::...`
+reference there fails with `error[E0433]: cannot find handlers in crate`. This
+is the same constraint the file's own pre-existing doc comments already state for
+`RunnerV1ErrorEnvelope` and `MeasurementSourceSchema` ("this file must keep
+compiling standalone... where a `crate::openapi` (or any other module's)
+reference would not resolve") — I had read those comments before my first pass
+but did not connect them to my own new call, and the compiler caught it
+immediately on the first attempt at the direct fix.
+
+Resolution, matching the file's own existing pattern for this exact problem
+(`clock: Arc<dyn ExecutionClock>` is injected the same way for the same reason):
+
+- `handlers/settings.rs` gained `pub(crate) async fn effective_orch_enabled_for(pool,
+  env_default) -> bool`, and `effective_orch_enabled` now calls it — one
+  implementation, one `app_meta` reader, for both. This is the piece the
+  coordinator asked for, unconditionally correct regardless of the
+  `executions.rs` constraint. **File touched outside stated ownership**, same
+  disclosure basis as `router.rs` in the original handoff: no other Wave 24 card
+  touches it, and the change is additive (a new function plus one call-site
+  change inside an existing function body, no signature or behavior change to
+  anything else in the file).
+- `OperatorExecutionState` (in `executions.rs`, owned) replaced its `orch_enable:
+  bool` field with `orchestration_enabled: Arc<dyn Fn(sqlx::SqlitePool) ->
+  BoxFuture<'static, bool> + Send + Sync>` — a callback, not a value, so
+  `executions.rs` never has to name `handlers::settings` itself.
+  `create_execution`'s guard calls `(state.orchestration_enabled)(state.repo.pool().clone()).await`.
+- `router.rs` (already disclosed as touched) now constructs that callback,
+  closing over `state.config.orch_enable` and calling
+  `crate::handlers::settings::effective_orch_enabled_for` — `router.rs` has no
+  standalone-compile constraint, so this is the one and only place that names
+  both modules together.
+- The two test files that construct `OperatorExecutionState` directly
+  (`executions_runner_admin.rs`, `lifecycle.rs`) pass a trivial
+  `Arc::new(|_pool| Box::pin(async { false }))` — behaviorally identical to the
+  `false` literal they passed before this amendment.
+
+Behavior is unchanged: same env default, same override precedence, same two
+guard tests (`create_execution_refuses_when_item_has_an_active_docket_task`,
+`create_execution_ignores_an_active_docket_task_when_orchestration_is_off`) pass
+unedited. Full suite re-run: `cargo nextest run --workspace` → 1479 passed, 7
+skipped (one unrelated flake in `tack-cli::local_runner` under parallel load,
+confirmed by an isolated rerun passing and a second full-suite rerun coming back
+green — nothing in this card's files). Revert proof re-run against the new
+structure: same single test fails
+(`create_execution_refuses_when_item_has_an_active_docket_task`, `200` where `409`
+was expected), all others unaffected. `.githooks/pre-push` re-run clean
+(comments, hygiene, `cargo fmt --all` + `--manifest-path
+crates/tack-desktop/Cargo.toml`, `cargo clippy --workspace --all-targets -- -D
+warnings`, generated-file freshness).
+
+Final SHA after this amendment: `002c784`.
