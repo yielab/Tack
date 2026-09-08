@@ -86,6 +86,10 @@ describe('OrchestrationPanel — linked project', () => {
     blueprint: null,
     auto_dispatch: false,
     budget_usd: 50,
+    // A value distinct from the real backend constant — proves the panel
+    // renders whatever the API returns rather than a string hardcoded here.
+    compatibility_label: 'legacy-docket:test-fixture-v9',
+    compatibility_policy: 'Fixture policy text used only to pin that this comes from the API.',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
   };
@@ -147,6 +151,12 @@ describe('OrchestrationPanel — linked project', () => {
     expect(container.textContent).toContain('control plane');
     expect(container.textContent).toContain('20% of tool calls denied');
     expect(container.textContent).toContain('no-secrets');
+    // The compatibility label/policy come from the fetched link, not a
+    // string hardcoded in the component — see `link`'s fixture values above.
+    expect(container.textContent).toContain('legacy-docket:test-fixture-v9');
+    expect(container.textContent).toContain(
+      'Fixture policy text used only to pin that this comes from the API.'
+    );
     dispose();
   });
 });
