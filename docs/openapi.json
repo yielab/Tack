@@ -2831,6 +2831,49 @@
         }
       }
     },
+    "/api/orch-runs/{run_id}": {
+      "get": {
+        "tags": [
+          "orchestration"
+        ],
+        "summary": "`GET /api/orch-runs/{run_id}` — a pipeline run's state as last mirrored\nby the reconciler, addressed by the run's own id rather than through a\nTack item. Complements `POST /api/projects/{id}/orch-dispatch`: that\nroute claims no item (ADR 0065 decision 5), so the only other route that\nread `orch_runs` — `GET /api/items/{id}/agent-activity` — cannot reach a\npipeline-triggered run at all.",
+        "description": "This route never contacts docket. Fetching inline here would be a second\ningestion path alongside the reconciler's own `/runs` poll (ADR 0065\ndecision 7 forbids exactly that), and it would make a read route reach\nthe network. **A run id is not a promise the run was permitted** — it\nnames a run docket accepted and started; whether it succeeded, failed,\nor hit a guardrail block is exactly the state this route reports once\nthe reconciler has observed it, never before.",
+        "operationId": "get_orch_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "description": "docket's own pipeline-run id, as returned by POST /api/projects/{id}/orch-dispatch",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's state as last mirrored by the reconciler; `mirrored: false` if this run id has no mirrored row yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrchRunReadbackResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Orchestration disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects": {
       "get": {
         "tags": [
@@ -10398,6 +10441,79 @@
             "items": {
               "$ref": "#/components/schemas/ToolCallEntry"
             }
+          }
+        }
+      },
+      "OrchRunReadbackResponse": {
+        "type": "object",
+        "description": "`GET /api/orch-runs/{run_id}` response — one `orch_runs` row, addressed\nby its own id rather than through an item. Mirrors [`OrchLinkView`]'s\n`linked`/`link` shape: `mirrored: false` with every other field `null`\nis the answer for a run id the reconciler has not (yet) written a row\nfor, not a 404. Tack cannot tell an un-polled run apart from one that\nwas never dispatched — both look identical here — so it reports the\nabsence rather than guessing which one it is.",
+        "required": [
+          "run_id",
+          "mirrored"
+        ],
+        "properties": {
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Present only when a task dispatch (not a project-level pipeline\ndispatch) has been correlated to this run — `null` is the ordinary\ncase for a run started through `POST /api/projects/{id}/orch-dispatch`\n(ADR 0065 decision 5: that route claims no item)."
+          },
+          "mirrored": {
+            "type": "boolean",
+            "description": "`true` once the reconciler's `/runs` poll has written a row for this\nrun id at least once."
+          },
+          "mirrored_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the reconciler last wrote this row — distinct from `started_at`/\n`ended_at`, which come from docket itself."
+          },
+          "remote_project": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw `RunSource` string as mirrored (`cli` / `webhook` / `schedule` /\n`sweep` / `mcp` / or an unrecognised value)."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The run's state as of the last reconciler poll — never fabricated\nwhen `mirrored` is `false`. A guardrail block surfaces here as a\nfailed state once docket's own run registry reflects it; this route\nnever learns the verdict any sooner than the reconciler does."
           }
         }
       },

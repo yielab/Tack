@@ -875,6 +875,20 @@ enum OrchAction {
         #[arg(long)]
         json: bool,
     },
+    /// Read back a pipeline run's mirrored state by its own run id.
+    ///
+    /// Reports what the reconciler last mirrored into Tack's own database —
+    /// never docket itself. A run id `tack orch dispatch` just returned may
+    /// not be mirrored yet: that reports as "not mirrored yet", not an
+    /// error, since Tack cannot tell an un-polled run apart from an unknown
+    /// run id.
+    Run {
+        /// The run id, as returned by `tack orch dispatch`
+        run_id: String,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
@@ -1218,6 +1232,7 @@ fn main() -> anyhow::Result<()> {
                 dispatch_token,
                 json,
             } => cmd_orch_dispatch(&client, project, variables, dispatch_token, json),
+            OrchAction::Run { run_id, json } => cmd_orch_run(&client, run_id, json),
         },
 
         // Already handled above; unreachable but required for exhaustiveness.
@@ -2515,6 +2530,44 @@ fn cmd_orch_dispatch(
          (success, failure, or a guardrail block) becomes visible in Tack once the \
          reconciler's next poll mirrors it."
     );
+    Ok(())
+}
+
+/// `tack orch run <run_id>`, pairing with `tack orch dispatch`. Reads back
+/// whatever the reconciler has mirrored for this run id — never docket
+/// itself, so a run just dispatched can legitimately report as not yet
+/// mirrored.
+fn cmd_orch_run(client: &TackClient, run_id: String, as_json: bool) -> anyhow::Result<()> {
+    let resp = client.get(&format!("/orch-runs/{run_id}"))?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+        return Ok(());
+    }
+    let mirrored = resp["mirrored"].as_bool().unwrap_or(false);
+    if !mirrored {
+        println!("Run {run_id}: not mirrored yet");
+        println!(
+            "  Tack has not observed this run id yet — either it hasn't been polled since \
+             it was dispatched, or the id is wrong. Both look identical from here; try again \
+             after the next reconciler poll."
+        );
+        return Ok(());
+    }
+    let state = resp["state"].as_str().unwrap_or("?");
+    let remote_project = resp["remote_project"].as_str().unwrap_or("?");
+    println!("Run {run_id}: {state} (project {remote_project})");
+    if let Some(started_at) = resp["started_at"].as_str() {
+        println!("  Started: {started_at}");
+    }
+    if let Some(ended_at) = resp["ended_at"].as_str() {
+        println!("  Ended:   {ended_at}");
+    }
+    if let Some(error) = resp["error"].as_str() {
+        println!("  Error:   {error}");
+    }
+    if let Some(mirrored_at) = resp["mirrored_at"].as_str() {
+        println!("  Mirrored at: {mirrored_at}");
+    }
     Ok(())
 }
 

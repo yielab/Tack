@@ -136,6 +136,7 @@ fn orch_routes(state: AppState) -> Router<AppState> {
         ) // also gated on TACK_ORCH_DISPATCH_TOKEN (checked inside the handler, not this layer)
         .route("/projects/{id}/orch-budget", get(orch::get_orch_budget)) // budget cap vs. mirrored spend
         .route("/projects/{id}/orch-policy", get(orch::get_orch_policy)) // guardrail/tool-call/approval metrics (control-plane-wide)
+        .route("/orch-runs/{run_id}", get(orch::get_orch_run)) // a dispatched pipeline run's mirrored state, read back by its own id
         .route(
             "/templates/{id}/provision",
             post(provisioning::create_project_with_pod),

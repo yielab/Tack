@@ -1016,6 +1016,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orch-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /api/orch-runs/{run_id}` — a pipeline run's state as last mirrored
+         *     by the reconciler, addressed by the run's own id rather than through a
+         *     Tack item. Complements `POST /api/projects/{id}/orch-dispatch`: that
+         *     route claims no item (ADR 0065 decision 5), so the only other route that
+         *     read `orch_runs` — `GET /api/items/{id}/agent-activity` — cannot reach a
+         *     pipeline-triggered run at all.
+         * @description This route never contacts docket. Fetching inline here would be a second
+         *     ingestion path alongside the reconciler's own `/runs` poll (ADR 0065
+         *     decision 7 forbids exactly that), and it would make a read route reach
+         *     the network. **A run id is not a promise the run was permitted** — it
+         *     names a run docket accepted and started; whether it succeeded, failed,
+         *     or hit a guardrail block is exactly the state this route reports once
+         *     the reconciler has observed it, never before.
+         */
+        get: operations["get_orch_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -4541,6 +4572,55 @@ export interface components {
             tool_calls: components["schemas"]["ToolCallEntry"][];
         };
         /**
+         * @description `GET /api/orch-runs/{run_id}` response — one `orch_runs` row, addressed
+         *     by its own id rather than through an item. Mirrors [`OrchLinkView`]'s
+         *     `linked`/`link` shape: `mirrored: false` with every other field `null`
+         *     is the answer for a run id the reconciler has not (yet) written a row
+         *     for, not a 404. Tack cannot tell an un-polled run apart from one that
+         *     was never dispatched — both look identical here — so it reports the
+         *     absence rather than guessing which one it is.
+         */
+        OrchRunReadbackResponse: {
+            /** Format: date-time */
+            ended_at?: string | null;
+            error?: string | null;
+            /**
+             * Format: uuid
+             * @description Present only when a task dispatch (not a project-level pipeline
+             *     dispatch) has been correlated to this run — `null` is the ordinary
+             *     case for a run started through `POST /api/projects/{id}/orch-dispatch`
+             *     (ADR 0065 decision 5: that route claims no item).
+             */
+            item_id?: string | null;
+            /**
+             * @description `true` once the reconciler's `/runs` poll has written a row for this
+             *     run id at least once.
+             */
+            mirrored: boolean;
+            /**
+             * Format: date-time
+             * @description When the reconciler last wrote this row — distinct from `started_at`/
+             *     `ended_at`, which come from docket itself.
+             */
+            mirrored_at?: string | null;
+            remote_project?: string | null;
+            run_id: string;
+            /**
+             * @description Raw `RunSource` string as mirrored (`cli` / `webhook` / `schedule` /
+             *     `sweep` / `mcp` / or an unrecognised value).
+             */
+            source?: string | null;
+            /** Format: date-time */
+            started_at?: string | null;
+            /**
+             * @description The run's state as of the last reconciler poll — never fabricated
+             *     when `mirrored` is `false`. A guardrail block surfaces here as a
+             *     failed state once docket's own run registry reflects it; this route
+             *     never learns the verdict any sooner than the reconciler does.
+             */
+            state?: string | null;
+        };
+        /**
          * @description Pagination envelope for the item-list endpoint. `total` is the
          *     unpaginated match count so clients can render "N of M".
          */
@@ -7423,6 +7503,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerV1ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_orch_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description docket's own pipeline-run id, as returned by POST /api/projects/{id}/orch-dispatch */
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run's state as last mirrored by the reconciler; `mirrored: false` if this run id has no mirrored row yet */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrchRunReadbackResponse"];
+                };
+            };
+            /** @description Orchestration disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

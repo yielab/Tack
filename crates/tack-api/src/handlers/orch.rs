@@ -2988,3 +2988,96 @@ pub struct DispatchProjectPipelineRequest {
 fn default_dispatch_variables() -> serde_json::Value {
     serde_json::json!({})
 }
+
+/// `GET /api/orch-runs/{run_id}` response — one `orch_runs` row, addressed
+/// by its own id rather than through an item. Mirrors [`OrchLinkView`]'s
+/// `linked`/`link` shape: `mirrored: false` with every other field `null`
+/// is the answer for a run id the reconciler has not (yet) written a row
+/// for, not a 404. Tack cannot tell an un-polled run apart from one that
+/// was never dispatched — both look identical here — so it reports the
+/// absence rather than guessing which one it is.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OrchRunReadbackResponse {
+    pub run_id: String,
+    /// `true` once the reconciler's `/runs` poll has written a row for this
+    /// run id at least once.
+    pub mirrored: bool,
+    /// Present only when a task dispatch (not a project-level pipeline
+    /// dispatch) has been correlated to this run — `null` is the ordinary
+    /// case for a run started through `POST /api/projects/{id}/orch-dispatch`
+    /// (ADR 0065 decision 5: that route claims no item).
+    pub item_id: Option<Uuid>,
+    pub remote_project: Option<String>,
+    /// Raw `RunSource` string as mirrored (`cli` / `webhook` / `schedule` /
+    /// `sweep` / `mcp` / or an unrecognised value).
+    pub source: Option<String>,
+    /// The run's state as of the last reconciler poll — never fabricated
+    /// when `mirrored` is `false`. A guardrail block surfaces here as a
+    /// failed state once docket's own run registry reflects it; this route
+    /// never learns the verdict any sooner than the reconciler does.
+    pub state: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    /// When the reconciler last wrote this row — distinct from `started_at`/
+    /// `ended_at`, which come from docket itself.
+    pub mirrored_at: Option<DateTime<Utc>>,
+}
+
+/// `GET /api/orch-runs/{run_id}` — a pipeline run's state as last mirrored
+/// by the reconciler, addressed by the run's own id rather than through a
+/// Tack item. Complements `POST /api/projects/{id}/orch-dispatch`: that
+/// route claims no item (ADR 0065 decision 5), so the only other route that
+/// read `orch_runs` — `GET /api/items/{id}/agent-activity` — cannot reach a
+/// pipeline-triggered run at all.
+///
+/// This route never contacts docket. Fetching inline here would be a second
+/// ingestion path alongside the reconciler's own `/runs` poll (ADR 0065
+/// decision 7 forbids exactly that), and it would make a read route reach
+/// the network. **A run id is not a promise the run was permitted** — it
+/// names a run docket accepted and started; whether it succeeded, failed,
+/// or hit a guardrail block is exactly the state this route reports once
+/// the reconciler has observed it, never before.
+#[utoipa::path(
+    get,
+    path = "/api/orch-runs/{run_id}",
+    tag = "orchestration",
+    params(("run_id" = String, Path, description = "docket's own pipeline-run id, as returned by POST /api/projects/{id}/orch-dispatch")),
+    responses(
+        (status = 200, description = "The run's state as last mirrored by the reconciler; `mirrored: false` if this run id has no mirrored row yet", body = OrchRunReadbackResponse),
+        (status = 409, description = "Orchestration disabled", body = ErrorEnvelope),
+    ),
+)]
+#[instrument(skip(state))]
+pub async fn get_orch_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> ApiResult<Json<OrchRunReadbackResponse>> {
+    let run = state.repo.get_orch_run(&run_id).await?;
+    Ok(Json(match run {
+        Some(r) => OrchRunReadbackResponse {
+            run_id: r.run_id,
+            mirrored: true,
+            item_id: r.item_id,
+            remote_project: Some(r.remote_project),
+            source: Some(r.source),
+            state: Some(r.state),
+            started_at: r.started_at,
+            ended_at: r.ended_at,
+            error: r.error,
+            mirrored_at: Some(r.updated_at),
+        },
+        None => OrchRunReadbackResponse {
+            run_id,
+            mirrored: false,
+            item_id: None,
+            remote_project: None,
+            source: None,
+            state: None,
+            started_at: None,
+            ended_at: None,
+            error: None,
+            mirrored_at: None,
+        },
+    }))
+}

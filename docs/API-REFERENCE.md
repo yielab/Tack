@@ -1310,7 +1310,7 @@ and for the orchestration layer that supervises those runs, lives under
 `/api/model-profiles`, `/api/local-runner*` (the runner embedded by `tack serve
 --with-runner` and its stored secrets), `/api/control-planes`, `/api/fleet`,
 `/api/items/{id}/dispatch`, `/api/sprints/{id}/dispatch` (+ its `dry-run`),
-`/api/projects/{id}/orch-dispatch`,
+`/api/projects/{id}/orch-dispatch`, `/api/orch-runs/{run_id}`,
 `/api/items/{id}/agent-activity`, `/api/projects/{id}/agent-activity`,
 `/api/approvals`, `/api/projects/{id}/orch-budget`, `/api/projects/{id}/orch-policy`,
 `/api/projects/{id}/orch-link`, `/api/settings/orchestration`, `/api/economics/items`,
@@ -1404,6 +1404,16 @@ on, so a guardrail block is not observable on this route the way it is on
 becomes visible once Tack's reconciler next polls docket and mirrors that run's
 outcome — see `docs/adr/0065-docket-pipeline-dispatch-trigger.md` for the full
 reasoning. `tack orch dispatch <project>` is this route's in-tree CLI caller.
+
+`get_orch_run` (`GET /api/orch-runs/{run_id}`) reads back a dispatched run's mirrored
+state by its own id — the complement `orch-dispatch` needs, since that route claims no
+Tack item and the only other route that reads `orch_runs`
+(`GET /api/items/{id}/agent-activity`) is item-scoped. It reads Tack's own database only;
+it never calls docket, so it cannot resolve a block any sooner than the reconciler's next
+poll does. A run id with no mirrored row yet answers `200` with `"mirrored": false` and
+every other field `null`, never a `404` — Tack cannot tell an un-polled run apart from an
+unknown run id, so it reports the absence rather than guessing which one it is.
+`tack orch run <run_id>` is this route's in-tree CLI caller.
 
 ---
 
