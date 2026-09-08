@@ -429,6 +429,56 @@ async fn orch_link_get_reflects_saved_link() {
     assert_eq!(v["link"]["control_plane_id"], plane_id);
 }
 
+/// The wire label must come from `legacy_bridge`'s constant, never a
+/// re-typed literal — a copied string would silently stop tracking the
+/// decision if the constant ever changed.
+#[tokio::test]
+async fn orch_link_carries_the_legacy_docket_compatibility_constants() {
+    let (app, _) = common::test_app_with_config(orch_config()).await;
+    let project_id = create_project(&app).await;
+    let plane = create_control_plane(&app, None).await;
+    let plane_id = plane["id"].as_str().unwrap();
+
+    let put_res = req(
+        &app,
+        Method::PUT,
+        &format!("/api/projects/{project_id}/orch-link"),
+        Some(json!({
+            "control_plane_id": plane_id,
+            "remote_project": "my-remote-project",
+            "status_map": {}
+        })),
+    )
+    .await;
+    assert_eq!(put_res.status(), StatusCode::OK);
+    let put_body = body_json(put_res).await;
+    assert_eq!(
+        put_body["compatibility_label"],
+        tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_LABEL
+    );
+    assert_eq!(
+        put_body["compatibility_policy"],
+        tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_POLICY
+    );
+
+    let get_res = req(
+        &app,
+        Method::GET,
+        &format!("/api/projects/{project_id}/orch-link"),
+        None,
+    )
+    .await;
+    let v = body_json(get_res).await;
+    assert_eq!(
+        v["link"]["compatibility_label"],
+        tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_LABEL
+    );
+    assert_eq!(
+        v["link"]["compatibility_policy"],
+        tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_POLICY
+    );
+}
+
 // ─── Fleet aggregate ────────────────────────────────────────────────────────
 
 #[tokio::test]

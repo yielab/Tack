@@ -49,6 +49,9 @@ use tack_db::repo::orch::{
     ControlPlane, CreateControlPlane, OrchApproval, OrchEvent, OrchLink, OrchMetricLatest, OrchRun,
     OrchTask, PendingOrchApproval, UpdateControlPlane, UpsertOrchLink,
 };
+use tack_orch::adapters::legacy_bridge::{
+    LEGACY_DOCKET_COMPATIBILITY_LABEL, LEGACY_DOCKET_COMPATIBILITY_POLICY,
+};
 use tack_orch::adapters::registry::{self, RegistryError};
 use tack_orch::{ControlPlane as OrchControlPlane, OrchError};
 
@@ -827,6 +830,15 @@ pub struct OrchLinkResponse {
     /// Matches `orch_links.budget_usd`.
     pub budget_usd: Option<f64>,
     pub status_map: StatusMap,
+    /// `tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_LABEL`,
+    /// verbatim. Every control plane this API can register or link to is a
+    /// legacy Docket bridge (the only adapter `registry::build` accepts), so
+    /// this is unconditional rather than derived per-plane.
+    pub compatibility_label: String,
+    /// `tack_orch::adapters::legacy_bridge::LEGACY_DOCKET_COMPATIBILITY_POLICY`,
+    /// verbatim, so a caller can render or quote the justification without a
+    /// second round trip to the source.
+    pub compatibility_policy: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -842,6 +854,8 @@ impl From<OrchLink> for OrchLinkResponse {
             auto_dispatch: l.auto_dispatch,
             budget_usd: l.budget_usd,
             status_map: serde_json::from_value(l.status_map).unwrap_or_default(),
+            compatibility_label: LEGACY_DOCKET_COMPATIBILITY_LABEL.to_string(),
+            compatibility_policy: LEGACY_DOCKET_COMPATIBILITY_POLICY.to_string(),
             created_at: l.created_at,
             updated_at: l.updated_at,
         }
