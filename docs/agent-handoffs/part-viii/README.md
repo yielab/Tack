@@ -26,7 +26,7 @@ designing one has left the Part — write the question in the handoff and stop.
 |---|---|---|---|---|
 | 24 | VIII-A1 · VIII-B1 · VIII-B2 · VIII-C1 | yes — four disjoint file sets | nothing beyond ADR 0060 | `1b9b7e6` + the 2026-09-08 planning commit; **pin `git rev-parse --short develop` at dispatch**, not this line |
 | 25 | VIII-A2 · VIII-B3 | yes — disjoint files | ADR 0065 accepted (it is), plus VIII-A1 and VIII-B2 integrated (they are) | `7890673` |
-| 26 | VIII-C2 · VIII-A3 | yes — disjoint files | Wave 25 integrated (it is) | `b66ae27` |
+| 26 | VIII-C2 · VIII-A3 | yes — disjoint files | Wave 25 integrated (it is) | `0002136` |
 
 **Integration line: `develop`.** Every card branches as `agent/viii-<card>-<slug>`
 (`agent/viii-a1-dispatch`, `agent/viii-b1-mirror-guard`, …) and never merges itself.
@@ -166,3 +166,22 @@ The one trap: this route reads **what the reconciler last mirrored**, never dock
 an inline fetch would be the second ingestion path decision 7 forbids, and it would also make a
 read route reach the network. An un-polled run is a legitimate, distinct answer — not an error,
 and not a fabricated state.
+
+### VIII-C2 — re-verify the adapter live, at the version the repo ships
+
+Board: `TODO.md` §VIII.4 → VIII-C2. **Last card of this Part.** Owns the "Verified live
+against a real docket server" section of the module doc in
+`crates/tack-orch/src/adapters/docket.rs`, and its own handoff. It changes no Tack route,
+type or test.
+
+Read, in this order: the board card (it lists what must be captured and what must not be
+touched); the "Verified live" section itself, which is the evidence you are re-dating;
+`DocketAdapter::dispatch` in the same file (never captured live); then ADR 0065's section
+"A block is not synchronously observable on this route", which is the claim acceptance 4
+tests. Do not read the reconciler and do not read `handlers/orch.rs`.
+
+The one trap: **a dispatch runs a real pod pipeline, and a pipeline spends money.** The
+route answers before the work does, so the run id you are after is obtained without any of
+the pipeline succeeding — give the isolated instance no working provider credential so it
+fails locally instead of reaching a paid API. And `DOCKET_HOME` is a temporary directory you
+own; `~/.docket` holds the user's real approvals and is never touched.

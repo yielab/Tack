@@ -85,7 +85,7 @@ card's block only.
 |---|---|---|---|
 | 24 — Close the four gaps | VIII-A1 · VIII-B1 · VIII-B2 · VIII-C1 | 62 | **Integrated 2026-09-08** on `integrate/viii-wave-24`. Four branches, **zero file overlap**, no conflicts. Gate green: `pre-push` clean, 1485 Rust tests (7 skipped), 857 frontend tests, type-check clean, no generated-file drift. **A1's finding is the wave's real result and it changed the ADR:** docket's dispatch route creates the run record and answers *before* the pipeline runs, on a daemon thread, so a `pre_input` block is never an HTTP error there the way it is on `enqueue_task` — a run id says a run started, never that it was permitted, and the reconciler `/runs` poll is the only place the verdict ever becomes visible. **C1 settled a claim two documents disagreed about:** neither staging table exists in a migrated database (48 tables), and the sibling "11 `orch_*` tables" was the same naive grep counting the staging names — the real figure is 9 plus `control_planes`. The integrator corrected both archive copies and replaced the wrong command beside one of them. **B1 was returned once** for reimplementing the orchestration-enabled resolver with a hardcoded `'orch_config'` where the original binds `ORCH_KEY` — it failed *open*, silently, which is the failure the card exists to prevent; now one resolver, injected as a callback because `executions.rs` must keep compiling standalone under `#[path]`. **C1 was returned once** for leaving the sibling miscount standing. One finding routed to VIII-B3 | 
 | 25 — The caller | VIII-A2 · VIII-B3 | 62 | **Integrated 2026-09-08** on `integrate/viii-wave-25`. Two branches, **zero file overlap**, no conflicts. Gate green: `pre-push` clean, 1497 Rust tests (7 skipped), 857 frontend tests, type-check clean, no generated-file drift. **A2 shipped the caller** — the route, the fail-closed `TACK_ORCH_DISPATCH_TOKEN` on its own header, and `tack orch dispatch`; every operator-facing string was checked and each use of "permitted" is a negation. **A2's open question turned out to be a real hole and is now VIII-A3:** a dispatched run is stored in `orch_runs` with a null item correlation (the store permits that explicitly), but the only route reading that table is item-scoped, so the run id the CLI hands back is unusable through any Tack route. That is a gap between ADR 0065's decisions 5 and 7, not a defect in A2, which correctly refused to invent a read surface. **B3 was returned twice.** First for duplicating the active-status literal into a third query, which made a neighbouring doc comment's "defined once" claim false twelve lines away. The composition fix then orphaned `has_active_docket_task_for_item` and falsified a module doc in `legacy_bridge.rs` — the integrator called the removal (§VIII.1 rule 6 governs pre-existing dead code, not code a card just killed) and B3 recorded it as the integrator's call. Collapsing the guard to one read also retired the untestable race B3 had disclosed |
-| 26 — Proof and the missing read | VIII-C2 · VIII-A3 | 62 | **Last.** C2 re-verifies the adapter live against a real `docket serve` built from `../rack-cli` at `v0.2.0-beta.2`, including what A1 and A2 landed. A3 closes the observability gap Wave 25 found. Both dispatchable now that Wave 25 is integrated; they own disjoint files |
+| 26 — Proof and the missing read | VIII-C2 · VIII-A3 | 62 | **Dispatched 2026-09-08** from `0002136`, two Sonnet agents in worktrees, disjoint files. C2 had no card block until dispatch — only an ownership row and a position in the graph, the same gap A2 had; it is written now. **Last.** C2 re-verifies the adapter live against a real `docket serve` built from `../rack-cli` at `v0.2.0-beta.2`, including what A1 and A2 landed. A3 closes the observability gap Wave 25 found. Both dispatchable now that Wave 25 is integrated; they own disjoint files |
 
 ## §VIII.0 Cold-start context capsule
 
@@ -427,6 +427,62 @@ and unreachable, and only docket can answer for it.
 **Must not:** attach the run to a Tack item, add a docket fetch on the read path, add a second
 `orch_runs` query, or widen this into a runs *listing* — one run by id is the gap; a fleet-wide
 run browser is a separate decision.
+
+### VIII-C2 — re-verify the adapter against a real docket server, at the version the repo ships
+
+Wave 26, parallel with VIII-A3. **Last card of this Part.** Every live claim in
+`adapters/docket.rs` was captured against docket `0.2.0b1`; the repository is now at
+`v0.2.0-beta.2`, and two methods that shipped in this Part — `dispatch` (VIII-A1) and the
+route that calls it (VIII-A2) — have never met a real server at all.
+
+**Owns:** the "Verified live against a real docket server" section of the module doc in
+`crates/tack-orch/src/adapters/docket.rs`, and the VIII-C2 handoff.
+
+**Acceptance**
+
+1. Build and run `docket serve` from `../rack-cli` at tag `v0.2.0-beta.2` — not
+   `~/.local/bin/docket`, which is `0.2.0b1` and older than the repository. Record in the
+   handoff how it was built and how the version was confirmed from the running process.
+2. **`DOCKET_HOME` points at a temporary directory the card owns.** Record `~/.docket`'s
+   mtime before and after and show it unchanged, the way the `provision_pod` capture already
+   in that section does.
+3. Exercise `dispatch` **through this crate's own compiled adapter**, not a hand-built
+   `curl` — the standard the `provision_pod` capture set. Confirm against the live wire: the
+   run id arrives under `run` and not `task`; an absent body means `{}`; an unknown project
+   404s; and a request with no `Authorization` header is rejected.
+4. **Confirm or refute ADR 0065's central claim** that a guardrail block is not
+   synchronously observable on this route: the response arrives before the pipeline runs, so
+   no verdict can reach the caller. If the live server contradicts that, it is a finding
+   against the ADR — write it in the handoff and change no decision.
+5. Re-verify every claim already in that section against `v0.2.0-beta.2` and mark each one
+   **confirmed**, **changed** (with the new capture), or **not re-run** (with why). A claim
+   carried forward untested is recorded as carried forward, never as verified.
+6. Close or re-record the two gaps that section admits: `decide_approval`'s `deny` and
+   409/`ApprovalNoop` paths, read from source and never captured live. If they are now
+   reachable, capture them; if not, say what blocks it.
+7. **Unmeasured is nullable.** Anything the run could not reach — a pipeline that needs a
+   real provider key, a route the isolated instance cannot serve — is written as
+   `not_measured` with the reason. No claim is upgraded from "read the source" to "verified
+   live" without a capture behind it.
+
+**The trap: a dispatch runs a real pod pipeline, and a pipeline spends money.** The route
+answers before the work does, so the run id — the observable under test — is obtained
+without any of the pipeline succeeding. Give the isolated instance no working provider
+credential, so the pipeline fails locally instead of reaching a paid API, and say so in the
+handoff. A capture that cost real model spend is a failure of this card even if the numbers
+are right.
+
+**Must not:** write to `../rack-cli` or commit anything from it; touch `~/.docket`; add or
+change any Tack route, type or test; or fix a defect it finds. The single exception, because
+this card is last and holds the only live server: if a capture proves `dispatch`'s own
+response decoding wrong, correct that decode and name the ownership widening in the handoff.
+Anything larger — a reconciler behaviour, an API shape, a second adapter method — is a
+finding for a new card.
+
+**Why this card exists:** the "Verified live" section is the reason a reader trusts this
+adapter over docket's own documentation, which it contradicts in four places. It is evidence
+with a date on it, and two of the methods it vouches for are older than the code beneath
+them.
 
 ## §VIII.5 Definition of done, and deliberate exclusions
 
