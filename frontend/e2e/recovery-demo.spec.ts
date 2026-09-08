@@ -164,8 +164,8 @@ test('recovery demo', async ({ page }) => {
 
   // The board's live-update channel doesn't reliably reach across the
   // container topology this demo runs in (see handoff); reload rather than
-  // trust a push update, matching how screenshots.spec.ts / hero-gif.spec.ts
-  // treat every state change — a fresh navigation, not a live assertion.
+  // trust a push update, matching how screenshots.spec.ts treats every
+  // state change — a fresh navigation, not a live assertion.
   await page.reload();
   await waitForApp(page);
   await expect(page.getByText('Fix the flaky checkout race', { exact: false }).first()).toBeVisible();
@@ -302,8 +302,7 @@ test('recovery demo', async ({ page }) => {
   const filter = 'fps=8,scale=1200:-2:flags=lanczos';
   execSync(
     // -update 1: newer ffmpeg's image2 muxer refuses a single still frame
-    // without it ("does not contain an image sequence pattern"); hero-gif's
-    // own copy of this command predates that default.
+    // without it ("does not contain an image sequence pattern").
     `ffmpeg -y -ss 1.0 -i "${videoPath}" -vf "${filter},palettegen=stats_mode=diff" -update 1 "${palettePath}"`,
     { stdio: 'pipe' },
   );

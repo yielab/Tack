@@ -1,12 +1,12 @@
 import { defineConfig } from '@playwright/test';
 import base from './playwright.config';
 
-// Config for the local-only capture specs (README screenshots + hero GIF).
-// The main playwright.config.ts testIgnores those specs so they never run in
-// CI; this config re-includes them while reusing the same webServer, projects,
-// and settings. Used by `make screenshots` and `make gif`.
+// Config for the local-only README screenshot spec. The main
+// playwright.config.ts testIgnores it so it never runs in CI; this config
+// re-includes it while reusing the same webServer, projects, and settings.
+// Used by `make screenshots`.
 export default defineConfig({
   ...base,
   testIgnore: undefined,
-  testMatch: ['**/screenshots.spec.ts', '**/hero-gif.spec.ts'],
+  testMatch: ['**/screenshots.spec.ts'],
 });

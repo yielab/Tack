@@ -6,16 +6,10 @@ import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { waitForApp } from './helpers';
 
-// Records real Agents-page screenshots — agents.png, attempt.png,
-// two-machines.png — plus a `hero gif` test that is currently SKIPPED (read
-// the RE-RECORDING RECIPE comment on its own `test.skip` before touching
-// it). `docs/screenshots/hero.gif` is NOT produced by this file yet: the
-// only dispatch path this build's "Run with agent" dialog allows (Auto) is
-// never claimed by the scheduler, and every dispatch path that actually
-// completes is disabled by the dialog's own submit gate — recording the
-// dialog "working" would show a click that did nothing real. The existing
-// hero.gif (PM views, no agent run) stays in its original slot until that
-// gate ships and this test is re-enabled.
+// Records real hero/Agents-page assets — hero.gif, agents.png,
+// agents-flow.gif, attempt.png, two-machines.png — driving the actual "Run
+// with agent" dialog and Agents-page controls, never a direct API call
+// standing in for a click a real operator would make.
 //
 // Run against an ALREADY-RUNNING release build of `tack serve --with-runner`
 // (built with `--features embed-spa` so the SPA is actually embedded — the
@@ -216,64 +210,12 @@ test.afterAll(() => {
 });
 
 // ── hero.gif ─────────────────────────────────────────────────────────────
-//
-// RE-RECORDING RECIPE — read this whole block before removing the `test.skip`
-// below. Everything from here to the "Flush the video" comment already
-// produces the exact footage this test wants; only the ~15 lines between
-// "Scene: open Run with agent" and "Scene: the board card's state chip" need
-// to change, once the dispatch-gate bug below ships a fix:
-//
-//   1. Confirm the fix landed: with the modal open, Harness = Claude Code,
-//      Model mode = "Project default — anthropic / claude-sonnet-4-5", the
-//      badge beneath it must read something other than "Unsupported" and
-//      the "Run" button must NOT be disabled. If it is still disabled or
-//      still says Unsupported, the fix has not shipped — do not record.
-//   2. Delete the `page.keyboard.press('Escape')` line and the entire
-//      `apiFetch('/executions', …)` block that follows it (through
-//      `const requestId = created.request_id;`).
-//   3. In their place:
-//        await page.getByRole('button', { name: 'Run', exact: true }).click();
-//        await page.waitForTimeout(1200);
-//        const requestId = <read the new request id — either capture it from
-//          `store.create`'s toast/UI, or fall back to the same
-//          `GET /executions` + filter-by-item_id lookup the hero test used
-//          to use (see git history on this file) if nothing on screen
-//          exposes it>.
-//   4. Everything below that (reload, open the Execution tab via the chip,
-//      `waitForRequestState`, expand artifacts, encode) is unchanged — it
-//      was never the broken part.
-//   5. Keep the exact fixtures this test already uses: viewport 1440×900
-//      (`test.use` above), the disposable one-commit git fixture
-//      (`repoDir`/`repoRev`, `beforeAll`), the tool-free agent-profile
-//      instructions (`PROFILE_INSTRUCTIONS` — this sandbox's `claude`
-//      subprocess has no file/Bash tools, only two MCP connectors, so a
-//      file-editing instruction will not do real work here), and the GIF
-//      encode settings two lines below (`fps=6,scale=860:-2` — the first
-//      pass at `fps=8,scale=1000:-2` was 4.44 MiB; this pass was 2.63 MiB,
-//      keeping the asset well under a few MiB).
-//   6. Re-enable the test (delete the `test.skip` line), run it, and update
-//      `README.md`'s hero slot + the `## Screenshots` block (see `git log -p`
-//      on this file for the markup a prior recording used) — put the new
-//      hero.gif back in the top hero slot, moving the diagram beneath it
-//      again.
-//   7. `make gif` still points at the OLD `hero-gif.spec.ts` (PM-tour,
-//      dev-webServer, fake harness shims) via `playwright.capture.config.ts`
-//      — running it after re-recording would silently put that stale
-//      PM-views GIF back in `hero.gif`'s slot. Either repoint `make gif` at
-//      this file, or delete/retire `hero-gif.spec.ts`, before trusting that
-//      target again.
+// Drives the real "Run with agent" dialog from the board card through to a
+// succeeded attempt with its artifacts expanded — the dialog's own submit
+// gate (`shared/runWithAgent/shared.ts#gateHarnessModelSelection`) allows
+// this exact combination through because the harness attests model
+// passthrough, so no direct API call stands in for the click.
 test('hero gif', async ({ page }) => {
-  test.skip(
-    true,
-    'Blocked: every dispatch path through "Run with agent" either sits in the ' +
-      'submit gate (isCombinationSupported ignores model_passthrough, disabling ' +
-      'Run for every explicit model on both bundled harnesses) or is accepted ' +
-      '(Auto) and never claimed by the scheduler — recording a click on Run ' +
-      'today would show either a disabled button or a live "Unsupported" badge ' +
-      'immediately before the run succeeds by a different mechanism. See the ' +
-      're-recording recipe in the comment above this test.',
-  );
-
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.mkdirSync(FRAMES_DIR, { recursive: true });
 
@@ -295,51 +237,18 @@ test('hero gif', async ({ page }) => {
   await page.getByLabel('Base revision').fill(repoRev);
   await page.waitForTimeout(900);
 
-  // The dialog's own submit gate (shared/runWithAgent/shared.ts#gateHarnessModelSelection)
-  // calls isCombinationSupported, which only ever checks a harness's
-  // DECLARED model_combinations — never model_passthrough — so it disables
-  // "Run" for any explicit model on both bundled harnesses (neither
-  // declares one; confirmed by reading the function). The one mode the
-  // gate does allow, Auto (requested_model_provider/id both null), DOES
-  // submit — but the real request then sits `queued` forever: reproduced
-  // directly against this exact build (item created, harness claude-code,
-  // exact_runner selector) and confirmed stuck at both +11s and +29s with
-  // no attempt ever created. Both are real product gaps, not a recording
-  // shortcut. Closing here and dispatching the exact configuration just
-  // entered directly against the real API is what actually reaches a
-  // completed attempt.
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(600);
+  // ── Scene: submit the real dialog ───────────────────────────────────────
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await page.waitForTimeout(1200);
 
-  const created = (await apiFetch('/executions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      item_id: itemId,
-      idempotency_key: `hero-gif-${Date.now()}`,
-      selector_kind: 'exact_runner',
-      selector_id: embeddedRunnerId,
-      agent_profile_id: agentProfileId,
-      requested_harness_kind: 'claude-code',
-      requested_model_provider: 'anthropic',
-      requested_model_id: 'claude-sonnet-4-5',
-      agent_profile_snapshot: {
-        name: PROFILE_NAME,
-        instructions: PROFILE_INSTRUCTIONS,
-        tool_policy: {},
-        timeout_seconds: 180,
-        budgets: {},
-      },
-      repository_snapshot: { kind: 'git', remote: repoDir, base_revision: repoRev, subdirectory: null },
-      permission_policy: { tools: [], network: false },
-      budgets: {},
-      environment: {},
-      metadata: {},
-      timeout_seconds: 180,
-      status_map_policy_id: null,
-    }),
-  })) as { request_id: string };
-  const requestId = created.request_id;
+  // `store.create`'s own success toast doesn't carry the request id in a
+  // selector-stable way — the same lookup the board card's own chip uses
+  // once it reloads (`GET /executions?item_id=`) gets it just as directly.
+  const listed = (await apiFetch(`/executions?item_id=${itemId}`)) as {
+    data: Array<{ request_id: string }>;
+  };
+  const requestId = listed.data[0]?.request_id;
+  if (!requestId) throw new Error('no execution request found for this item after clicking Run');
 
   // The store learns about this request on its next poll tick or a reload
   // (it was created via a direct call, not `store.create()`) — reload once
@@ -416,6 +325,74 @@ test('agents screenshot', async ({ page }) => {
 
   await screenshotFullContent(page, path.join(OUT_DIR, 'agents.png'));
   console.log('\n✓ agents.png saved\n');
+});
+
+// ── agents-flow.gif ──────────────────────────────────────────────────────
+// The same Test-run control as the screenshot above, but scrolled to that
+// section alone and recorded through to a real Succeeded/Verified result —
+// the onboarding form above it carries no state change over time, so a
+// GIF of it would show nothing a static screenshot doesn't already.
+test('agents flow gif', async ({ page }) => {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.mkdirSync(FRAMES_DIR, { recursive: true });
+
+  // Shorter than this file's shared 900px viewport: the page has under
+  // 700px of content below the "Test run" heading, so a 900px-tall
+  // viewport can never scroll that heading past its own vertical middle —
+  // there just isn't enough content beneath it to push further.
+  await page.setViewportSize({ width: 1440, height: 620 });
+
+  await page.goto(`${BASE}/agents`);
+  await waitForApp(page);
+  await expect(page.getByText('Agent execution on this machine')).toBeVisible();
+  await expect(page.getByText('Running', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+
+  await page.evaluate(() => {
+    const heading = [...document.querySelectorAll('h2')].find((h) => h.textContent?.trim() === 'Test run');
+    if (!heading) return;
+    let container: HTMLElement | null = heading.parentElement;
+    while (container) {
+      const style = getComputedStyle(container);
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && container.scrollHeight > container.clientHeight) break;
+      container = container.parentElement;
+    }
+    if (!container) return;
+    const headingRect = heading.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    container.scrollTop += headingRect.top - containerRect.top - 12;
+  });
+  await page.waitForTimeout(1000);
+
+  await page.getByLabel('Repository remote').fill(repoDir);
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: 'Run test' }).click();
+  await page.waitForTimeout(1500);
+
+  await expect(page.getByText('Succeeded', { exact: true }).first()).toBeVisible({ timeout: 60_000 });
+  await page.waitForTimeout(1000);
+  await expect(page.getByText('Verified', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(2000);
+
+  await page.close();
+  const videoPath = await page.video()!.path();
+  const palettePath = path.join(FRAMES_DIR, 'palette.png');
+  const gifPath = path.join(OUT_DIR, 'agents-flow.gif');
+  // The recorded video keeps this file's shared 900px frame height even
+  // though the viewport above is shorter — Playwright pads the extra
+  // height with blank space rather than shrinking the frame. Cropping to
+  // the actual viewport before scaling removes that dead band.
+  const filter = 'crop=1440:620:0:0,fps=6,scale=760:-2:flags=lanczos';
+  execSync(
+    `ffmpeg -y -ss 1.0 -i "${videoPath}" -vf "${filter},palettegen=stats_mode=diff" -update 1 "${palettePath}"`,
+    { stdio: 'pipe' },
+  );
+  execSync(
+    `ffmpeg -y -ss 1.0 -i "${videoPath}" -i "${palettePath}" -filter_complex "[0:v] ${filter} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "${gifPath}"`,
+    { stdio: 'pipe' },
+  );
+  fs.rmSync(FRAMES_DIR, { recursive: true, force: true });
+  const sizeMB = (fs.statSync(gifPath).size / 1_048_576).toFixed(2);
+  console.log(`\n✓ agents-flow.gif saved (${sizeMB} MB) -> ${gifPath}\n`);
 });
 
 // ── attempt.png ──────────────────────────────────────────────────────────

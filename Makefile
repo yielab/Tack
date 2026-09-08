@@ -1,4 +1,4 @@
-.PHONY: build run dev debug cli test test-verbose test-core test-db e2e e2e-install e2e-ui screenshots gif audit load check lint fmt fmt-check reset-db inspect-db api-health api-stats api-projects clean clean-all desktop-sidecar desktop help
+.PHONY: build run dev debug cli test test-verbose test-core test-db e2e e2e-install e2e-ui screenshots audit load check lint fmt fmt-check reset-db inspect-db api-health api-stats api-projects clean clean-all desktop-sidecar desktop help
 
 # ─── Default ──────────────────────────────────────
 help: ## Show this help
@@ -69,8 +69,9 @@ e2e-ui: frontend/node_modules ## Run E2E tests in the interactive Playwright UI
 screenshots: frontend/node_modules ## Capture README screenshots → docs/screenshots/ (starts API + Vite automatically)
 	cd frontend && npx playwright test e2e/screenshots.spec.ts --config playwright.capture.config.ts --project=chromium --workers=1
 
-gif: frontend/node_modules ## Capture hero GIF → docs/screenshots/hero.gif (requires ffmpeg)
-	cd frontend && npx playwright test e2e/hero-gif.spec.ts --config playwright.capture.config.ts --project=chromium --workers=1
+# hero.gif / agents-flow.gif are real, live, billed recordings against a
+# release build with real installed agents — there is no `make` target for
+# them. See the recipe in frontend/e2e/agent-assets.spec.ts's own header.
 
 # ─── Security & Performance ──────────────────────
 audit: ## Scan Rust + npm dependencies for known CVEs (both workspaces + frontend)

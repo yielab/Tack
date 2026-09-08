@@ -47,21 +47,22 @@ export default defineConfig({
   // own doc comment for why that removes a create-time race under
   // `fullyParallel: true` below.
   globalSetup: './e2e/global-setup.ts',
-  // Capture specs (screenshots / hero GIF) are local-only tools — they require
-  // ffmpeg and a running dev environment. Exclude them from the default CI suite;
-  // run them explicitly with `make screenshots` or `make gif`. recovery-demo.spec.ts
-  // is excluded for a different reason: it targets a release artifact in Docker,
-  // not this config's dev `cargo run`/`npm run dev` webServer — see
+  // screenshots.spec.ts is a local-only tool — it requires ffmpeg and a
+  // running dev environment. Excluded from the default CI suite; run it
+  // explicitly with `make screenshots`. recovery-demo.spec.ts is excluded
+  // for a different reason: it targets a release artifact in Docker, not
+  // this config's dev `cargo run`/`npm run dev` webServer — see
   // playwright.recovery-demo.config.ts and scripts/record-recovery-demo.sh.
-  // agent-assets.spec.ts is the same shape as the first two: it drives a
-  // release build of `tack serve --with-runner` with real harness binaries on
-  // PATH, not this config's dev pair, and it flips the one server-wide agent
-  // execution switch without holding helpers.ts's `executionToggleLock` — left
-  // in the default suite it fails on its own missing environment and makes
-  // every spec that reads a capability fail alongside it.
+  // agent-assets.spec.ts is the same shape: it drives a release build of
+  // `tack serve --with-runner` with real harness binaries on PATH, not this
+  // config's dev pair, and it flips the one server-wide agent execution
+  // switch without holding helpers.ts's `executionToggleLock` — left in the
+  // default suite it fails on its own missing environment and makes every
+  // spec that reads a capability fail alongside it. Its own header comment
+  // carries the recipe to run it — there is no `make` target for it, since
+  // every attempt it makes is a real, live, billed model call.
   testIgnore: [
     '**/screenshots.spec.ts',
-    '**/hero-gif.spec.ts',
     '**/recovery-demo.spec.ts',
     '**/agent-assets.spec.ts',
   ],

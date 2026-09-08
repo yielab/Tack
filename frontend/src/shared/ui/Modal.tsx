@@ -47,7 +47,14 @@ const Modal: Component<ModalProps> = (props) => {
     });
   });
 
+  // Solid's `Portal` re-propagates delegated events through the logical
+  // owner tree, not the detached DOM subtree it actually mounts into — a
+  // click anywhere in this dialog (Run, Cancel, a radio, a bare `<select>`)
+  // still reaches whatever `onClick` sits on the component that opened it
+  // (a board card's own row-click, say) unless stopped here, once, for the
+  // whole modal.
   const handleBackdrop = (e: MouseEvent) => {
+    e.stopPropagation();
     if (e.target === e.currentTarget) props.onClose();
   };
 
