@@ -217,7 +217,11 @@ fn local_runner_routes() -> Router<AppState> {
 /// artifact storage below, for consistency.
 fn operator_execution_routes(state: &AppState) -> Router<AppState> {
     let clock: Arc<dyn ExecutionClock> = Arc::new(SystemExecutionClock);
-    let operator_state = executions::OperatorExecutionState::with_clock(state.repo.clone(), clock);
+    let operator_state = executions::OperatorExecutionState::with_clock(
+        state.repo.clone(),
+        clock,
+        state.config.orch_enable,
+    );
     let decision_clock: Arc<dyn ExecutionClock> = Arc::new(SystemExecutionClock);
     let decision_state =
         decisions::DecisionOperatorState::with_clock(state.repo.clone(), decision_clock)

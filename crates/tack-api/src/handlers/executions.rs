@@ -167,16 +167,26 @@ pub enum ModelProvenanceSchema {
 }
 
 /// State for the operator execution router — constructed from the shared
-/// API state's repository and clock when mounted in `router.rs`.
+/// API state's repository, clock and orchestration-enable default when
+/// mounted in `router.rs`. `orch_enable` is `AppState::config.orch_enable`
+/// (`TACK_ORCH_ENABLE`'s startup value) — the fallback
+/// [`orchestration_effectively_enabled`] uses when no `app_meta` override
+/// exists. Carried as a plain `bool`, not the full `AppState`, because this
+/// router only ever needs that one field of it.
 #[derive(Clone)]
 pub struct OperatorExecutionState {
     pub repo: Repository,
     pub clock: Arc<dyn ExecutionClock>,
+    pub orch_enable: bool,
 }
 
 impl OperatorExecutionState {
-    pub fn with_clock(repo: Repository, clock: Arc<dyn ExecutionClock>) -> Self {
-        Self { repo, clock }
+    pub fn with_clock(repo: Repository, clock: Arc<dyn ExecutionClock>, orch_enable: bool) -> Self {
+        Self {
+            repo,
+            clock,
+            orch_enable,
+        }
     }
 }
 
@@ -200,6 +210,32 @@ fn error(
         status,
         Json(serde_json::to_value(envelope).expect("envelope serializes")),
     )
+}
+
+/// Whether orchestration (the legacy Docket bridge) is effectively on right now:
+/// the `app_meta`-stored override if the UI has ever set one, else `env_default`
+/// (`OperatorExecutionState::orch_enable`, itself `TACK_ORCH_ENABLE`'s startup
+/// value) — the same algorithm `handlers::settings::effective_orch_enabled` uses,
+/// and the same reason [`create_execution`]'s dual-scheduling guard must use it
+/// rather than the startup default alone: an operator can turn orchestration off
+/// from Settings without a restart, and a stale `orch_tasks` row left over from
+/// before that must not start blocking runner-v1 the moment the toggle flips. Not
+/// called directly because `effective_orch_enabled` takes the full `AppState`,
+/// which `OperatorExecutionState` deliberately does not carry (see that struct's
+/// doc comment); this reads the same `app_meta` key and shape by hand from the
+/// pool this handler already has. Any future change to that key or shape must be
+/// mirrored here.
+async fn orchestration_effectively_enabled(pool: &sqlx::SqlitePool, env_default: bool) -> bool {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_meta WHERE key = 'orch_config'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    let overridden = raw
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.get("enabled").and_then(Value::as_bool));
+    overridden.unwrap_or(env_default)
 }
 
 #[derive(Clone)]
@@ -607,6 +643,38 @@ pub async fn create_execution(
             json!({}),
         )
     })?;
+    // One scheduling owner, the mirror direction: `dispatcher::dispatch_item`
+    // already refuses legacy Docket dispatch when the item has a live runner-v1
+    // request (`tack_db::repo::orch::Repository::has_active_execution_request_for_item`);
+    // this is the missing other half, closed with that query's own mirror,
+    // `has_active_docket_task_for_item`. Skipped for an idempotent replay
+    // (`existing_snapshot.is_some()`) — a replay creates no new row, so there is
+    // nothing here to collide with — and consulted only while orchestration is
+    // effectively on, so a stale `orch_tasks` row from a previously-enabled bridge
+    // can never block runner-v1, which stays the plan of record either way.
+    if existing_snapshot.is_none()
+        && orchestration_effectively_enabled(state.repo.pool(), state.orch_enable).await
+        && state
+            .repo
+            .has_active_docket_task_for_item(input.item_id)
+            .await
+            .map_err(|_| {
+                error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StableErrorCode::InternalError,
+                    "Could not verify legacy Docket scheduling state",
+                    json!({}),
+                )
+            })?
+    {
+        return Err(error(
+            StatusCode::CONFLICT,
+            StableErrorCode::Conflict,
+            "Item has an active legacy Docket task; refusing to create a runner-v1 \
+             execution request to preserve one scheduling owner",
+            json!({"item_id": input.item_id}),
+        ));
+    }
     // An exact retry must be allowed to reach the durable replay record even
     // if a mutable runner status changed after the original create.
     if existing_snapshot.is_none() && input.selector_kind == "exact_runner" {
