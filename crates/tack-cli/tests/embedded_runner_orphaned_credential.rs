@@ -1,19 +1,13 @@
 //! Acceptance proof that the embedded runner recovers when its persisted
-//! credential (`storage_dir/runner/session.json`) names a runner id that the
-//! *current* database has no row for — the shape of deleting `tack.db`
-//! without also deleting the `storage_dir` beside it, leaving a
-//! now-foreign credential in an otherwise intact state directory.
+//! credential (`storage_dir/runner/session.json`) names a runner id the
+//! *current* database has no row for — deleting `tack.db` without also
+//! deleting `storage_dir` beside it.
 //!
 //! One real `tack serve --with-runner` subprocess is started twice against
-//! the *same* `storage_dir`, with the database file removed and recreated
-//! (fresh, empty schema) in between — scoping the embedded runner's state
-//! directory to `storage_dir` does not cover this shape, since `storage_dir`
-//! never moves here; only the database underneath it does.
-//!
-//! A single subprocess per boot, not two in-process servers in one test
-//! function, for the same reason `embedded_runner_state_scoping.rs` gives:
-//! `tack_api::server::serve_inner` installs a process-global `tracing`
-//! subscriber once per process.
+//! the same `storage_dir`, with the database file removed and recreated in
+//! between. A single subprocess per boot, not two in-process servers in one
+//! test: `tack_api::server::serve_inner` installs a process-global
+//! `tracing` subscriber once per process.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -36,6 +30,21 @@ impl Drop for ServerGuard {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// Calls `attempt` every 50ms until it returns `Some`, or gives up once
+/// `timeout` has elapsed since the first call, returning `None`.
+fn poll_until<T>(timeout: Duration, mut attempt: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = attempt() {
+            return Some(value);
+        }
+        if Instant::now() > deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -111,24 +120,21 @@ fn start_server(database_url: &str, storage_dir: &Path) -> ServerGuard {
 
 fn wait_for_ready(base_url: &str, child: &mut Child) {
     let client = reqwest::blocking::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        if let Ok(response) = client
-            .get(format!("{base_url}/api/health"))
-            .timeout(Duration::from_millis(500))
-            .send()
-            && response.status().is_success()
-        {
-            return;
-        }
+    let ready = poll_until(Duration::from_secs(15), || {
         if let Some(status) = child.try_wait().expect("poll child status") {
             panic!("tack serve --with-runner exited early during startup: {status}");
         }
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            panic!("tack serve --with-runner did not become ready within 15s");
-        }
-        std::thread::sleep(Duration::from_millis(100));
+        client
+            .get(format!("{base_url}/api/health"))
+            .timeout(Duration::from_millis(500))
+            .send()
+            .ok()
+            .filter(|response| response.status().is_success())
+            .map(|_| ())
+    });
+    if ready.is_none() {
+        let _ = child.kill();
+        panic!("tack serve --with-runner did not become ready within 15s");
     }
 }
 
@@ -139,28 +145,19 @@ fn wait_for_ready(base_url: &str, child: &mut Child) {
 /// runs several agents' builds and test suites concurrently.
 fn wait_for_active_runner(base_url: &str) -> Option<String> {
     let client = reqwest::blocking::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(response) = client
+    poll_until(Duration::from_secs(30), || {
+        let response = client
             .get(format!("{base_url}/api/runners"))
             .timeout(Duration::from_millis(500))
             .send()
-            && let Ok(body) = response.json::<Value>()
-            && let Some(rows) = body.get("data").and_then(Value::as_array)
-        {
-            for row in rows {
-                if row.get("state").and_then(Value::as_str) == Some("active")
-                    && let Some(id) = row.get("runner_id").and_then(Value::as_str)
-                {
-                    return Some(id.to_owned());
-                }
-            }
-        }
-        if Instant::now() > deadline {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+            .ok()?;
+        let body = response.json::<Value>().ok()?;
+        let rows = body.get("data").and_then(Value::as_array)?;
+        rows.iter()
+            .find(|row| row.get("state").and_then(Value::as_str) == Some("active"))
+            .and_then(|row| row.get("runner_id").and_then(Value::as_str))
+            .map(str::to_owned)
+    })
 }
 
 /// Reads `session.json` once it exists and holds `expected_runner_id` —
@@ -170,21 +167,17 @@ fn wait_for_active_runner(base_url: &str) -> Option<String> {
 /// write still in flight. Bounded the same way every other poll in this file
 /// is: a session that never lands, or never updates, is the real failure.
 fn wait_for_session_containing(path: &Path, expected_runner_id: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && contents.contains(expected_runner_id)
-        {
-            return contents;
-        }
-        if Instant::now() > deadline {
-            panic!(
-                "session.json at {} never came to hold runner id {expected_runner_id}",
-                path.display()
-            );
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    poll_until(Duration::from_secs(10), || {
+        std::fs::read_to_string(path)
+            .ok()
+            .filter(|contents| contents.contains(expected_runner_id))
+    })
+    .unwrap_or_else(|| {
+        panic!(
+            "session.json at {} never came to hold runner id {expected_runner_id}",
+            path.display()
+        )
+    })
 }
 
 fn remove_sqlite_file(database_path: &Path) {
@@ -196,13 +189,42 @@ fn remove_sqlite_file(database_path: &Path) {
     }
 }
 
+/// Asserts the recovery was reported exactly once, at info, and that the
+/// line carries none of the paths or runner ids involved.
+fn assert_recovery_logged_once_with_no_identifiers(
+    boot: &ServerGuard,
+    database_path: &Path,
+    storage_dir: &Path,
+    runner_id_before: &str,
+    runner_id_after: &str,
+) {
+    let lines = boot.log_lines.lock().expect("log lines lock").clone();
+    let recovery_lines: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains("no longer using"))
+        .collect();
+    assert_eq!(
+        recovery_lines.len(),
+        1,
+        "the recovery must be reported exactly once, at info; saw: {lines:?}"
+    );
+    let line = recovery_lines[0];
+    assert!(
+        !line.contains(&database_path.display().to_string())
+            && !line.contains(storage_dir.to_str().unwrap())
+            && !line.contains(runner_id_before)
+            && !line.contains(runner_id_after),
+        "the recovery log line must carry no path or id: {line}"
+    );
+}
+
 /// A `storage_dir` an earlier boot already enrolled a runner into, paired
 /// with a database that was deleted and recreated underneath it rather than
 /// reconfigured alongside it. The embedded runner must still reach `active`,
 /// under a fresh identity, and must say so exactly once, at `info`, with no
 /// path, id, or credential in the line.
 #[test]
-fn embedded_runner_recovers_a_credential_orphaned_by_a_recreated_database() {
+fn orphaned_credential_recovers_on_recreated_database() {
     let root = tempfile::Builder::new()
         .prefix("embedded-orphan-credential")
         .tempdir()
@@ -228,7 +250,6 @@ fn embedded_runner_recovers_a_credential_orphaned_by_a_recreated_database() {
         "a credential orphaned by a recreated database must not stall the embedded runner; \
          it must recover under a fresh identity and still reach `active`",
     );
-
     assert_ne!(
         runner_id_before, runner_id_after,
         "an orphaned credential must never be reused as-is — the recovered identity must be new"
@@ -240,28 +261,12 @@ fn embedded_runner_recovers_a_credential_orphaned_by_a_recreated_database() {
         "the on-disk session must be overwritten with the fresh identity's own credential"
     );
 
-    let lines = second_boot
-        .log_lines
-        .lock()
-        .expect("log lines lock")
-        .clone();
-    let recovery_lines: Vec<&String> = lines
-        .iter()
-        .filter(|line| line.contains("no longer using"))
-        .collect();
-    assert_eq!(
-        recovery_lines.len(),
-        1,
-        "the recovery must be reported exactly once, at info; saw: {lines:?}"
+    assert_recovery_logged_once_with_no_identifiers(
+        &second_boot,
+        &database_path,
+        &storage_dir,
+        &runner_id_before,
+        &runner_id_after,
     );
-    let line = recovery_lines[0];
-    assert!(
-        !line.contains(&database_path.display().to_string())
-            && !line.contains(storage_dir.to_str().unwrap())
-            && !line.contains(&runner_id_before)
-            && !line.contains(&runner_id_after),
-        "the recovery log line must carry no path or id: {line}"
-    );
-
     drop(second_boot);
 }

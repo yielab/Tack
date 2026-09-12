@@ -1,19 +1,15 @@
 //! Acceptance proof that the embedded runner's on-disk state directory
 //! follows the same configuration the database does, not the process's own
 //! working directory. Two real `tack serve --with-runner` subprocesses
-//! (`env!("CARGO_BIN_EXE_tack")`) are started from the *same* current
-//! directory but pointed at two different databases/`storage_dir`s, exactly
-//! the shape an operator running the command twice from one shell would
-//! produce. Each is driven only through `GET /api/runners` and the
-//! filesystem — never a UI.
-//!
-//! Two separate subprocesses, not two in-process servers in one test
-//! function: `tack_api::server::serve_inner` installs a process-global
-//! `tracing` subscriber once per process, so a second in-process boot in the
-//! same test would panic on that second `.init()` call regardless of this
-//! card's fix.
+//! (`env!("CARGO_BIN_EXE_tack")`), started from the *same* current
+//! directory but pointed at two different databases/`storage_dir`s — the
+//! shape an operator running the command twice from one shell would
+//! produce. Two separate subprocesses, not two in-process servers in one
+//! test: `tack_api::server::serve_inner` installs a process-global
+//! `tracing` subscriber once per process, so a second in-process boot would
+//! panic on that second `.init()` call regardless of this fix.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -33,6 +29,21 @@ impl Drop for ServerGuard {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// Calls `attempt` every 50ms until it returns `Some`, or gives up once
+/// `timeout` has elapsed since the first call, returning `None`.
+fn poll_until<T>(timeout: Duration, mut attempt: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = attempt() {
+            return Some(value);
+        }
+        if Instant::now() > deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -70,112 +81,89 @@ fn start_server_with_runner(shared_cwd: &Path, root: tempfile::TempDir) -> Serve
     guard
 }
 
-/// Polls `GET /api/health` until the process answers or exits. The claim
-/// this test makes is that a server started this way becomes ready and
-/// reaches its own active runner — not that it does so within any
-/// particular number of seconds — so this deadline is a liveness backstop,
-/// not part of the claim: a stall past it means the process is genuinely
-/// wedged, never that it was merely slow to spawn, run its migrations, and
-/// bind its listener while the rest of this suite runs alongside it.
+/// Polls `GET /api/health` until the process answers or exits. A liveness
+/// backstop, not part of the claim: a stall past it means the process is
+/// genuinely wedged, never that it was merely slow to spawn, migrate and
+/// bind while the rest of this suite runs alongside it.
 fn wait_for_ready(base_url: &str, child: &mut Child) {
     let client = reqwest::blocking::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(response) = client
-            .get(format!("{base_url}/api/health"))
-            .timeout(Duration::from_millis(500))
-            .send()
-            && response.status().is_success()
-        {
-            return;
-        }
+    let ready = poll_until(Duration::from_secs(30), || {
         if let Some(status) = child.try_wait().expect("poll child status") {
             panic!("tack serve --with-runner exited early during startup: {status}");
         }
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            panic!("tack serve --with-runner did not become ready within 30s");
-        }
-        std::thread::sleep(Duration::from_millis(100));
+        client
+            .get(format!("{base_url}/api/health"))
+            .timeout(Duration::from_millis(500))
+            .send()
+            .ok()
+            .filter(|response| response.status().is_success())
+            .map(|_| ())
+    });
+    if ready.is_none() {
+        let _ = child.kill();
+        panic!("tack serve --with-runner did not become ready within 30s");
     }
 }
 
 /// Polls `GET /api/runners` until exactly one row reports `state ==
-/// "active"`, returning its `runner_id`. The same liveness-backstop
-/// reasoning as `wait_for_ready` applies here: self-provisioning is a
-/// handful of local HTTP round trips plus one SQLite write, cheap enough
-/// that a genuine success is never expected to approach this budget — only
-/// a machine busy enough to starve those round trips for tens of seconds,
-/// or an actual regression, reaches it. Matches
-/// `embedded_runner_orphaned_credential.rs`'s sibling wait, which polls for
-/// the identical transition.
+/// "active"`, returning its `runner_id`. Self-provisioning is a handful of
+/// local HTTP round trips plus one SQLite write, cheap enough that a genuine
+/// success never approaches this bound — only a busy machine or an actual
+/// regression does.
 fn wait_for_active_runner(base_url: &str) -> Option<String> {
     let client = reqwest::blocking::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(response) = client
+    poll_until(Duration::from_secs(30), || {
+        let response = client
             .get(format!("{base_url}/api/runners"))
             .timeout(Duration::from_millis(500))
             .send()
-            && let Ok(body) = response.json::<Value>()
-            && let Some(rows) = body.get("data").and_then(Value::as_array)
-        {
-            for row in rows {
-                if row.get("state").and_then(Value::as_str) == Some("active")
-                    && let Some(id) = row.get("runner_id").and_then(Value::as_str)
-                {
-                    return Some(id.to_owned());
-                }
-            }
-        }
-        if Instant::now() > deadline {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+            .ok()?;
+        let body = response.json::<Value>().ok()?;
+        let rows = body.get("data").and_then(Value::as_array)?;
+        rows.iter()
+            .find(|row| row.get("state").and_then(Value::as_str) == Some("active"))
+            .and_then(|row| row.get("runner_id").and_then(Value::as_str))
+            .map(str::to_owned)
+    })
 }
 
-/// Polls for `path` to exist. `store_session`
-/// (`tack_runner::client::transport`) writes the session file to disk
-/// *after* the server's own enrollment response already flipped the
-/// runner's row to `active` — `embedded_runner_orphaned_credential.rs`
-/// documents and waits out the identical ordering for the same reason. A
-/// bare `is_file()` check taken the instant `wait_for_active_runner`
-/// returns can race that write; this bounds the same way every other wait
-/// in this file does, so a session that never lands is still reported
-/// promptly rather than read one instant too early.
+/// Polls for `path` to exist. `store_session` (`tack_runner::client::
+/// transport`) writes the session file *after* the server's own enrollment
+/// response already flipped the runner's row to `active`, so a bare
+/// `is_file()` check taken the instant `wait_for_active_runner` returns can
+/// race that write.
 fn wait_for_session_file(path: &Path) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if path.is_file() {
-            return true;
-        }
-        if Instant::now() > deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    poll_until(Duration::from_secs(10), || path.is_file().then_some(())).is_some()
+}
+
+/// Waits for `server`'s own embedded runner to reach `active` and its
+/// session to land under its own `storage_dir` (never the shared cwd both
+/// servers in this test share), returning the runner id and state directory
+/// for the caller's own cross-server comparison.
+fn assert_server_enrolled(
+    server: &ServerGuard,
+    root_path: &Path,
+    label: &str,
+) -> (String, PathBuf) {
+    let runner_id = wait_for_active_runner(&server.base_url).unwrap_or_else(|| {
+        panic!("server {label}'s own embedded runner must reach `active` in its own database")
+    });
+    let state_dir = root_path.join("storage").join("runner");
+    assert!(
+        wait_for_session_file(&state_dir.join("session.json")),
+        "server {label}'s enrolled session must live under its own storage_dir, not the shared cwd"
+    );
+    (runner_id, state_dir)
 }
 
 /// Two servers, each against its own database and `storage_dir`, started in
-/// turn from the same working directory — each must reach its own active
-/// runner enrollment, proven from `GET /api/runners` on its own address and
-/// from the state directory actually written on disk, never through a UI.
-///
-/// Reverting `EmbeddedRunnerControl::new`'s derivation to its old,
-/// unconditional `load_runner_config(ConfigOverrides::default(), None)` call
-/// (dropping the storage-scoped `state_dir` override) turns both servers'
-/// state directory back into the crate's bare, cwd-relative default —
-/// identical for both since they share `shared_cwd`. The first assertion
-/// below is what catches that: server A enrolls successfully, but its
-/// session lands in the shared working directory instead of under its own
-/// `storage_dir`, and the test fails there before server B is ever started.
-/// That ordering is deliberate — the collision is a property of *where the
-/// first* server writes, so proving it needs only one server on disk; the
-/// two-server half of this test proves the separate claim that two distinct
-/// identities result once the scoping holds.
+/// turn from the same working directory: each must enroll its own runner,
+/// under its own state directory, and neither may fall back to the shared
+/// cwd's bare legacy default. Server A is checked (and dropped) before
+/// server B ever starts — a collision is a property of where the *first*
+/// server writes, so proving it needs only one server on disk at a time.
 #[test]
-fn two_servers_on_two_databases_each_see_only_their_own_runner_enrollment() {
+fn each_server_sees_only_its_own_runner_enrollment() {
     let shared_cwd = tempfile::Builder::new()
         .prefix("embedded-scope-shared-cwd")
         .tempdir()
@@ -187,13 +175,7 @@ fn two_servers_on_two_databases_each_see_only_their_own_runner_enrollment() {
         .expect("install a root");
     let root_a_path = root_a.path().to_path_buf();
     let server_a = start_server_with_runner(shared_cwd.path(), root_a);
-    let runner_id_a = wait_for_active_runner(&server_a.base_url)
-        .expect("server A's own embedded runner must reach `active` in its own database");
-    let state_dir_a = root_a_path.join("storage").join("runner");
-    assert!(
-        wait_for_session_file(&state_dir_a.join("session.json")),
-        "server A's enrolled session must live under its own storage_dir, not the shared cwd"
-    );
+    let (runner_id_a, state_dir_a) = assert_server_enrolled(&server_a, &root_a_path, "A");
     drop(server_a);
 
     let root_b = tempfile::Builder::new()
@@ -202,15 +184,7 @@ fn two_servers_on_two_databases_each_see_only_their_own_runner_enrollment() {
         .expect("install b root");
     let root_b_path = root_b.path().to_path_buf();
     let server_b = start_server_with_runner(shared_cwd.path(), root_b);
-    let runner_id_b = wait_for_active_runner(&server_b.base_url).expect(
-        "server B's own embedded runner must reach `active` in its own database, \
-         independently of the identity server A already enrolled",
-    );
-    let state_dir_b = root_b_path.join("storage").join("runner");
-    assert!(
-        wait_for_session_file(&state_dir_b.join("session.json")),
-        "server B's enrolled session must live under its own storage_dir, not the shared cwd"
-    );
+    let (runner_id_b, state_dir_b) = assert_server_enrolled(&server_b, &root_b_path, "B");
     drop(server_b);
 
     assert_ne!(
