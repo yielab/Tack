@@ -360,7 +360,7 @@ fn claim(attempt: &str) -> ClaimRequest {
 }
 
 #[tokio::test]
-async fn a_claimed_attempt_reaches_a_real_harness_process_with_its_own_checkout() {
+async fn a_claimed_attempt_reaches_the_harness_in_its_own_checkout() {
     let (source_dir, commit) = source_repository();
     let source = source_dir.path();
     let root_dir = temp_root("run");
@@ -403,7 +403,7 @@ async fn a_claimed_attempt_reaches_a_real_harness_process_with_its_own_checkout(
 /// identical run cannot reach the harness at all. Reverting the fix is
 /// therefore proven to break the claim, rather than assumed to.
 #[tokio::test]
-async fn without_a_real_provisioner_the_same_attempt_never_reaches_the_harness() {
+async fn without_a_provisioner_the_attempt_never_reaches_the_harness() {
     let (source_dir, commit) = source_repository();
     let source = source_dir.path();
     let root_dir = temp_root("unavailable");
