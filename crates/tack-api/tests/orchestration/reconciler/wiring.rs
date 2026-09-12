@@ -3,11 +3,10 @@
 //! `RepoControlPlaneStore` (`crates/tack-api/src/orch_store.rs`) plus the
 //! `server.rs` wiring that only spawns it when `TACK_ORCH_ENABLE` is set.
 //!
-//! Covers three things: the store round-trips health through the real repo
-//! (`repo/orch.rs`), `list_registered` skips an unknown `kind` without
-//! failing the whole poll cycle, and an unset `TACK_ORCH_ENABLE` spawns no
-//! reconciler tasks at all — even when a plane is registered
-//! and the store backing it is the real one, not a fake.
+//! Covers: the store round-trips health through the real repo; a plane with
+//! an unregistered `kind` doesn't fail the whole poll cycle; a spawned
+//! reconciler polls a real (wiremock) docket end to end; and an unset
+//! `TACK_ORCH_ENABLE` spawns no tasks even with a plane registered.
 
 use chrono::Utc;
 use tack_api::config::AppConfig;
@@ -208,7 +207,7 @@ async fn unconfigured_plane_reports_unconfigured_not_unknown() {
 // ─── 3. End-to-end: spawn_reconcilers against a real store + wiremock ─────
 
 #[tokio::test]
-async fn spawn_reconcilers_polls_a_real_docket_and_persists_health_via_the_real_store() {
+async fn spawn_reconcilers_polls_docket_persists_health_via_store() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/health"))
@@ -247,14 +246,25 @@ async fn spawn_reconcilers_polls_a_real_docket_and_persists_health_via_the_real_
     .await;
     assert_eq!(handles.len(), 1);
 
-    // The reconciler polls immediately on start; give the spawned task's
-    // first tick time to run and persist before asserting.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The reconciler polls immediately on start, doing real (loopback) HTTP
+    // I/O against `server` on a background task. `Interval::tick`, not a
+    // bare `yield_now` loop, forces this current-thread runtime to actually
+    // park and let its I/O driver service that task's socket I/O — see
+    // `auto_dispatch/hook.rs`'s `wait_for_hits` for why a `yield_now` loop
+    // was tried first there and found to starve exactly this kind of wait.
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(25));
+    let mut reloaded = repo.get_control_plane(plane.id).await.expect("reload");
+    for _ in 0..80 {
+        if reloaded.health == "healthy" {
+            break;
+        }
+        ticker.tick().await;
+        reloaded = repo.get_control_plane(plane.id).await.expect("reload");
+    }
     for h in handles {
         h.abort();
     }
 
-    let reloaded = repo.get_control_plane(plane.id).await.expect("reload");
     assert_eq!(reloaded.health, "healthy");
     assert!(reloaded.last_seen_at.is_some());
     assert_eq!(reloaded.api_version.as_deref(), Some("2"));
@@ -263,7 +273,7 @@ async fn spawn_reconcilers_polls_a_real_docket_and_persists_health_via_the_real_
 // ─── 4. Off-by-default: unset TACK_ORCH_ENABLE spawns nothing ─────────────
 
 #[tokio::test]
-async fn disabled_orch_enable_spawns_no_tasks_even_with_a_registered_plane() {
+async fn disabled_orch_enable_spawns_no_tasks_with_registered_plane() {
     // AppConfig::default() ⇒ orch_enable: false, matching TACK_ORCH_ENABLE
     // unset — the exact off-by-default condition this test asserts against,
     // wired through the real store rather than reconciler.rs's own fake
