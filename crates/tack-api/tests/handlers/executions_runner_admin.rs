@@ -118,7 +118,7 @@ fn create_body(item_id: &str) -> String {
     }).to_string()
 }
 #[tokio::test]
-async fn duplicate_create_replays_same_request_and_revoked_runner_is_rejected() {
+async fn duplicate_create_replays_and_revoked_runner_rejected() {
     let (app, repo, item_id) = setup().await;
     let (first_status, first) = snd(&app, "POST", "/executions", create_body(&item_id)).await;
     let (second_status, second) = snd(&app, "POST", "/executions", create_body(&item_id)).await;
@@ -227,7 +227,7 @@ async fn only_needs_operator_can_be_requeued_and_recovery_is_audited() {
 }
 
 #[tokio::test]
-async fn enrollment_token_is_returned_once_hash_only_and_revoke_or_redeem_blocks_reuse() {
+async fn enrollment_token_hash_only_revoke_or_redeem_blocks_reuse() {
     let (app, repo, _) = setup().await;
     let enrollment = serde_json::json!({
         "name":"Pending runner",
@@ -356,7 +356,7 @@ async fn enrollment_token_is_returned_once_hash_only_and_revoke_or_redeem_blocks
 /// constructor in isolation, so it fails if a handler ever goes back to
 /// hand-rolling `retryable` or drops `conflict`'s `{}` details shape.
 #[tokio::test]
-async fn duplicate_fleet_name_conflict_is_retryable_with_empty_details() {
+async fn duplicate_fleet_name_conflict_has_empty_details() {
     let (app, _repo, _item_id) = setup().await;
     let body = serde_json::json!({"name": "shared-fleet-name"}).to_string();
     let (first_status, _) = snd(&app, "POST", "/runner-fleets", body.clone()).await;
@@ -376,7 +376,7 @@ async fn duplicate_fleet_name_conflict_is_retryable_with_empty_details() {
 /// `"retryable":false,"details":{}` for every code. Drives `get_execution`
 /// for a request id that was never created.
 #[tokio::test]
-async fn missing_execution_not_found_is_not_retryable_with_resource_detail() {
+async fn missing_execution_not_found_has_resource_detail() {
     let (app, _repo, _item_id) = setup().await;
     let (status, body) = snd(
         &app,
@@ -399,11 +399,11 @@ async fn missing_execution_not_found_is_not_retryable_with_resource_detail() {
 /// structured `{"idempotency_key": ...}` detail per
 /// `docs/contracts/runner-v1/errors/idempotency-conflict.json`. Drives
 /// `create_execution` with the same idempotency key and a changed payload,
-/// the same scenario `duplicate_create_replays_same_request_and_revoked_runner_is_rejected`
+/// the same scenario `duplicate_create_replays_and_revoked_runner_rejected`
 /// already exercises for `code`, and additionally asserts `retryable` and
 /// `details` on the real response body.
 #[tokio::test]
-async fn changed_payload_idempotency_conflict_is_not_retryable_with_key_detail() {
+async fn changed_payload_idempotency_conflict_has_key_detail() {
     let (app, _repo, item_id) = setup().await;
     let (created_status, _) = snd(&app, "POST", "/executions", create_body(&item_id)).await;
     assert_eq!(created_status, StatusCode::OK);
@@ -428,7 +428,7 @@ async fn changed_payload_idempotency_conflict_is_not_retryable_with_key_detail()
 /// independently visible through a second, already-open pool against the
 /// same file to pass.
 #[tokio::test]
-async fn provision_local_runner_writes_through_its_own_pool_to_the_same_database() {
+async fn provision_local_runner_writes_through_own_pool_to_same_db() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let db_path = dir.path().join("local-provision.db");
     let database_url = format!("sqlite://{}?mode=rwc", db_path.display());
@@ -478,7 +478,7 @@ async fn provision_local_runner_fails_on_an_unparseable_database_url() {
 /// read back as absent, against the same live database rather than an
 /// inference from a query failure.
 #[tokio::test]
-async fn local_runner_id_exists_reports_presence_and_absence_against_a_real_database() {
+async fn local_runner_id_exists_reports_presence_and_absence() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let db_path = dir.path().join("local-runner-id-exists.db");
     let database_url = format!("sqlite://{}?mode=rwc", db_path.display());
@@ -651,7 +651,7 @@ async fn seed_noise_rows(
 /// opposed to `?limit=` install-wide,
 /// which this exact row would fall out of.
 #[tokio::test]
-async fn list_executions_item_ids_finds_an_item_whose_only_execution_predates_every_other_row() {
+async fn list_executions_item_ids_finds_item_predating_every_row() {
     let (app, repo, item_id) = setup().await;
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM items WHERE id = ?")
         .bind(&item_id)
@@ -732,7 +732,7 @@ async fn list_executions_item_ids_finds_an_item_whose_only_execution_predates_ev
 /// row per id (never every row for that id) and it must be each item's
 /// most recent one, not an arbitrary member of the set.
 #[tokio::test]
-async fn list_executions_item_ids_returns_exactly_the_latest_row_per_item() {
+async fn list_executions_item_ids_returns_latest_row_per_item() {
     let (app, repo, item_a) = setup().await;
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM items WHERE id = ?")
         .bind(&item_a)
@@ -814,7 +814,7 @@ async fn list_executions_item_ids_returns_exactly_the_latest_row_per_item() {
 /// `item_ids` takes precedence over `item_id`/`limit` when both are given —
 /// the shape a caller that only half-migrated a call site might send.
 #[tokio::test]
-async fn list_executions_item_ids_takes_precedence_over_item_id_and_limit() {
+async fn list_executions_item_ids_take_precedence_over_id_and_limit() {
     let (app, repo, item_a) = setup().await;
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM items WHERE id = ?")
         .bind(&item_a)
