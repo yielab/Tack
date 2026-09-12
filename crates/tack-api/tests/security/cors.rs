@@ -1,15 +1,9 @@
-//! CORS coverage. There was no CORS test anywhere in this repo
-//! before this file — the three gaps below shipped invisibly because nothing
-//! ever drove a real preflight against the router.
-//!
-//! `AllowHeaders`/`ExposeHeaders` are configured as fixed lists
-//! (`tower_http::cors::CorsLayer::allow_headers`/`expose_headers` called with
-//! an explicit array), so the response always carries the full configured
-//! set regardless of what the preflight's own
-//! `Access-Control-Request-Headers` asked for — see
-//! `tower-http`'s `AllowHeaders::to_header`. A real cross-origin browser
-//! still requires each header it needs to be in that fixed list, which is
-//! exactly what this test pins down.
+//! CORS preflight coverage: `AllowHeaders`/`ExposeHeaders` are configured as
+//! fixed lists (`CorsLayer::allow_headers`/`expose_headers` with an explicit
+//! array), so the response always carries the full configured set regardless
+//! of what the preflight's own `Access-Control-Request-Headers` asked for —
+//! see `tower-http`'s `AllowHeaders::to_header`. A real cross-origin browser
+//! still requires each header it needs to be in that fixed list.
 
 use axum::Router;
 use axum::body::Body;
@@ -72,7 +66,7 @@ async fn preflight_allow_headers(app: &Router, uri: &str, method: &str) -> Strin
 /// `ETag`, a browser can read zero non-safelisted response headers from
 /// this API, full stop.
 #[tokio::test]
-async fn preflight_allows_if_match_and_approval_token_and_exposes_etag() {
+async fn preflight_allows_if_match_approval_token_exposes_etag() {
     let (app, _workspace_id) = test_app().await;
     let item_uri = "/api/items/00000000-0000-0000-0000-000000000000";
 
@@ -131,7 +125,7 @@ async fn preflight_allows_if_match_and_approval_token_and_exposes_etag() {
 /// route rather than only the specific headers this configuration actually
 /// allows.
 #[tokio::test]
-async fn preflight_does_not_allow_an_arbitrary_header() {
+async fn preflight_does_not_allow_arbitrary_header() {
     let (app, _workspace_id) = test_app().await;
     let allow_headers = preflight_allow_headers(
         &app,
