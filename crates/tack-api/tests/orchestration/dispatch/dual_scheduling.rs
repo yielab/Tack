@@ -1,15 +1,11 @@
-//! Collision tests across the two scheduling planes: the legacy Docket
-//! bridge (`orch_tasks`, dispatched via `dispatcher::dispatch_item`) and the
-//! neutral runner-v1 domain (`execution_requests`, created via
-//! `handlers::executions::create_execution`). See
+//! Collision tests across the two scheduling planes: the legacy Docket bridge
+//! (`orch_tasks`) and the neutral runner-v1 domain (`execution_requests`). See
 //! `crates/tack-orch/src/adapters/legacy_bridge.rs`'s module doc ("One
-//! scheduling owner") for the policy this proves, in both directions.
+//! scheduling owner") for the policy proved here in both directions.
 //!
-//! Drives the real, mounted `POST /api/items/{id}/dispatch` and `POST
-//! /api/executions` routes through `build_router` — not a test-local scaffold —
-//! so both guards are proven against the production request path: every "writes
-//! nothing" claim below is backed by a direct row-count assertion, not just a
-//! status code.
+//! Drives the real, mounted dispatch and `POST /api/executions` routes through
+//! `build_router`, not a test-local scaffold: every "writes nothing" claim is
+//! backed by a direct row-count assertion, not just a status code.
 
 use crate::common;
 use axum::Router;
@@ -153,7 +149,7 @@ async fn dispatch(app: &Router, item_id: Uuid) -> axum::response::Response {
 /// row insert is the standard way this table is seeded elsewhere too, and
 /// exercises exactly the column the guard below reads (`state`), nothing
 /// more.
-async fn insert_active_execution_request(state: &AppState, item_id: Uuid) {
+async fn insert_execution_request(state: &AppState, item_id: Uuid, request_state: &str) {
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
     sqlx::query(
@@ -161,11 +157,12 @@ async fn insert_active_execution_request(state: &AppState, item_id: Uuid) {
             id, item_id, idempotency_scope, idempotency_key, request_fingerprint,
             state, selector_kind, selector_id, agent_profile_snapshot,
             repository_snapshot, permission_policy, created_at, updated_at
-         ) VALUES (?, ?, 'test-scope', ?, 'fp', 'running', 'exact_runner', ?, '{}', '{}', '{}', ?, ?)",
+         ) VALUES (?, ?, 'test-scope', ?, 'fp', ?, 'exact_runner', ?, '{}', '{}', '{}', ?, ?)",
     )
     .bind(&id)
     .bind(item_id.to_string())
     .bind(&id) // idempotency_key: unique per row, reuse the request id
+    .bind(request_state)
     .bind(Uuid::new_v4().to_string()) // selector_id: no real runner needed for this test
     .bind(&now)
     .bind(&now)
@@ -318,113 +315,76 @@ async fn attempt_create_execution(
 
 // ─── The fix: runner-v1 active blocks legacy Docket dispatch ──────────────────
 
+/// Whether a legacy Docket redispatch is blocked depends only on the
+/// runner-v1 request's `state` column, not on whether a row exists at all:
+/// an active (`running`) request blocks it and writes nothing to the legacy
+/// table even though the mocked docket server would happily accept the task
+/// (proven by temporarily reverting the guard during review); a terminal
+/// (`succeeded`) one does not, and a real `orch_tasks` row lands.
 #[tokio::test]
-async fn dispatch_refuses_when_item_has_active_runner_v1_request() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let mock = MockServer::start().await;
-    // A docket mock that WOULD succeed if reached — deliberately, so this test is
-    // load-bearing: without the guard, `dispatch_item` would sail through to a real
-    // `orch_tasks` row (proven by temporarily reverting the guard during review),
-    // not merely fail some other way that happens to also 409.
-    Mock::given(method("POST"))
-        .and(path("/tasks/demo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "ok": true, "task": "remote-task-collision", "project": "demo", "status": "pending"
-        })))
-        .mount(&mock)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/tasks/demo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tasks": [{
-                "id": "remote-task-collision", "description": "x", "priority": "normal",
-                "status": "pending", "created": "2026-08-05T00:00:00Z", "source": "operator",
-            }]
-        })))
-        .mount(&mock)
-        .await;
+async fn dispatch_blocks_only_on_active_runner_v1_request() {
+    struct Case {
+        request_state: &'static str,
+        expect_status: StatusCode,
+        expect_orch_tasks: i64,
+    }
+    let cases = [
+        Case {
+            request_state: "running",
+            expect_status: StatusCode::CONFLICT,
+            expect_orch_tasks: 0,
+        },
+        Case {
+            request_state: "succeeded",
+            expect_status: StatusCode::OK,
+            expect_orch_tasks: 1,
+        },
+    ];
 
-    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
-    let item_id = create_item(&app, project_id).await;
-    let cp = create_control_plane(&app, &mock.uri()).await;
-    link_project(&app, project_id, cp).await;
+    for case in cases {
+        let (app, state) = app_with_state(orch_config()).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/tasks/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true, "task": "remote-task", "project": "demo", "status": "pending"
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/tasks/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "tasks": [{
+                    "id": "remote-task", "description": "x", "priority": "normal",
+                    "status": "pending", "created": "2026-08-05T00:00:00Z", "source": "operator",
+                }]
+            })))
+            .mount(&mock)
+            .await;
 
-    insert_active_execution_request(&state, item_id).await;
+        let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
+        let item_id = create_item(&app, project_id).await;
+        let cp = create_control_plane(&app, &mock.uri()).await;
+        link_project(&app, project_id, cp).await;
 
-    let res = dispatch(&app, item_id).await;
+        insert_execution_request(&state, item_id, case.request_state).await;
 
-    assert_eq!(
-        res.status(),
-        StatusCode::CONFLICT,
-        "{:?}",
-        body_json(res).await
-    );
-    // Not a status-code-only claim: prove nothing was written to the legacy table,
-    // even though the mocked docket server would have happily accepted the task.
-    assert_eq!(
-        count_orch_tasks(&state).await,
-        0,
-        "no orch_tasks row may exist — docket must never have been called"
-    );
-}
-
-/// A terminal runner-v1 request (`succeeded`) must not block a legacy redispatch —
-/// only an *active* one does. Proves the guard reads `state`, not merely "a row
-/// exists for this item," by driving dispatch all the way through a mocked docket
-/// and asserting a real `orch_tasks` row lands.
-#[tokio::test]
-async fn dispatch_proceeds_when_runner_v1_request_is_terminal() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let mock = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/tasks/demo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "ok": true, "task": "remote-task-terminal", "project": "demo", "status": "pending"
-        })))
-        .mount(&mock)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/tasks/demo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tasks": [{
-                "id": "remote-task-terminal", "description": "x", "priority": "normal",
-                "status": "pending", "created": "2026-08-05T00:00:00Z", "source": "operator",
-            }]
-        })))
-        .mount(&mock)
-        .await;
-
-    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
-    let item_id = create_item(&app, project_id).await;
-    let cp = create_control_plane(&app, &mock.uri()).await;
-    link_project(&app, project_id, cp).await;
-
-    let now = Utc::now().to_rfc3339();
-    let id = Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO execution_requests (
-            id, item_id, idempotency_scope, idempotency_key, request_fingerprint,
-            state, selector_kind, selector_id, agent_profile_snapshot,
-            repository_snapshot, permission_policy, created_at, updated_at
-         ) VALUES (?, ?, 'test-scope', ?, 'fp', 'succeeded', 'exact_runner', ?, '{}', '{}', '{}', ?, ?)",
-    )
-    .bind(&id)
-    .bind(item_id.to_string())
-    .bind(&id)
-    .bind(Uuid::new_v4().to_string())
-    .bind(&now)
-    .bind(&now)
-    .execute(state.repo.pool())
-    .await
-    .expect("insert terminal execution_requests fixture row");
-
-    let res = dispatch(&app, item_id).await;
-    assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
-    assert_eq!(
-        count_orch_tasks(&state).await,
-        1,
-        "a terminal runner-v1 request must not block legacy dispatch"
-    );
+        let res = dispatch(&app, item_id).await;
+        let status = res.status();
+        assert_eq!(
+            status,
+            case.expect_status,
+            "state {}: {:?}",
+            case.request_state,
+            body_json(res).await
+        );
+        assert_eq!(
+            count_orch_tasks(&state).await,
+            case.expect_orch_tasks,
+            "state {}: orch_tasks row count",
+            case.request_state
+        );
+    }
 }
 
 /// Direct, unit-level proof of the read the guard above is built on —
@@ -432,7 +392,7 @@ async fn dispatch_proceeds_when_runner_v1_request_is_terminal() {
 /// HTTP/docket-transport noise the full-router test above can't fully
 /// separate out.
 #[tokio::test]
-async fn has_active_execution_request_for_item_ignores_terminal_states() {
+async fn active_execution_request_read_ignores_terminal_states() {
     let (_app, state) = app_with_state(orch_config()).await;
     let project_id_res = req(
         &_app,
@@ -568,81 +528,76 @@ async fn active_docket_task_for_item_ignores_terminal_statuses() {
     );
 }
 
-/// The fix this file exists for: an active legacy Docket task blocks a new
-/// runner-v1 request. Drives the real, mounted `POST /api/executions` handler
-/// through a full enrollment flow — no shortcuts — and proves the refusal by
-/// row count, not just a status code: reverting the guard makes this test's
-/// final assertion fail (`execution_requests` gains a row it must not).
+/// The fix this file exists for, and the trap it must not fall into: a new
+/// runner-v1 request is blocked only when both an active (`running`) legacy
+/// Docket task exists AND orchestration is on — a terminal (`completed`) task
+/// never blocks, and with orchestration off (`AppConfig::default()` —
+/// `TACK_ORCH_ENABLE` unset) even a row stranded `running` by a previously
+/// enabled bridge must never block (blocking it would invert "runner-v1 is
+/// the plan of record"). Drives the real, mounted `POST /api/executions`
+/// handler through a full enrollment flow — no shortcuts — and proves each
+/// case by row count, not just a status code: reverting the guard makes the
+/// first case's final assertion fail (`execution_requests` gains a row it
+/// must not).
 #[tokio::test]
-async fn create_execution_refuses_when_item_has_an_active_docket_task() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
-    let item_id = create_item(&app, project_id).await;
+async fn create_execution_blocks_only_active_docket_task_with_orch_on() {
+    struct Case {
+        orch_enabled: bool,
+        docket_status: &'static str,
+        expect_status: StatusCode,
+        expect_count: i64,
+    }
+    let cases = [
+        Case {
+            orch_enabled: true,
+            docket_status: "running",
+            expect_status: StatusCode::CONFLICT,
+            expect_count: 0,
+        },
+        Case {
+            orch_enabled: true,
+            docket_status: "completed",
+            expect_status: StatusCode::OK,
+            expect_count: 1,
+        },
+        Case {
+            orch_enabled: false,
+            docket_status: "running",
+            expect_status: StatusCode::OK,
+            expect_count: 1,
+        },
+    ];
 
-    insert_orch_task(&state, item_id, "remote-task-mirror", "running").await;
+    for case in cases {
+        let config = if case.orch_enabled {
+            orch_config()
+        } else {
+            AppConfig::default()
+        };
+        let (app, state) = app_with_state(config).await;
+        let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
+        let item_id = create_item(&app, project_id).await;
 
-    let res = attempt_create_execution(&app, item_id, "mirror-guard-conflict").await;
+        insert_orch_task(&state, item_id, "remote-task", case.docket_status).await;
 
-    assert_eq!(
-        res.status(),
-        StatusCode::CONFLICT,
-        "{:?}",
-        body_json(res).await
-    );
-    assert_eq!(
-        count_execution_requests_for_item(&state, item_id).await,
-        0,
-        "no execution_requests row may exist — the active docket task must have blocked it"
-    );
-}
-
-/// A terminal docket task (`completed`) must not block a new runner-v1 request —
-/// only an *active* one does. Proves the guard reads `remote_status`, not merely
-/// "a row exists for this item."
-#[tokio::test]
-async fn create_execution_proceeds_when_docket_task_is_terminal() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
-    let item_id = create_item(&app, project_id).await;
-
-    insert_orch_task(&state, item_id, "remote-task-done", "completed").await;
-
-    let res = attempt_create_execution(&app, item_id, "mirror-guard-terminal").await;
-
-    assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
-    assert_eq!(
-        count_execution_requests_for_item(&state, item_id).await,
-        1,
-        "a terminal docket task must not block a new runner-v1 request"
-    );
-}
-
-/// The trap this guard must not fall into: with orchestration effectively off
-/// (`AppConfig::default()` — `TACK_ORCH_ENABLE` unset, no `app_meta` override),
-/// a row stranded by a previously-enabled bridge — still `running` — must never
-/// block a new runner-v1 request. Blocking it would invert "runner-v1 is the
-/// plan of record."
-#[tokio::test]
-async fn create_execution_ignores_an_active_docket_task_when_orchestration_is_off() {
-    let (app, state) = app_with_state(AppConfig::default()).await;
-    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
-    let item_id = create_item(&app, project_id).await;
-
-    insert_orch_task(&state, item_id, "remote-task-stranded", "running").await;
-
-    let res = attempt_create_execution(&app, item_id, "mirror-guard-off").await;
-
-    assert_eq!(
-        res.status(),
-        StatusCode::OK,
-        "orchestration disabled must mean the stale docket row is never consulted: {:?}",
-        body_json(res).await
-    );
-    assert_eq!(
-        count_execution_requests_for_item(&state, item_id).await,
-        1,
-        "the runner-v1 request must have been created despite the stranded docket row"
-    );
+        let res = attempt_create_execution(&app, item_id, "mirror-guard").await;
+        let status = res.status();
+        assert_eq!(
+            status,
+            case.expect_status,
+            "orch_enabled={} status={}: {:?}",
+            case.orch_enabled,
+            case.docket_status,
+            body_json(res).await
+        );
+        assert_eq!(
+            count_execution_requests_for_item(&state, item_id).await,
+            case.expect_count,
+            "orch_enabled={} status={}: execution_requests row count",
+            case.orch_enabled,
+            case.docket_status
+        );
+    }
 }
 
 // ─── The idempotent-replay case: the mirror guard must never turn a client's
@@ -766,7 +721,7 @@ async fn submit_execution_request(
 /// mirror guard. Row count stays `1` — the replay must not create a second
 /// row, and the guard must not have refused it either.
 #[tokio::test]
-async fn create_execution_replay_succeeds_despite_an_active_docket_task() {
+async fn execution_replay_succeeds_despite_active_docket_task() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
