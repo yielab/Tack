@@ -30,7 +30,7 @@ fn protected_config() -> AppConfig {
 }
 
 #[tokio::test]
-async fn suffix_lookalikes_stay_behind_the_bearer_gate() {
+async fn suffix_lookalikes_stay_behind_bearer_gate() {
     let (app, _) = common::test_app_with_config(protected_config()).await;
     for uri in ["/api/projects/health", "/api/projects/openapi.json"] {
         let response = app
@@ -75,7 +75,7 @@ async fn csp_disallows_executable_content() {
 }
 
 #[tokio::test]
-async fn split_origin_websocket_handshake_accepts_subprotocol_credential_without_query_token() {
+async fn handshake_credential_travels_in_subprotocol_not_query() {
     let (app, _) = common::test_app_with_config(protected_config()).await;
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -147,7 +147,7 @@ async fn split_origin_websocket_handshake_accepts_subprotocol_credential_without
 /// `frontend/e2e/board-websocket-subprotocol.spec.ts`, which no Rust-only
 /// test can stand in for.
 #[tokio::test]
-async fn board_live_handshake_selects_the_tack_v1_subprotocol() {
+async fn board_live_handshake_selects_tack_v1_subprotocol() {
     let (app, _) = common::test_app().await;
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -276,57 +276,66 @@ async fn board_live_handshake_response(app: axum::Router, origin: Option<&str>) 
     response
 }
 
-/// Following the documented developer recipe (`tack serve` bound to its
-/// loopback default, then `npm run dev`, which opens `http://localhost:5173`)
-/// sends this exact `Origin` on the board's live handshake, and
-/// `default_allowed_origins()` has never listed `5173`. A loopback-bound
-/// server now recognizes any loopback-hosted `Origin` as same-machine and
-/// authorizes it without needing it in `TACK_ALLOWED_ORIGINS`.
-#[tokio::test]
-async fn board_live_handshake_from_the_vite_dev_origin_is_authorized_on_a_loopback_bind() {
-    let (app, _) = common::test_app().await;
-    let response = board_live_handshake_response(app, Some("http://localhost:5173")).await;
-    assert!(
-        response.starts_with("HTTP/1.1 101"),
-        "loopback bind should authorize a loopback browser origin: {response}"
-    );
+/// One case of `board_live_handshake_origin_authorization`: an `origin` tried
+/// against either the default loopback bind or an explicit `0.0.0.0` bind,
+/// with the expected handshake outcome.
+struct OriginCase {
+    claim: &'static str,
+    origin: &'static str,
+    non_loopback_bind: bool,
+    authorized: bool,
 }
 
-/// A hostname that merely begins with `127.` is a remote page, and a
-/// bracketed IPv6 loopback literal is a local one — the host is judged as an
-/// address, never as a string prefix.
+/// Origin-based authorization for the board's live handshake follows the
+/// documented developer recipe (`tack serve` on its loopback default, then
+/// `npm run dev` on `http://localhost:5173`, never listed in
+/// `default_allowed_origins()`): a loopback-bound server recognizes any
+/// loopback-hosted `Origin` as same-machine by address, not by string
+/// prefix, and only on a loopback bind — never on `0.0.0.0`.
 #[tokio::test]
-async fn board_live_handshake_judges_the_origin_host_as_an_address_not_a_prefix() {
-    let (app, _) = common::test_app().await;
-    let response =
-        board_live_handshake_response(app, Some("http://127.attacker.example:5173")).await;
-    assert!(
-        !response.starts_with("HTTP/1.1 101"),
-        "a name that starts with 127. is not this machine: {response}"
-    );
-
-    let (app, _) = common::test_app().await;
-    let response = board_live_handshake_response(app, Some("http://[::1]:5173")).await;
-    assert!(
-        response.starts_with("HTTP/1.1 101"),
-        "an IPv6 loopback origin is this machine: {response}"
-    );
-}
-
-/// The same loopback `Origin` gets no special treatment once the server
-/// itself is not loopback-bound — proving the fix widens only what a
-/// loopback bind accepts, never what `TACK_ALLOWED_ORIGINS` means for a
-/// bind reachable beyond this machine.
-#[tokio::test]
-async fn board_live_handshake_from_a_loopback_origin_is_still_refused_on_a_non_loopback_bind() {
-    let (app, _) = common::test_app_with_config(AppConfig {
-        host: "0.0.0.0".into(),
-        ..AppConfig::default()
-    })
-    .await;
-    let response = board_live_handshake_response(app, Some("http://localhost:5173")).await;
-    assert!(
-        !response.starts_with("HTTP/1.1 101"),
-        "a non-loopback bind must still require an explicitly listed origin: {response}"
-    );
+async fn board_live_handshake_origin_authorization() {
+    let cases = [
+        OriginCase {
+            claim: "vite dev origin is authorized on a loopback bind",
+            origin: "http://localhost:5173",
+            non_loopback_bind: false,
+            authorized: true,
+        },
+        OriginCase {
+            claim: "a hostname merely starting with 127. is not this machine",
+            origin: "http://127.attacker.example:5173",
+            non_loopback_bind: false,
+            authorized: false,
+        },
+        OriginCase {
+            claim: "a bracketed IPv6 loopback literal is this machine",
+            origin: "http://[::1]:5173",
+            non_loopback_bind: false,
+            authorized: true,
+        },
+        OriginCase {
+            claim: "a loopback origin gets no special treatment on a non-loopback bind",
+            origin: "http://localhost:5173",
+            non_loopback_bind: true,
+            authorized: false,
+        },
+    ];
+    for case in cases {
+        let config = if case.non_loopback_bind {
+            AppConfig {
+                host: "0.0.0.0".into(),
+                ..AppConfig::default()
+            }
+        } else {
+            AppConfig::default()
+        };
+        let (app, _) = common::test_app_with_config(config).await;
+        let response = board_live_handshake_response(app, Some(case.origin)).await;
+        assert_eq!(
+            response.starts_with("HTTP/1.1 101"),
+            case.authorized,
+            "{}: {response}",
+            case.claim
+        );
+    }
 }
