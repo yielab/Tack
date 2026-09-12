@@ -1,23 +1,13 @@
-//! `dispatcher::apply_mapped_status` must not read a WIP-limited column's
-//! item count and then write the new status as two separate, unlocked
-//! steps. Sprint dispatch makes concurrent writes into the same column an
-//! ordinary occurrence (`max_in_flight` items dispatched at once) rather
-//! than a rare accident, so two concurrent status changes could both
-//! observe "under the limit" and both commit, pushing the column over its
-//! configured WIP limit.
+//! `dispatcher::apply_mapped_status` reads a WIP-limited column's item count
+//! and writes the new status as two separate, unlocked steps; concurrent
+//! sprint dispatch (`max_in_flight` items at once) can let two writers both
+//! observe "under the limit" and both commit, over-filling the column.
 //!
-//! This drives `max_in_flight`-many *genuinely concurrent* dispatches of
-//! *different* items into the same WIP-limited column (through the real
-//! `POST /api/items/{id}/dispatch` HTTP path: a `wiremock` `set_delay` on
-//! the docket round trip bunches every request's arrival at
-//! `apply_mapped_status`'s count-then-write step, widening the race window
-//! the same way real concurrent load would) and asserts the column's final
-//! count never exceeds its configured limit.
-//!
-//! Per-item `DispatchLocks` (`dispatcher.rs`) does not protect against
-//! this: it only serializes two requests for the *same* item, and this race
-//! is specifically between *different* items sharing a target column, so
-//! every item dispatched here is distinct.
+//! Drives `N` genuinely concurrent dispatches of *different* items into one
+//! WIP-limited column through the real dispatch HTTP path (a `wiremock`
+//! delay bunches every request's arrival at the count-then-write step).
+//! Per-item `DispatchLocks` does not protect against this: it only
+//! serializes two requests for the *same* item.
 
 use std::time::Duration;
 
@@ -187,7 +177,7 @@ async fn mock_list_tasks(server: &MockServer, task_id: &str) {
 /// ("Backlog") to "In Progress" without construction-workflow-style gating
 /// getting in the way of the race this test is trying to trigger.
 #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
-async fn concurrent_dispatch_into_the_same_wip_limited_column_never_exceeds_the_limit() {
+async fn concurrent_dispatch_into_one_wip_column_stays_under_limit() {
     const N: usize = 12;
     const WIP_LIMIT: i64 = 5;
 
