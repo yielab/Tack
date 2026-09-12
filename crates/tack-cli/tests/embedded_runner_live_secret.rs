@@ -29,6 +29,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+mod common;
+use common::free_port;
+
 const FAKE_KEY: &str = "live-secret-test-key-never-a-real-credential";
 const FAKE_MODEL: &str = "fake/model-1";
 const PRINCIPAL_HEADER: (&str, &str) = ("x-tack-principal", "live-secret-test");
@@ -43,11 +46,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
 }
 
 /// A gateway that answers `/v1/models` with one model — but only when the
