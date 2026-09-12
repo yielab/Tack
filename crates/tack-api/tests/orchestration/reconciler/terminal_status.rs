@@ -1,19 +1,15 @@
 //! Tests for the reconciler-driven counterpart to
-//! `orchestration/dispatch/item.rs`'s
-//! dispatch-time `on_running`/`on_waiting_approval` application. When
-//! `RepoControlPlaneStore::upsert_runs`
-//! (`crates/tack-api/src/orch_store.rs`) sees a run reach a terminal
-//! `RunState` (`succeeded`/`failed`/`cancelled`), it applies
+//! `orchestration/dispatch/item.rs`'s dispatch-time application. When
+//! `RepoControlPlaneStore::upsert_runs` (`crates/tack-api/src/orch_store.rs`)
+//! sees a run reach a terminal `RunState`, it applies
 //! `status_map.on_succeeded`/`on_failed`/`on_cancelled` through the workflow
 //! engine — unless a human has moved the card since dispatch, in which case
-//! the human's decision wins and the attempted transition is only recorded
-//! as a `status_map_skipped_human_override` `orch_events` row.
+//! the human's decision wins and the attempt is recorded as a
+//! `status_map_skipped_human_override` `orch_events` row.
 //!
-//! Deliberately does *not* go through the HTTP router (unlike
-//! `orchestration/dispatch/item.rs`) — `upsert_runs` is called directly, the
-//! same way `orchestration/reconciler/broadcast.rs` already tests this
-//! file, since the whole surface under test is `RepoControlPlaneStore`, not
-//! an endpoint.
+//! Deliberately calls `upsert_runs` directly rather than going through the
+//! HTTP router: the surface under test is `RepoControlPlaneStore`, not an
+//! endpoint (same choice `reconciler/broadcast.rs` makes).
 
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -180,7 +176,7 @@ fn store_with_context(repo: Repository, workspace_id: Uuid) -> RepoControlPlaneS
 // ─── Undisturbed: docket's terminal state wins ─────────────────────────────
 
 #[tokio::test]
-async fn on_succeeded_moves_the_item_to_done_when_nothing_has_touched_it_since_dispatch() {
+async fn on_succeeded_moves_item_to_done_when_untouched() {
     let (repo, project, item) = test_repo_with_item().await;
     let plane_id = test_plane_id(&repo).await;
     link(
@@ -216,7 +212,7 @@ async fn on_succeeded_moves_the_item_to_done_when_nothing_has_touched_it_since_d
 }
 
 #[tokio::test]
-async fn on_failed_moves_the_item_when_the_run_that_reached_waiting_approval_then_fails() {
+async fn on_failed_moves_item_that_reached_waiting_approval() {
     // Proves the "which single key was last used" resolution, not a union:
     // the attempt went through waiting_approval, so the expected marker is
     // on_waiting_approval's value, not on_running's — and since the item is
@@ -252,8 +248,7 @@ async fn on_failed_moves_the_item_when_the_run_that_reached_waiting_approval_the
 // ─── Human wins ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn a_human_move_since_dispatch_blocks_on_succeeded_even_when_the_value_collides_with_on_waiting_approval()
- {
+async fn human_move_blocks_on_succeeded_despite_value_collision() {
     // on_running parks the item at "In Progress"; a human drags it to "In
     // Review" — which, deliberately, is also this status_map's own
     // on_waiting_approval *and* on_failed value (both naming the same
@@ -304,7 +299,7 @@ async fn a_human_move_since_dispatch_blocks_on_succeeded_even_when_the_value_col
 }
 
 #[tokio::test]
-async fn a_human_move_to_a_status_status_map_never_mentions_is_also_caught() {
+async fn human_move_to_unlisted_status_is_also_caught() {
     let (repo, project, item) = test_repo_with_item().await;
     let plane_id = test_plane_id(&repo).await;
     link(
@@ -404,7 +399,7 @@ async fn a_run_becoming_running_or_queued_never_touches_status_map() {
 // ─── The workflow engine still governs the move ────────────────────────────
 
 #[tokio::test]
-async fn a_workflow_engine_rejection_records_status_map_rejected_not_a_human_override() {
+async fn workflow_rejection_records_status_map_rejected_not_override() {
     let (repo, project, item) = test_repo_with_item().await;
     let plane_id = test_plane_id(&repo).await;
     link(
