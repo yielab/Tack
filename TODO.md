@@ -1,6 +1,6 @@
 # TODO — Tack cycle boards
 
-> **Read this header, then jump. Never read this file whole** — it is ~10.6k lines and
+> **Read this header, then jump. Never read this file whole** — it is ~15k lines and
 > roughly 90% closed-cycle decision history. Reading it costs more context than any card
 > needs. The extraction recipe is in `.claude/context-budget.md`; the short version is
 > `grep -n "^# \|^## " TODO.md`, then `sed -n '<start>,<end>p'` for the one section you
@@ -10,6 +10,7 @@
 
 | Part | Cycle | Phases | Status | Where |
 |---|---|---|---|---|
+| **IX** | **Human maintainability** | 63 | **OPEN 2026-09-11 — priority over every other card, including the release tag.** Nine cards IX-M0…IX-M8 in six waves (27–32); Waves 27's three cards are mechanical and run first. Specification: `docs/plans/human-maintainability.md`. | [§IX](#part-ix--human-maintainability-phase-63) |
 | **VIII** | **Docket bridge hardening** | 62 | **Cards done 2026-09-08 — all three waves integrated, one small card open.** Four gaps ADR 0060 left open, all closed: `ControlPlane::dispatch` had no caller and now has a route, a fail-closed `TACK_ORCH_DISPATCH_TOKEN` and `tack orch dispatch`; the one-scheduling-owner guard is enforced in both directions; the compatibility label reaches an operator; and the `orch_*_new` claim was measured. **ADR 0065 accepted 2026-09-08** — the pipeline-dispatch trigger claims no Tack item, so it never enters the scheduling contest. **Wave 24** (A1, B1, B2, C1) integrated, two cards returned once each. **Wave 25** (A2, B3) integrated; B3 returned twice, and A2's open question became a real card. **Wave 26** (C2, A3) integrated: a real `docket serve` at `v0.2.0-beta.2` re-dated every live claim for zero cost and confirmed ADR 0065's central asynchrony claim, and a dispatched run's outcome can finally be read back by its id. Three things this Part learned the hard way, each found by verification rather than by reading: **two cards had a slot in the graph but no card text** (A2, then C2), caught only by trying to dispatch them; **an unknown project does not 404 on `/dispatch/{project}`**, which a unit test had been pinning — now **VIII-C3**, the one open card, blocking nothing; and **three documents said orch routes 404 with the flag unset** when they answer `409 orchestration_disabled`, asserted by eight existing tests. `docs/CONFIG.md` and ADR 0065's measured table are corrected and now cite the code | [§VIII](#part-viii--docket-bridge-hardening-phase-62), top of this file |
 | **VII** | **Desktop app & background service** | 61 | **Done 2026-09-07** — ADR 0062 accepted 2026-09-03; **Waves 18 and 19 integrated 2026-09-04** (VII-A2, VII-B1, VII-B2, VII-B3). **VII-C1 integrated 2026-09-05** at `03df038`. Linux and Windows bundles build in a real run; macOS was blocked on a keychain feature fixed on this line at `33dbbb2` and has not been re-run since. **VII-C3 integrated 2026-09-05**: every fresh install deadlocked before showing anything, because the first-run dialog blocked the main thread inside `setup()` before the event loop started. Found by launching the bundle, not by reading it. **VII-C2 integrated 2026-09-06** — the README now leads with the download and shows the app. Its correction to `crate-tour.md` exposed that the tray's agent-execution entry still says the route it reads does not exist, which is now **VII-B4** (Wave 22); **VII-B4 integrated 2026-09-06** — the tray now reads `GET /api/local-runner` and reports six typed states, so the app and the README screenshot beside it finally agree. **VII-D1 integrated 2026-09-07 — Wave 21 is done and so is this Part.** A stranger on this machine went from a downloaded AppImage to a finished attempt with artifacts using only a mouse, closed the window and reopened it from the tray to the same unbroken session, and got a real "1 agent attempt is running. Quit anyway?" from Quit — 50 screenshots and process checks around every lifecycle step. Two limits are stated, not hidden: the completed attempt used a fake harness shim, because neither bundled harness offers an in-app login and the Agents page only detects binaries on `PATH`; and the release page still carries no desktop bundle at all (the bundles exist only from the next tag's release run), so the walk used a local build. One product defect fell out and is carded as **VI-C36**: `POST /api/executions` can answer `internal_error` "Could not enqueue execution" with `retryable: true` for an item that no retry ever recovers — reproduced over plain `curl`. macOS and Windows rows are `not_measured`; no machine **Reopened and closed again 2026-09-07 for one card, VII-B5 (Wave 23):** the app now notices a server that dies or stops answering under it — VII-C3's recorded gap — unit-proven, with the live walk `not_measured` until the display is free; integrating it removed a per-tick event drain that would have stalled the server's own output | [§VII](#part-vii--desktop-app--background-service-phase-61), top of this file |
 | **VI** | **Agent Onboarding & Provider UX** | 60 | **Cards done 2026-09-07** — every card on this board has an accepted integration and a handoff; nothing is open. What is left is not card work: no harness offers in-app login, so the completed-attempt claim rests on a fake-harness shim, and the live tray/AppImage walks are recorded but not re-run. Original note follows. Wave 14 integrated at `927f850`; ADR 0061 accepted 2026-09-03 (decision 1 refined the same day: keychain first, file fallback); **VI-B1, VI-B2, VI-C2, VI-C3 and VI-C4 integrated 2026-09-04**. **ADR 0063 accepted 2026-09-05** — two credential modes, and a provider in the key+endpoint mode is a module behind a trait (its decision 4 was rewritten before acceptance; the "an endpoint is configuration, never code" version was the ADR author's invention and was rejected). That unblocked VI-B3 and added VI-B4/VI-B5. **VI-B3 and VI-B4 integrated 2026-09-05** at `03df038`. **VI-B5 and VI-C1 integrated 2026-09-05** — Waves 15 and 16 are complete. Wave 17 is what is left. **VI-C5 was added and dispatched 2026-09-05** — the handler tests VI-C4 shipped without, whose owner rule ("the next Wave 16 card touching that crate") named a card that no longer exists. **VI-C5 integrated 2026-09-06**, and its declared gap plus V-C2's surviving escalation became **VI-C6** and **VI-C7**. **V-C2 landed the same day, so VI-D2 is dispatchable and was dispatched 2026-09-06**; VI-D1 is still last. **VI-C21 and VI-C23 integrated 2026-09-06.** VI-C21 found that the runner's attempt journal is keyed by `state_dir` + `attempt_id` and never by runner id, so it survives the identity swap — but a record written before the database was replaced names an attempt the server no longer has, and `report_recovery_and_apply_disposition` treats that as `RecoveryPending` rather than an error, so it is retried harmlessly on every boot forever; out of that card's scope and not yet carded. Integrating VI-C23 also exposed that nothing in the dispatch prompts ran `cargo fmt`: six files had drifted across earlier merges and blocked a push outright, since formatting is invisible until one is attempted. `CLAUDE.md`, `/card` and `/gate` now name `.githooks/pre-push` itself as the definition of done rather than transcribing its checks, which is how the list drifted in the first place. **VI-C22 integrated 2026-09-06** — the reset holds (row counts fall between runs instead of climbing), but its byte-identical-counts criterion does not, because that criterion conflated resetting the database with making the suite deterministic and only the first was the card's to deliver. Verifying it surfaced **VI-C24**: a `serious` WCAG AA contrast failure that VI-C1 reproduced against an unmodified base, VI-C13 carried forward and VI-C22's integrator measured again from an emptied database — named in three handoffs, carded in none, and absorbing part of the blame that belonged to accumulation. **VI-C20 integrated 2026-09-06** — the shared project is resolved once by name in a global setup step before any worker forks, so it no longer means "whichever project sorted first"; six of eight spec files depended on that stability without saying so, and one test wrote `default_model` straight onto it, which a stable identity would have turned from racy into permanently corrupting. Verifying it showed VI-C24 is **two** failing tests sharing one cause, not one. **VI-C24 integrated 2026-09-06 — the full chromium suite is green for the first time, 71/71.** The token was never at fault: the drawer's own mount animations ramped CSS `opacity` 0→1, and `opacity` composites the whole subtree, so every descendant rendered briefly below AA while axe was reading it. That is why three handoffs called it a flake — it was genuinely intermittent, because it depended on scan timing rather than any declared colour. Reverting the keyframes fails 8 of 15 repeats; restored, 15 of 15 pass. The alternative fix — making the test wait for animations to settle — was foreclosed by that card's own "do not touch the spec" rule and is worth knowing was never weighed. Its out-of-scope probe of another palette became **VI-C26**, **integrated 2026-09-06** — five of six token cells are scanned now, four were clean, and `graphite`/light is genuinely broken in a way no value change fixes: its `primary-600` is both text on light surfaces and the background under a deliberately dark `on-accent`, and the required ranges do not overlap (proven by trying the darkening and watching the other pairing drop to 2.92:1). The only shape that clears both flips `on-accent` to white, which changes what the palette *is* — escalated as a design decision, tracked with a disable scoped to that one scan so the other five stay real gates. **VI-D1 integrated 2026-09-06.** Both smoke steps proved able to fail by injected breakage, and a stranger reached a completed attempt in a clean `ubuntu:24.04` container typing only the command the container prints. **But it is not the end of this Part.** The run found two real defects, now **VI-C27** and **VI-C28**, and the first of them breaks this Part's own goal: a gateway key pasted while execution is already on never reaches the running runner, the Agents page reports success anyway, and the attempt sits at `preparing` silently — the exact failure this Part exists to rule out. The integrator's own review of VI-D1 also found its loopback guard compared the host by prefix, accepting `localhost.attacker.example` and handing it the stored credential; fixed at merge. Reviewing VI-C26 surfaced **VI-C29**: the comment gate has never scanned `frontend/e2e`, which exits 1 with 77 findings across its own categories. **VI-C27 integrated 2026-09-06 — worked by the integrator directly, at the user's request to audit it to its origin.** Two root causes, one per layer, and the symptom needed both: the control hands the runner its configuration **by value** and then mutates only its own copy (which is also what `catalog()` reads, so the page reported success from a view the runner never shared); and the engine dropped a typed pre-spawn rejection on the floor after announcing `preparing`, which is why the failure was silent and applied to every such rejection, not only this one. A change to a configured provider's credential is now a new runner lifetime — old task joined first, since no journal lock exists — and a `validate` refusal becomes a reported `failed` with `harness_rejected` through the existing outbox. Proven end to end against a fake gateway and a fake harness in the Agents page's own order with no Re-check; each half fails its own test when reverted (60.75 s at the snapshot wait; 0.01 s at the engine). The shared-handle alternative was weighed and rejected: it fights the runner's own fixed-per-lifetime model and would still need a capabilities-changed signal to keep the server's snapshot honest. The limitation VI-C21 documented is now **VI-C25**, and reading `engine.rs` to card it showed the handoff's "harmless" understates it: a `RecoveryPending` outcome keeps the workspace checkout on purpose, so a record naming an attempt the recreated database never had costs a retry every boot *and* holds its checkout indefinitely. **VI-C25 integrated 2026-09-06** — `stale_lease` is the one answer that settles the report, because the fencing token is fixed for the life of an attempt, so a miss on it will never match again; an absent reply or a transport failure keep their existing behaviour untouched. Retired means quarantined, not deleted: the record leaves the restart scan and the checkout stays as operator evidence, so the disk is not reclaimed automatically and that is the deliberate trade. **VI-C29 integrated 2026-09-06** — the comment gate scans `frontend/e2e` by default; 21 of the 22 "missing file" pointers were the gate's own bug (a citation wrapped across two lines left a `spec.ts` fragment that, as a search pattern, matched every real spec citation), one was genuinely stale and is repointed, and 69 comment lines across six specs were rewritten to keep what the test protects and drop the board pointer. The dead-pointer check now drops a candidate that is the tail of a real tracked filename, which also hides a stale name that happens to be a suffix of a live one — a known, smaller blind spot than the false-positive storm it replaces. **VI-C28 is integrated on `integrate/vi-c28` and held back from `develop`**: its real-browser spec passed for its agent only against a hand-started server, because the Playwright config never set `TACK_ALLOWED_ORIGINS` and the Vite proxy forwards the page's origin unchanged; with that env line added (from-scratch: 1 failed → 1 passed) the socket delivers events in the suite for the first time, and `execution-attempt-detail.spec.ts` then fails in 2 of 2 full runs and 1 of 2 three-spec runs. The cause is not the socket: `store.ts#loadAttempts` replaces ready data with `{status: 'loading'}` on every 4 s realtime tick, and the timeline only renders the attempt list under `status === 'ready'`, so the whole panel — decisions, the chosen option, the typed token — unmounts and remounts every tick; live events from the other worker make the click land on the gap. Carded as **VI-C31**. **VI-C31 and VI-C28 integrated 2026-09-06.** The store now writes nothing it already holds: `loadAttempts` keeps `ready` data rendered through a refresh and stores the result only when it differs, and `recordFor` hands back the same record while its parts are unchanged, because the timeline's `<For>` matches rows by reference and a fresh object for an unchanged row reads as remove-and-add. The card's other option, a `refreshing` flag on `ready`, was tried and does not hold here — flipping it needs a new object, and every reader of `attemptsFor()` re-runs on the reference, not the label. The agent had also projected `GET /executions/{id}`'s envelope down to the five summary fields inside the store; moved at merge to `executionsApi.get`, where the shape is decided, so the store compares like with like. Proof: choose an option and type a token in the Execution tab, wait past a poll tick, and the same Resolve node is still attached; red with `store.ts` reverted. Full chromium suite 77/77 for VI-C31 alone; with VI-C28 on top, the suite that failed 2 of 2 before it passes 3 of 3 (numbers below in the VI-C28 handoff amendment). With both in, the socket delivers events in the suite and the developer-port gap is **VI-C30**, still open. Reviewing `develop`'s last fourteen CI runs for a main merge found two misses of the embedded runner's own liveness backstops on CI (15 s to health, 30 s to active), green locally and on the next push — carded as **VI-C32** with a measured lead (the one sibling test that neuters D-Bus has never missed). **VI-C30 integrated 2026-09-07** — a loopback-bound board now trusts a loopback browser origin on the live socket, the same posture ADR 0059 gives the rest of the API on one machine; the two rejected shapes (a dev port in every install's defaults; a manual step in four docs) are weighed in its handoff. The integrator tightened it: the card judged the host by string prefix, which would have trusted `127.attacker.example`; it is parsed as an address now, bracketed IPv6 included, and the bind-address check shares the rule. **Two Dependabot majors landed the same day** (`toml` 1.1 + `validator` 0.21; nine GitHub Actions on their Node 24 majors). `sqlx` 0.9 stays out — its own `rust-version` is 1.94, the floor here is 1.89, and raising it is the user's call. Landing the actions bump exercised the two CI jobs that never run on a `develop` push and found both red on every pull request and every push to `main`, for reasons older than the bump: carded as **VI-C33** (tracing initialised twice under llvm-cov) and **VI-C34** (the embedded SPA answers unmatched `/api` routes with HTML 200 — a product defect as much as a gate one); and a local `cargo deny check` disagrees with CI's — **VI-C35**. **VI-C32 integrated 2026-09-07, and its card was wrong about what it was chasing:** read past the panic's line number, neither CI miss was a slow boot. One was `tack serve` exiting 1 in 3.3 s on `Address already in use` — the bind-then-drop port helper that `.config/nextest.toml` already isolated for the scheduler E2E was shared by the three embedded-runner binaries with no such isolation; the other was a bare `is_file()` on `session.json` taken the instant the server reported `active`, while the runner writes that file only after the enrolment reply — an ordering the sibling test already waited out. Both closed in the tests, no deadline touched, no product code changed; the D-Bus keychain probe the card suspected is real (a ≥30 s hang with a bus and no secret service) but explains neither miss and is left with its owner. **npm-major landed** (`@solidjs/router` 1.0 — functionally the 0.16 line, verified by diffing the tarballs — and `@types/node` 26); `typescript` 7 stays out because the OpenAPI generator's peer range is `^5.x`, and `jsdom` 30 because CI still pins Node 20 while it needs 22+ — both ignored in Dependabot with the reason written beside them. That Node 20 pin is worth a card of its own when the next frontend major needs it. **VI-C33 and VI-C34 integrated 2026-09-07** — the two jobs that only run on pull requests and `main` are green again on their card branches: tracing initialisation is `try_init` (the first call in a process installs the subscriber, a later one is a deliberate no-op, and all five crates clear their coverage floors: core 89.3 %, db 71.5 %, api 72.1 %, orch 94.8 %, runner 93.4 %); and each API surface now owns its own 404 as a fallback that travels with its `nest`, so the embedded SPA's catch-all never sees `/api` or `/api/runner/v1` — a mistyped path on the single binary answers `404 Not Found` instead of `index.html` with `200`, and deep links still get the page. Neither the CLI nor the frontend ever depended on the old 200: both parse every body as JSON. **VI-C35 integrated 2026-09-07** — CI's `cargo-deny` job ran `licenses bans` only while a developer's `cargo deny check` ran all four categories; now both run the unrestricted check and both are green. Nothing needed an exception: the three yanked crates took compatible bumps, and `proc-macro-error2` (unmaintained, "no safe upgrade") vanished because `validator_derive` 0.20.1 had already moved off it — which also silenced the future-incompat warning every build printed. The two MIT rejections VI-C35's card quoted did not reproduce on a clean checkout and are recorded as stale. `crates/tack-desktop` is the exception that stays: its advisories are deliberately outside the gate, because Tauri's GTK/WebKit bindings carry fifteen pre-existing "unmaintained" findings with no upstream fix — carded as **VI-C37**. **Three decisions the user took 2026-09-07 became cards**: VI-C38 (graphite's `on-accent` goes white), VI-C39 (the floor rises to Rust 1.94, the lowest the latest stable `sqlx` needs, and `sqlx` 0.9 lands) and VI-C40 (Node 22 LTS). **VI-C40 integrated 2026-09-07** — CI's eight `node-version` pins moved from 20 to 22 LTS (resolving to 22.23.2 today), `jsdom` 30 landed and its Dependabot ignore is gone; 851/851 unit tests on 22.23.2, and also on the machine's 22.17.1 despite `jsdom`'s declared `^22.22.2` floor — the Node 20 crash the ignore recorded was undici's, not a version gate. **VI-C38 integrated 2026-09-07** — graphite is dark olive (`#3f6a0c`) with a white `on-accent`, the pairing teal and clay already use, instead of bright lime with dark text; every text-role pairing that read at 1.97:1 now clears AA at 5.6–6.4:1, graphite/dark shares no token and was untouched, and the a11y spec has no suppressed rule left: all six palette × mode cells are unsuppressed gates (41/41, full chromium 78/78). Clay/light's latent `primary-600`-on-`bg-sidebar` pairing (4.38:1, rendered by nothing today) is the one known gap VI-C26 recorded and still stands. **VI-C39 integrated 2026-09-07** — the floor is Rust 1.94 (CI pins 1.94.1) because that is what the latest stable `sqlx` needs, and `sqlx` 0.9.0 is in; the only break was 0.9's `SqlSafeStr` requirement, so 38 dynamically built SQL strings across twelve files now carry `AssertSqlSafe` (each built from constant column lists or placeholder counts, never from a bound value), the migration runner is hand-rolled and WAL is an explicit pragma, so neither of 0.9's `Migrate`/driver breaks applied; `--locked` builds on 1.94.1 and refuses on 1.89.0 naming `sqlx`, 1463/1463, CI 10/10 with the MSRV job on the new pin. The lockfile also lost the RSA/MySQL tree 0.8 dragged in. **VI-C37 integrated 2026-09-07** — sixteen `unmaintained` advisories in the desktop workspace, not fifteen (VI-C35 missed `unic-ucd-version`), each closed by a dated `ignore` with its path: ten gtk-rs GTK3 bindings plus `proc-macro-error` because `wry`'s newest release still pins GTK3, and five `unic-*` crates because `tauri-utils` still pins `urlpattern` 0.3 (0.6 already dropped them). Every Tauri 2 crate is at its newest release, so no bump helps and the Tauri-major stop clause never fired. `scripts/gen-deny-toml.sh` writes one policy per workspace, and CI's desktop step and `make deny` run the same unrestricted check the root runs; removing one ignore makes the gate fire. VII-D1's AppImage walk was not re-run (no GUI while the user is at the machine), and nothing in the diff touches runtime code. **VI-C36 integrated 2026-09-07, stopped by its own clause**: the persistent per-item enqueue failure did not reproduce by any route — the real router with a finished and with an abandoned first attempt, a file-backed `tack serve` replayed at the transcript's six-second gap, and forty concurrent enqueues against one item, all 200 — and neither of the card's suspects exists (no one-live-request-per-item rule, no row a previous attempt leaves behind; a test now guards the repeat enqueue). What was wrong for certain: the handler discarded the underlying `sqlx::Error`, so nothing could name the condition; it is logged now (ids and the driver message only, never a bound value). No new error code was added for a condition nobody could confirm, and the Run-with-agent modal already shows the server's message verbatim. The suspect that remains is write contention under a live embedded runner's own traffic, which no tool here can drive; the next occurrence is diagnosable from the `enqueue_execution failed` line **Wave 18 dispatched and integrated 2026-09-07** — VI-C41 (harness discovery beyond the launcher's `PATH`), VI-C42 (a bound on the platform secret store's answer, with the reason logged and shown by `doctor`) and VI-C43 (the fleet-member routes get their UI caller): the three uncarded findings VII-D1, VI-C32 and VI-D1 left behind | [§VI](#part-vi--agent-onboarding--provider-ux-phase-60), top of this file |
@@ -19,7 +20,7 @@
 | II | Agnostic Control Plane | 39–49 | Superseded after Wave B by Part III | [§II](#part-ii--agnostic-control-plane-phases-3949), archive |
 | I | Agent-Factory Control Center | 33–38 | Complete 2026-08-05 | [§I](#part-i--agent-factory-control-center-phases-3338), archive |
 
-**Part VIII is the only Part with open cards.** Parts I–VII are closed. Part V is distribution and launch — everything between
+**Part IX is the live board and takes priority; Part VIII keeps one small open card (VIII-C3).** Parts I–VII are closed. Part V is distribution and launch — everything between
 "it works here" and "a stranger can use it". Part VI is the agent onboarding and provider
 flow — everything between "a stranger installed it" and "a stranger ran an item with the
 model they chose, without opening this file". Part IV is done. They share `README.md` and
@@ -53,7 +54,7 @@ therefore **reordered below the active boards, not extracted**. Its numbering na
 ## Conventions that hold across every Part
 
 - One card, one worktree, one branch: `agent/<card-id-lowercase>-<slug>`, branched from the
-  integration line the active board names — today `develop` for both Parts IV and V.
+  integration line the active board names — today `develop` for every Part.
 - Stay inside your card's `Owns`. A change you need in someone else's file is a request
   written into your handoff, not an edit.
 - Each card writes exactly one handoff in `docs/agent-handoffs/<part>/<ID>.md`. Corrections
@@ -62,6 +63,277 @@ therefore **reordered below the active boards, not extracted**. Its numbering na
 - No card edits a status board. The wave integrator does that, after independent
   verification by someone who did not author the code.
 - Never `git commit` without the user asking; never add AI attribution to a commit message.
+
+---
+
+# Part IX — Human maintainability (Phase 63)
+
+**Status: OPEN 2026-09-11 — priority over every other open card, including the release tag.**
+Created from `docs/plans/human-maintainability.md`, which is the specification; this board
+carries only the cards, their order and their acceptance. Nothing here changes what the code
+does, what the wire contract says or what CI verifies. It removes copies, prose and
+scaffolding, and puts a size budget on what remains so that nothing an agent adds later can
+undo it.
+
+Dispatch plan: **`docs/agent-handoffs/part-ix/README.md`** — read its header and your card's
+block only.
+
+| Wave | Cards | Phase | Status |
+|---|---|---|---|
+| 27 — The tool and the mechanical moves | IX-M0 → IX-M1 → IX-M2 | 63 | open; sequential; human-run, no agent needed |
+| 28 — One place for a helper | IX-M3-db, then IX-M3-orch ∥ IX-M3-api ∥ IX-M3-runner ∥ IX-M3-cli | 63 | open; after 27 |
+| 29 — Prune per binary | IX-M4-<crate>-<binary>, 28 sub-cards, largest first | 63 | open; after 28; two at a time under the load cap |
+| 30 — Harness core | IX-M5 (= T0 of `docs/plans/harness-maintainability-audit.md`) | 63 | open; after 29 |
+| 31 — Comments and docs | IX-M6 batches ∥ IX-M7 | 63 | open; after 27; M6 may overlap 29 on files 29 does not own |
+| 32 — Ratchet down | IX-M8 | 63 | open; last |
+
+## §IX.0 Cold-start context capsule
+
+**What this Part is for, in one sentence.** A person can read any production file, any test
+file and any doc page in one sitting, and a script — not a prompt — keeps it that way.
+
+**The specification is the plan**, `docs/plans/human-maintainability.md` (~240 lines, ~4k
+tokens): §2 the test layout and the nine rules, §3 the comment budgets, §4 the documentation
+rules, §5 the cards, §6 the decisions still open. Read the section your card cites, not the
+plan whole. The harness adapters have their own audit,
+`docs/plans/harness-maintainability-audit.md`; IX-M5 is its card T0.
+
+### Evidence base, measured 2026-09-11 (`scripts/maintainability.py`, dry runs only)
+
+| Fact | Value | Command |
+|---|---|---|
+| Production Rust, no inline tests | 57 453 lines, 23 % comments | `measure --totals` |
+| Test lines | 74 014 (ratio 1.29), 1 498 tests, 18.8 s | `measure --totals`; `cargo nextest run --workspace` |
+| Test lines inside `src/*.rs` over budget | 20 882 in 40 modules | `extract-tests` (dry run) |
+| Comment blocks over budget | 149 in 104 files; 25 preambles over 30 lines | `comment-worklist`; `extract-module-docs` (dry run) |
+| Near-identical test names across files | 72 pairs | `duplicate-tests` |
+| Fixed waits in test code | 74 `sleep(` | `measure --totals`; `docs/adr/0064-fixed-waits.txt` |
+| Test binaries | 28 (api 8, orch 7, cli 6, runner 5, db 2) | `cargo nextest list --workspace` |
+| Helper copies in test files | 18 `project()`, 12 `request()`, 6 `runner()`, 4 `claim()` | plan Appendix A |
+| Non-generated docs | 91 089 lines; 59 986 of them handoffs in 230 files | plan Appendix A |
+| CI coverage floors (line %) | core 85 · db 70 · api 70 · orch 70 · runner 85 | `.github/workflows/ci.yml` |
+
+### Vocabulary
+
+*A budget* is a number in `BUDGETS` in `scripts/maintainability.py`. *The baseline* is
+`scripts/maintainability-baseline.json`. *The ratchet* is `check`: a file may exceed a budget
+only if it already did and is not worse; new files meet every budget. *A scratch test* is
+`crates/*/tests/scratch_*.rs`: gitignored, run locally, never tracked. *A layer* is one of
+repository, router, contract, gate. *A preamble* is a file's leading `//!` block.
+
+---
+
+## §IX.1 Rules for simultaneous agents
+
+**All of §III.2, §V.1, §VI.1, §VII.1 and §VIII.1 apply unchanged.** Seven rules are specific
+to this Part:
+
+1. **Behaviour is frozen.** No card changes what a function returns, what a route answers or
+   what a fixture pins. A test that fails after a card's change is a defect in the card, never
+   a test to edit. Two named exceptions: IX-M4 replaces a fixed wait with a bounded poll or
+   paused time, and IX-M5 migrates the adapters with their existing tests as the proof.
+2. **Mechanical cards are one command.** IX-M1 and IX-M2 run the script, format, run the full
+   suite once, commit. If the script refuses a file, the refusal goes in the handoff; the file
+   is not edited by hand under that card.
+3. **Coverage floors are the guard against over-pruning.** The `llvm-cov` thresholds in CI
+   must hold after every IX-M4 sub-card. A sub-card that drops one removed a test that was
+   doing work; put it back and say so.
+4. **A pruning card keeps two layers** — the repository and one router-level test — plus
+   every contract, golden and gate test. `wave2_gate`, `runner_contract`, `openapi_contract`
+   and the two `docket_*_contract_test` binaries are never pruned.
+5. **The budget is checked, not promised.** Every handoff's *Budget check* carries the output
+   of `scripts/maintainability.py check --changed` and of `measure --totals` before and
+   after. A card that re-baselines names the files it brought down.
+6. **No new mechanism.** This Part deletes and moves. The only additions are
+   `crates/tack-test-support` (IX-M3) and `scripts/gen-api-reference.py` (IX-M7). A card
+   that wants a third has left the Part.
+7. **Load cap.** IX-M4 sub-cards run two at a time; each compiles one test binary and runs
+   only that binary until its final gate.
+
+## §IX.2 Shared-file ownership
+
+| File | Owner | Others |
+|---|---|---|
+| `scripts/maintainability.py`, `scripts/maintainability-baseline.json` | IX-M0; re-baselined only by IX-M1, IX-M2, IX-M3, IX-M8 | run, never edit |
+| `.githooks/pre-push`, `.github/workflows/ci.yml` | IX-M0 (the `check` step), IX-M7 (the `cargo doc` step) | request in handoff |
+| `crates/*/src/**` | IX-M1 (moves), IX-M2 (preambles), IX-M5 (adapters), IX-M6 (comments, per batch) | never two open cards on one file: M6 batches exclude M5's files |
+| `crates/*/tests/**` | IX-M3 per crate, then IX-M4 per binary | a binary belongs to exactly one sub-card |
+| `crates/tack-test-support/` | IX-M3-db creates; the other M3 sub-cards add | — |
+| `docs/dev-notes/**` | IX-M2 creates, IX-M6 empties | — |
+| `docs/TESTING.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.claude/**`, the skills | rules written 2026-09-11; IX-M0 and IX-M8 adjust the numbers only | — |
+| `docs/book/**`, `docs/API-REFERENCE.md`, `.gitattributes`, `scripts/regen-generated.sh` | IX-M7 | — |
+| `TODO.md` Parts I–III, closed Parts' handoffs, `docs/closed-cycles/**` (new) | IX-M7 | — |
+
+## §IX.3 Dependency graph and merge policy
+
+```
+M0 → M1 → M2 → M3-db → {M3-orch, M3-api, M3-runner, M3-cli} → M4 ×28 → M5 → M8
+                 │                                                            ↑
+                 └──── M6 batches (files no open M4/M5 card owns) ── M7 ──────┘
+```
+
+Integration line `develop`; branch `agent/ix-<card-lowercase>-<slug>`; one integrator per
+wave, who regenerates generated files once and re-runs `check` on the integrated tree.
+
+### Cross-Part conflicts
+
+VIII-C3 (one stale unit test) is the only other open card. It owns one test file in
+`tack-orch`; IX-M4's `tack-orch` sub-cards wait for it or take it over with the
+integrator's agreement, noted in both handoffs.
+
+## §IX.4 Cards
+
+### IX-M0 — the tool lands, the gate warns
+
+**Owns:** `scripts/maintainability.py`, `scripts/maintainability-baseline.json`,
+`.githooks/pre-push`, `.github/workflows/ci.yml`, `.gitignore`.
+**Acceptance:**
+- `python3 scripts/maintainability.py baseline` output is committed; `check` is green on the
+  untouched tree.
+- `pre-push` and CI run `python3 scripts/maintainability.py check --changed` right after
+  `check-test-hygiene.sh`; CI runs `check` without `--changed`.
+- A tracked `crates/*/tests/scratch_*.rs` fails `check` — proven once with `git add -N` and
+  undone; the pattern is gitignored.
+- `docs/TESTING.md`, `/gate`, `/card`, `/feature` and `/integrate` name the command (the
+  rules are already there).
+**Verification:** `.githooks/pre-push` green on the untouched tree.
+
+### IX-M1 — inline test modules move next to their module
+
+**Owns:** every `crates/<workspace crate>/src/**/*.rs` whose trailing test module is over
+150 lines, and the `<module>/tests.rs` files the script creates.
+**Acceptance:**
+- Proven first in a throwaway worktree: `extract-tests --apply` on the six workspace crates,
+  `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo nextest run --workspace`, `scripts/check-comments.sh`, `scripts/check-test-hygiene.sh`
+  — all green, same test count as before (1 502 run, 8 skipped, or the current number).
+- Then once on `develop`, one commit, re-baseline.
+- `measure` shows no production file with `inline_test_lines` over budget; the production
+  line total is unchanged.
+- `crates/tack-desktop` handled the same way with its own `cargo fmt` and `cargo test`, or
+  the handoff says it was left and why.
+**Verification:** the full suite, once; `check` green.
+
+### IX-M2 — over-budget preambles leave the source
+
+**Owns:** the 25 production files `extract-module-docs` lists, `docs/dev-notes/**`, the
+`README.md` of each `crates/tack-runner/src/harness/fixtures/<kind>/` directory.
+**Acceptance:**
+- `extract-module-docs --apply`; the vendor findings in the two adapter preambles go to the
+  fixture READMEs (harness audit §2.4), not to dev-notes.
+- `cargo check --workspace`, `scripts/check-comments.sh` green; re-baseline.
+- `comment-worklist` lists no `module doc` item in a production file.
+- Every `docs/dev-notes/` file starts with the line that says it is transitional and must be
+  resolved by IX-M6.
+**Verification:** `cargo check --workspace`, `check-comments.sh`, `check`.
+
+### IX-M3 — one place for a helper
+
+**Owns:** `crates/tack-test-support/` (new; depends on `tack-core` and `tack-db` only, so no
+crate is built twice), `crates/<crate>/tests/common/mod.rs`, and the test files of the
+sub-card's crate. Sub-cards: IX-M3-db first (creates the crate: migrated pool, seeded
+workspace/project/item, controllable clock, fixture loading), then the other four in parallel.
+**Acceptance:**
+- No test file in the crate defines its own `project()`, `request()`, `runner()`, `claim()`
+  or pool helper; the plan's Appendix A `grep` lines return only `tests/common` and the
+  support crate.
+- No test removed, no assertion changed; the crate's `nextest` count is identical before and
+  after.
+- `wave2_gate.rs` keeps its own infrastructure by design and is excluded.
+**Verification:** `cargo nextest run --workspace -E 'package(<crate>)'`, `check --changed`.
+
+### IX-M4 — prune one test binary to the rules
+
+**Owns:** one test binary (its file and directory). Sub-cards `IX-M4-<crate>-<binary>`,
+largest first: `tack-db-repository` (`execution_repo.rs` alone is 4 323 lines),
+`tack-api-runner_protocol`, `tack-api-handlers`, `tack-api-security`, then the rest by
+`measure` size.
+**Input per sub-card:** its `measure` rows, its `duplicate-tests` pairs, the layer map for
+`replay`/`stale`/`idempotent` (plan Appendix A), and the entries of
+`docs/adr/0064-fixed-waits.txt` that live in it. Nothing else.
+**Acceptance (plan §2.2):**
+- Variants are rows: no family of `<claim>_*` functions where one table-driven test would do.
+- Every body ≤ 60 lines (target 40); every name ≤ 60 characters and states the claim without
+  articles, narrative or board vocabulary.
+- Preamble ≤ 10 lines; captured vendor output is a fixture file with a provenance line.
+- An invariant already pinned at the repository layer and at one router-level test is not
+  pinned again in this binary.
+- No `sleep(` remains in the binary; its lines leave `0064-fixed-waits.txt`.
+- CI coverage floors hold; `check --changed` green; no production file touched.
+**Verification:** `cargo nextest run --workspace -E 'binary(<name>)'`, the coverage job,
+`check --changed`.
+
+### IX-M5 — the harness core
+
+Card T0 of `docs/plans/harness-maintainability-audit.md` §6, unchanged: extract
+`LocalProcessHarness` and `HarnessGrammar`; migrate `claude_code` and `codex` with no
+behaviour change, their current tests as the proof; captured transcripts become fixture
+files; the three live tests move under `tests/live/` as `#[ignore]`; then prune to the
+audit's §5. Runs after IX-M4 has pruned `tack-runner`'s binaries. Exit criteria are the
+audit's, measured by its Appendix A and by `check`.
+
+### IX-M6 — comments trimmed to the budget, per batch
+
+**Owns:** one batch of about ten production files from `comment-worklist --json`, grouped by
+crate; a batch never includes a file an open IX-M4 or IX-M5 card owns.
+**Acceptance (plan §3):**
+- In the batch's files: no `///` block over 15 lines, no preamble over 30 lines, comment
+  share ≤ 35 %. Kept: what the code does, why the non-obvious choice, what breaks, what is
+  not true yet. Removed or moved: restatements, narratives, vendor lore (→ fixture README),
+  design essays (→ ADR or the book's developer guide).
+- The batch's `docs/dev-notes/` entries are resolved — ADR section, fixture README, or
+  deleted — and say which in the handoff.
+- `cargo check --workspace`, `scripts/check-comments.sh`, `check --changed` green. No test
+  run is needed and none is run.
+
+### IX-M7 — documentation generated, included, archived
+
+**Owns:** `docs/book/**`, `docs/API-REFERENCE.md`, `scripts/gen-api-reference.py` (new),
+`scripts/regen-generated.sh`, `.gitattributes`, the `cargo doc` step in
+`.github/workflows/ci.yml`, `.claude/context-budget.md`, `TODO.md` Parts I–III, the closed
+Parts' handoffs, and `docs/closed-cycles/**` (new).
+**Acceptance (plan §4):**
+- The book's developer pages for testing, architecture, configuration, MCP and deployment
+  are `{{#include}}`s of the `docs/*.md` authorities; `mdbook build docs/book` green with
+  the link check.
+- `developer/api-reference.md` is generated from `docs/openapi.json`, listed in
+  `.gitattributes` and produced by `regen-generated.sh`; `docs/API-REFERENCE.md` keeps only
+  what a spec cannot say (auth surfaces, WebSocket, worked examples).
+- CI runs `cargo doc --workspace --no-deps` with `-D rustdoc::broken_intra_doc_links`; no
+  `missing_docs` lint anywhere.
+- Closed Parts live in `docs/closed-cycles/boards/part-<n>.md` and their handoffs in
+  `docs/closed-cycles/handoffs/part-<n>/`; `docs/closed-cycles/README.md` opens by saying
+  nothing under it is current. The directory is excluded from the book, from
+  `.claude/context-budget.md` and from `check-comments.sh`'s dead-pointer scan.
+  `TODO.md`'s live table has one row per Part, each ≤ 300 characters.
+- `.claude/context-budget.md` re-measured and reduced to the files that remain.
+  (`git-cliff` is already in place: `cliff.toml`, `make changelog`, the release workflow.)
+
+### IX-M8 — ratchet to the targets
+
+**Owns:** `BUDGETS` in `scripts/maintainability.py`, the baseline, the numbers in
+`docs/TESTING.md` and `CLAUDE.md`.
+**Acceptance:** budgets set to the plan's targets (40-line bodies, 30 % comment share,
+ratio ≤ 0.8), `check` switched from ratchet to hard failure on any file over budget, green
+on the tree; `measure --totals` recorded in the handoff and in the plan's §1 table.
+
+## §IX.5 Definition of done, and deliberate exclusions
+
+Done when `check` is a hard gate at the target budgets and is green; the test : production
+ratio is ≤ 0.8; `comment-worklist`, `duplicate-tests` and `0064-fixed-waits.txt` are empty;
+the book builds from included sources with a generated API reference; and the closed cycles
+are out of the tree.
+
+Excluded: the frontend (inside the target ratio already; the rules bind new tests only);
+any change to behaviour or wire contracts; any abstraction beyond the two named; release,
+signing and launch work, which resume after IX-M8.
+
+## §IX.6 Handoff additions for this Part
+
+`docs/agent-handoffs/part-ix/TEMPLATE.md` adds three sections: *Budget check* (the
+`check --changed` output, `measure --totals` before and after), *What was removed* (tests or
+comment lines, each with its reason class from plan §2.2 or §3), *Re-baselined?* (yes or no;
+if yes, which files and why).
 
 ---
 

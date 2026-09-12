@@ -44,8 +44,8 @@ and tokens and teaches you nothing the cheap check did not already say.
 |---|---|---|
 | Only `.md` outside `docs/book/` — README, boards, handoffs, ADRs | nothing | any cargo command |
 | `docs/book/**` | `mdbook build docs/book` | any cargo command |
-| Only comments, doc comments or log/error strings in `.rs` | `scripts/check-comments.sh` and `cargo check --workspace` | the test suite — a comment cannot move a test, and if one moves you changed behaviour by accident |
-| Any test file, or a `#[cfg(test)]` module | `scripts/check-test-hygiene.sh` before the suite (~0.7 s) | discovering in CI that a new test leaves its scratch files behind |
+| Only comments, doc comments or log/error strings in `.rs` | `scripts/check-comments.sh`, `python3 scripts/maintainability.py check --changed` (comment budgets) and `cargo check --workspace` | the test suite — a comment cannot move a test, and if one moves you changed behaviour by accident |
+| Any test file, or a `#[cfg(test)]` module | `scripts/check-test-hygiene.sh` and `python3 scripts/maintainability.py check --changed` before the suite (~1 s together) | discovering in CI that a new test leaves its scratch files behind, or that a file grew past its budget |
 | Rust code, any crate | `cargo nextest run --workspace` (~15 s to execute; the compile is only what you changed) and `cargo clippy --workspace --all-targets -- -D warnings` | `cargo test`; `-p` |
 | Iterating on one failing test | `cargo nextest run --workspace -E 'test(<name>)'` until it passes, then the row above once | the full suite on every edit |
 | Wire shapes, DTOs, handlers, the API surface | the row above **plus** the contract gates below | — |
@@ -111,7 +111,8 @@ proof, a statement `diff`). A doc example that was not run is not verified — s
 ## `full`
 
 All of the above: fmt, clippy, `cargo nextest run --workspace`, the three contract gates,
-the frontend block. Add `make audit` for release-facing work. Every test runs once; there
+`python3 scripts/maintainability.py check` (the workspace ratio must not have grown), the
+frontend block. Add `make audit` for release-facing work. Every test runs once; there
 is no separate list of "named gates" to run again afterwards — CI has none either.
 
 Finish by running **`.githooks/pre-push`** itself. This list is a human transcription of it
@@ -123,7 +124,8 @@ whether the lockfiles and `schema.gen.ts` still match the tree after a merge.
 
 - **Baselines come from the repo, not memory**: compare the summary line's test count
   against the most recent status-board entry or handoff in `docs/agent-handoffs/`. A drop
-  in test COUNT is a finding even when everything passes.
+  in test COUNT is a finding even when everything passes — except under a Part IX pruning
+  card (IX-M4, IX-M5), where the finding is a CI coverage floor that no longer holds.
 - A status-code assertion alone doesn't prove a "writes nothing / rejects before X"
   claim — assert the absence directly, and prove new tests load-bearing by reverting the
   fix once and watching them fail.

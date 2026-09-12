@@ -40,6 +40,11 @@ cloudflared.yml
 # Stray root npm installs (frontend deps live in frontend/)
 /node_modules/
 
+# Scratch tests: an agent's or a person's local proof. Cargo discovers and runs
+# them like any tests/*.rs; git never sees them, and a tracked one fails
+# scripts/maintainability.py check.
+/crates/*/tests/scratch_*.rs
+
 # E2E (Playwright) artifacts
 /frontend/test-results/
 /frontend/playwright-report/

@@ -18,10 +18,11 @@ something that actually happened in this tree, and each one names it.
   tables total) — against exactly one backend, then generalized it for backends that never
   arrived. Part III replaced the whole model. Both now coexist in the schema and the UI,
   and V-B2 exists to decide what to do about it.
-- **234 Rust doc comments cite `TODO.md` section numbers.** That is what abstraction costs
-  here after the fact: the docket surface cannot simply be deleted, because deleting it means
-  updating 234 citations. Every mechanism you add is a mechanism someone later has to pay to
-  remove.
+- **234 Rust doc comments once cited `TODO.md` section numbers** — 0 today
+  (`grep -rn "TODO\.md" crates --include='*.rs' | wc -l`). That is what abstraction costs
+  here after the fact: for weeks the docket surface could not simply be deleted, because
+  deleting it meant updating every citation. Every mechanism you add is a mechanism someone
+  later has to pay to remove.
 
 None of that came from carelessness. It came from building the general case before the
 specific one existed.
@@ -112,6 +113,42 @@ the durable rule it was standing in for.
 Before adding a comment, ask which of the four "write" categories it falls in. If none, the
 comment is decoration and the code should carry the meaning instead — usually via a better
 name.
+
+### How much
+
+The right kind of comment can still be too long. Budgets, measured by
+`scripts/maintainability.py check` and listed by `comment-worklist`:
+
+| Block | Budget | What belongs there |
+|---|---|---|
+| `//!` preamble, production file | ≤ 30 lines | what the module owns, its invariants, what breaks if you change them |
+| `//!` preamble, test file | ≤ 10 lines | what it proves, how to run it |
+| One `///` block | ≤ 15 lines | what the item does when the name does not say, the non-obvious choice, the hazard |
+| Comment share of a production file | ≤ 35 % | — |
+
+Vendor behaviour at a version goes in the fixture directory's README; design rationale in
+an ADR or the book; a transitional parking place is `docs/dev-notes/`, which Part IX
+empties. The plan and the numbers: `docs/plans/human-maintainability.md` §3.
+
+## Tests: one claim, one place, one size
+
+A test written to convince a verifier and a test written for a maintainer look different.
+The second is what this tree keeps (`docs/plans/human-maintainability.md` §2.2, measured by
+`scripts/maintainability.py check --changed`):
+
+- **One claim per test; variants are rows** of one table-driven test.
+- **The name states the claim in ≤ 60 characters** — no articles, no narrative, no board
+  vocabulary. `env_canary_is_redacted`, not
+  `a_planted_canary_in_the_environment_never_survives_into_the_returned_outcome`.
+- **A body is ≤ 60 lines** (target 40); longer setup is a fixture in `tests/common`.
+- **An invariant is pinned in at most two layers** — the repository and one router-level
+  test; contract fixtures pin the shape, not the behaviour.
+- **A test file's preamble is ≤ 10 lines.** Why it exists is an ADR's job.
+- **A trailing `#[cfg(test)] mod tests` over 150 lines moves to `<module>/tests.rs`.**
+- **No fixed waits; no live test hiding behind an env-var early return** — those live under
+  `tests/live/`, `#[ignore]`d.
+- **Throwaway proof goes in `crates/*/tests/scratch_*.rs`** (gitignored). A card adds at most
+  15 tests and 600 test lines; over that is a finding for the integrator.
 
 ## The counter-rule, so this is not read as an excuse
 

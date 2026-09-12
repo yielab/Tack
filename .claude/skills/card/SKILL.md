@@ -27,11 +27,11 @@ grep -n "^# \|^## " TODO.md # the map. Do this before any sed.
 n=$(grep -n "### <ID> " TODO.md | cut -d: -f1); sed -n "${n},$((n+75))p" TODO.md   # the longest card is 75 lines
 ```
 
-**Current layout (since 2026-09-03):** active boards first — **Part VI** (agent onboarding
-+ provider UX, §VI, ~940 lines), then **Part V** (adoption, §V), then **Part IV** (single-binary,
-§IV, done) — in roughly the first 2000 lines. Below them, an `# Archive` divider, then Parts
-I, II and III unchanged. The archive stays in this file because 234 Rust doc comments cite
-its section numbers; do not propose moving it. **Extract one Part, never all three.**
+**Current layout (since 2026-09-11):** the live board first — **Part IX** (human
+maintainability, §IX, the priority) — then Parts VIII, VII, VI, V and IV, closed, in the
+first ~4500 lines. Below them, an `# Archive` divider, then Parts I, II and III unchanged.
+Nothing in `crates/` cites the archive any more (`grep -rn "TODO\.md" crates --include='*.rs'`
+returns 0); IX-M7 moves it out once the user picks the location. **Extract one Part, never all.**
 
 **Two Parts are active at once and they share `README.md` and `docs/screenshots/**`.** Read
 §VI.3 (which defers to §V.3 for the files Part V still owns) before branching a card in
@@ -122,6 +122,11 @@ questions that catch most of the waste in this tree:
   it. Comments explain the code to a reader who has never seen the board; provenance belongs
   in the handoff and in `git log`. A 2026-08-30 sweep removed ~1,900 such lines — do not add
   the next one.
+- **Did your diff push any file over a size budget, or add more than 15 tests / 600 test
+  lines?** Run `python3 scripts/maintainability.py check --changed`; its output goes in the
+  handoff. Throwaway proof belongs in `crates/*/tests/scratch_*.rs` (gitignored), a test that
+  stays must state its claim in ≤ 60 characters and ≤ 60 lines, and a trailing test module
+  over 150 lines moves to `<module>/tests.rs`. The rules: `docs/plans/human-maintainability.md` §2.2.
 
 The counter-rule matters as much: doing *less* than the card asks is not discipline, it is an
 unreported gap. No `unimplemented!()`, no silent fake success, no zero standing in for
@@ -165,6 +170,7 @@ Labelled items, ONE topic each. Never one dense paragraph listing five files.
   **How <one mechanism> works** — one topic per item, repeat as needed.
   **What is blocking, technically** — exact type or file, and why.
   **Test results** — the numbers.
+  **Budget check** — the `scripts/maintainability.py check --changed` output.
   **Not checked** — what was skipped, and why it is not covered.
 
 ## Next step

@@ -99,7 +99,10 @@ commit them with that merge — never hand-edit, never batch three merges' drift
 
 Run `/gate full`. This is the only test result that counts: a card's own green tests are
 not evidence that the integrated system works — that is why wave-gate tests exist and
-import no per-card test infrastructure.
+import no per-card test infrastructure. Then `python3 scripts/maintainability.py check` on
+the integrated tree: the workspace test : production ratio must not have grown, and each
+handoff's *Budget check* must match what you measure. A baseline entry that went up in
+`scripts/maintainability-baseline.json` is a finding, collected like an escalation.
 
 ## 6. Report as one review
 
@@ -168,6 +171,7 @@ Labelled items, ONE topic each. Never one dense paragraph listing five files.
   **How <one mechanism> works** — one topic per item, repeat as needed.
   **What is blocking, technically** — exact type or file, and why.
   **Test results** — the numbers.
+  **Budget check** — `scripts/maintainability.py check` on the integrated tree.
   **Not checked** — what was skipped, and why it is not covered.
 
 ## Next step

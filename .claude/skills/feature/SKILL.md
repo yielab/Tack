@@ -22,8 +22,9 @@ carries the ownership and handoff rules. This skill is the architectural path.
 **This is the step this codebase skips, and it is the expensive one.** The tree carries
 `model_profiles` (a table, a repo module and a UI surface consulted by *nothing* since Phase
 56), a fully built and contract-pinned `decisions` path that no harness has ever exercised,
-and an entire docket control plane that Part III superseded but which cannot simply be
-deleted because 234 doc comments cite its board sections. All three were built well. None of
+and an entire docket control plane that Part III superseded and which for weeks could not
+simply be deleted because hundreds of doc comments cited its board sections (0 do today;
+ADR 0060 keeps it by decision). All three were built well. None of
 them had a caller when they were written.
 
 Read `.claude/scope-discipline.md` before designing. Then:
@@ -51,7 +52,10 @@ handoffs.
 ## 1. The layering path (inward-out; each layer has its own tests)
 
 1. **tack-core** — model + pure logic (`models.rs`, `workflow.rs`, …). Zero I/O. Unit
-   tests in-file.
+   tests in-file while the trailing module is under 150 lines, else in `<module>/tests.rs`.
+   Every layer's tests obey the size rules in `docs/plans/human-maintainability.md` §2.2
+   (one claim per test, ≤ 60-line body, ≤ 60-char name, helpers in `tests/common`), checked
+   by `python3 scripts/maintainability.py check --changed`.
 2. **tack-db** — migration in `migrations.rs`: **one `ALTER` per migration name** (the
    runner executes statements individually without a wrapping transaction — a
    multi-`ALTER` migration that fails midway bricks the install). Repo module in `repo/`.

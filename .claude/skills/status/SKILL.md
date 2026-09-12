@@ -34,8 +34,8 @@ grep -n "^| [0-9]* — \|^| Wave " TODO.md  # the status-board rows across all P
 # 3. The most recent decisions/corrections
 ls -t docs/agent-handoffs/*/ | head -5
 # read only the newest one or two if the board row is unclear
-# Part VI: which cards have handed off, and the wave table with base SHAs
-for p in part-vii part-vi; do ls docs/agent-handoffs/$p/; sed -n '/^## Waves, order/,/^## Before dispatching/p' docs/agent-handoffs/$p/README.md; done
+# The live Part: which cards have handed off, and the wave table with base SHAs
+for p in part-ix part-viii; do ls docs/agent-handoffs/$p/; sed -n '/^## Waves, order/,/^## Before dispatching/p' docs/agent-handoffs/$p/README.md; done
 
 # 4. DELIVERED-BUT-UNMERGED WORK — the check that ancestry misses.
 # `git branch --merged` lies here: rebased/restructured branches report unmerged

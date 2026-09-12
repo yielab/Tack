@@ -12,17 +12,18 @@ near your code and credentials) — shipped as a single `tack` binary where `tac
 (Scrum/Kanban/phase) with per-project vocabulary; 10 project-type presets; MCP server
 (`tack mcp`). Core is complete (backend, frontend, CLI).
 
-**No board has an open card.** Parts IV through VII (Phases 58–61) are all carded out: the
-embedded runner, adoption and distribution, agent onboarding and provider choice, and the
-desktop app with its background service. What is left is not card work — tagging a release
-and the publish list in `docs/LAUNCH-CHECKLIST.md`. **These status lines decay in days —
+**Part IX (Phase 63, human maintainability) is the live board and takes priority over
+everything else, including the release tag and the publish list in
+`docs/LAUNCH-CHECKLIST.md`.** Its specification is `docs/plans/human-maintainability.md`;
+the board carries only cards and acceptance. Parts IV through VIII are carded out and
+closed except VIII-C3. **These status lines decay in days —
 `TODO.md`'s "Which board is live" table is the authority, not this paragraph.** A new cycle
 branches from `develop`; `README.md` and `docs/screenshots/**` are shared files, and the
 conflict rules for them are in `TODO.md` §VI.3 and §V.3. The boards are the authority for what
 shipped; `docs/book/src/roadmap.md` records only intent.
 
 **Never read `TODO.md` whole — it costs ~199k tokens.** Active boards sit in its first ~2400
-lines (Part VII, then VI, then V, then IV — extract one, never all); the archive (Parts I–III) sits below them.
+lines (Part IX first, then VIII, VII, VI, V, IV — extract one, never all); the archive (Parts I–III) sits below them.
 It was kept in-file because hundreds of doc comments cited its section numbers; **no Rust file cites it any
 more**, so extracting it is now an open option rather than a blocked one — see `TODO.md`'s own header. Costs and extraction recipes for every big file:
 **`.claude/context-budget.md`**. Before designing anything, read
@@ -56,6 +57,7 @@ cd frontend && npm run type-check && npx vitest run
 make e2e                                   # Playwright (make e2e-install once)
 make audit                                 # cargo audit + npm audit
 
+python3 scripts/maintainability.py check --changed   # size budgets for tests and comments, ratcheted against a baseline
 .githooks/pre-push                         # THE definition of done — run it before saying a change is finished
 ```
 
@@ -163,6 +165,16 @@ notes (workflow validation, auto-status propagation, WebSocket events, attachmen
   the path: a helper returning only the path deletes the directory as it returns, and the
   compiler will not tell you. `scripts/check-test-hygiene.sh` enforces this (~0.7s, in
   `pre-push` and CI); production code may still use the temp directory and is not scanned.
+- **Tests have a place and a size.** A trailing `#[cfg(test)] mod tests` stays under 150
+  lines or moves to `<module>/tests.rs`; a test body is ≤ 60 lines (target 40), its name
+  ≤ 60 characters and states the claim; a test file's preamble is ≤ 10 lines; variants are
+  rows of one table-driven test; an invariant is pinned at most twice (repository + one
+  router-level test) besides the contract fixtures; no fixed waits; a live or billed test
+  lives under `tests/live/` and is `#[ignore]`d; helpers live in `tests/common` or
+  `tack-test-support`, never per file. Throwaway proof goes in `crates/*/tests/scratch_*.rs`,
+  which is gitignored and never tracked. `scripts/maintainability.py check --changed`
+  measures all of it against a committed baseline: a file may exceed a budget only if it
+  already did and is not worse. Rules, numbers and the plan: `docs/plans/human-maintainability.md`.
 - **Each board card writes one handoff** in `docs/agent-handoffs/`; corrections are
   appended as amendments, never rewritten.
 - Changing an API response shape updates the matching frontend unit/E2E mocks in the
@@ -186,6 +198,10 @@ because this rule decayed silently once already: card citations returned to doc 
 reached operator log lines and API error responses before anyone noticed. When it fires,
 rewriting is almost always right and deleting is almost always wrong — the comment usually
 wraps something real in board scaffolding. Keep the knowledge, drop the pointer.
+**And how much:** a module preamble ≤ 30 lines (test file: ≤ 10), a `///` block ≤ 15
+lines, a production file ≤ 35 % comment. Vendor behaviour at a version goes in the fixture
+README, design rationale in an ADR, history nowhere. `scripts/maintainability.py check`
+measures it, `comment-worklist` lists what is over.
 
 ## Where everything else lives
 
@@ -197,6 +213,7 @@ wraps something real in board scaffolding. Keep the knowledge, drop the pointer.
 | Testing guide (unit → E2E → load) | `docs/TESTING.md` |
 | Active board, wave rules, card ownership | `TODO.md` (extract, don't read whole) |
 | Per-card decision history | `docs/agent-handoffs/` |
+| Size budgets for tests, comments and docs; the plan behind them | `docs/plans/human-maintainability.md`, `scripts/maintainability.py --help` |
 | Wire contract of record | `docs/contracts/runner-v1/` |
 | MCP, GitHub sync, deployment | `docs/MCP.md`, `docs/GITHUB-SYNC.md`, `docs/DEPLOYMENT-GUIDE.md` |
 | User/developer book (mdBook) | `docs/book/src/` |

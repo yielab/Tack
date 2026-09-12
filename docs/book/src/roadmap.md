@@ -3599,3 +3599,70 @@ from the Agents page, runs an agent on an item, closes the window, comes back la
 finds the attempt finished with its artifacts listed. Quit warns them if something is still
 running. `tack service install` gives a terminal user the same guarantee without the app.
 Every platform's result is either measured or marked `not_measured`; none is assumed.
+
+
+# Human maintainability (Phase 63)
+
+**Status:** open — **the priority board**, ahead of the release tag and the publish list.
+Created 2026-09-11. The board is Part IX in `TODO.md` (top of the file); the specification
+is `docs/plans/human-maintainability.md`; the dispatch plan is
+`docs/agent-handoffs/part-ix/README.md`. All three were created from the audit this
+section summarises.
+
+**The code is fine; what surrounds it is not.** Production Rust is 57k lines. Tests are
+74k lines — 1.29 per production line — and 21k of them sit inside production files, so the
+three largest "source" files are 70–90 % test. Comments are 23 % of production, and 149
+comment blocks are over any reasonable budget. Non-generated documentation is 91k lines,
+60k of which are agent handoffs. The suite runs in 18.8 s; nothing here is about speed.
+It is about how much a person must read before touching anything.
+
+## Why this phase exists
+
+Every card that built this tree proved itself in isolation and never paid the cost of
+reading what it left behind. Each test is correct; each comment is true; the sum is a tree
+no maintainer can hold. "Write fewer tests" is not a rule an agent can keep. A place where
+each kind of test lives once, a size budget per file and per test, and a script that fails
+the push when a file grows past it — those are.
+
+## The shape
+
+| Piece | What it is | Why |
+|---|---|---|
+| `scripts/maintainability.py` | Measures every file; `check` compares to a committed baseline and fails on regression | A rule with a command survives; prose rules decayed here twice |
+| One place per kind of test | `<module>/tests.rs` for unit tests over 150 lines; `tests/<subject>` per binary; `tests/contract/`, `tests/live/`; helpers in `tests/common` and `tack-test-support` | A helper written 18 times is 18 places to change |
+| Budgets | Body ≤ 40 lines, name ≤ 60 chars, preamble ≤ 10 (tests) / 30 (source), `///` ≤ 15, comment share ≤ 30 %, invariant pinned in ≤ 2 layers | The numbers a person would hold another person to |
+| The agent lane | Gitignored `tests/scratch_*.rs`; ≤ 15 tests and ≤ 600 test lines per card; the ratchet | Agents keep proving their work; the tree stops keeping the proof |
+| Documentation | The book includes `docs/*.md` instead of copying; the API reference is generated from the spec; `cargo doc` in CI; closed cycles moved to `docs/closed-cycles/` | One source per topic |
+
+## Cards — the Part IX board
+
+| Card | Scope | Needs |
+|---|---|---|
+| IX-M0 | The tool, its baseline, `check --changed` in pre-push and CI, scratch tests gitignored | — |
+| IX-M1 | Inline test modules move to `<module>/tests.rs`: 40 modules, 20 882 lines, one command | M0 |
+| IX-M2 | Over-budget preambles leave the source: 25 files, one command; vendor lore to fixture READMEs | M1 |
+| IX-M3 | `tack-test-support` and filled `tests/common`; the helper copies go — one sub-card per crate | M2 |
+| IX-M4 | Prune each of the 28 test binaries to the rules; coverage floors guard it — one sub-card per binary | M3 |
+| IX-M5 | The harness core, card T0 of the harness audit | M4 (runner) |
+| IX-M6 | Comments trimmed to budget, batches of ten files; dev-notes resolved | M2 |
+| IX-M7 | Docs: includes, generated API reference, `cargo doc`, the move to `docs/closed-cycles/` | M2 |
+| IX-M8 | Budgets lowered to the targets; `check` becomes a hard gate | everything |
+
+Waves continue Part VIII's numbering: **27** M0 → M1 → M2 · **28** M3 · **29** M4 ×28 ·
+**30** M5 · **31** M6 ∥ M7 · **32** M8.
+
+## What this phase deliberately does not do
+
+- **Change behaviour.** No route, function or fixture answers differently afterwards.
+- **Touch the frontend.** It is inside the target ratio; the rules bind new tests only.
+- **Add abstractions** beyond the test-support crate and the API-reference renderer.
+- **Release.** The tag and the publish list wait for IX-M8.
+
+## Exit
+
+`scripts/maintainability.py check` is a hard gate at the target budgets and is green. Tests
+are at most 0.8 lines per production line. No comment block, test name, test body or file
+is over budget; no fixed wait remains; no test claim is written twice. The book builds from
+the authoritative files with a generated API reference, and the closed cycles are under
+`docs/closed-cycles/`, out of the
+working tree. A stranger opens `engine.rs` and reads an engine.

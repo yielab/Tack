@@ -10,8 +10,8 @@ year from now; the ratios are the point, not the digits.
 
 | Source | Lines | ~Tokens | Read it? |
 |---|---|---|---|
-| `TODO.md` **whole** | 12,599 | **~205k** | **Never.** This is most of a context window for one file that is ~90% closed-cycle history. |
-| `TODO.md` active boards (lines 1–~2400) | ~2,370 | ~39k | Yes, when you need **a** board — one Part, never all. Parts VII, VI, V and IV live at the top in that order; `grep -n "^# Part" TODO.md` gives the start lines, then `sed -n` the one you need (Part VII is lines 60–430, ~370 lines, ~6k; Part VI is lines 431–1400, ~970 lines, ~16k). |
+| `TODO.md` **whole** | 15,000 | **~250k** | **Never.** This is more than a context window for one file that is ~90% closed-cycle history. |
+| `TODO.md` active boards (lines 1–~2400) | ~2,370 | ~39k | Yes, when you need **a** board — one Part, never all. Parts IX, VIII, VII, VI, V and IV live at the top in that order; `grep -n "^# Part" TODO.md` gives the start lines, then `sed -n` the one you need (Part VII is lines 60–430, ~370 lines, ~6k; Part VI is lines 431–1400, ~970 lines, ~16k). |
 | `docs/agent-handoffs/**` **all** | 12,161 | **~221k** | **Never all.** 48 files. Read the one or two your card's `Context` names. |
 | `docs/agent-handoffs/part-iii/III-C2.md` (largest single) | — | ~15k | Only if named. One handoff can cost as much as every active board combined. |
 | `docs/agent-handoffs/part-vi/README.md` (dispatch plan) | 559 | ~8k | **Header + your card's block only** (~2k). It tells you what else to read, with sizes; reading it whole defeats its purpose. `TEMPLATE.md` beside it is ~0.6k and replaces digging the template out of the archive. |
@@ -19,9 +19,11 @@ year from now; the ratios are the point, not the digits.
 | `docs/openapi.json` | 11,829 | **~88k** | **Almost never.** It is generated. To check one path, `python3 -c` or `jq` it. |
 | `docs/book/src/roadmap.md` | 3,592 | ~54k | Rarely whole. It records intent, not state. The `# Next` sections at the end (Phases 60 and 61) are the live part. |
 | `crates/tack-db/src/migrations.rs` | 1,614 | ~19k | Grep it for the table you care about; adding a migration needs the tail, not the file. |
-| `CHANGELOG.md` | 991 | ~10k | Only the `[Unreleased]` block. |
+| `CHANGELOG.md` | 1,250 | ~10k | Never for "what is unreleased" — it holds released sections only; `make changelog` prints the unreleased one from the commits. |
 | `docs/API-REFERENCE.md` | 1,433 | ~7k | Grep for the endpoint. |
 | `docs/ARCHITECTURE.md` | 326 | ~5k | Yes, whole, when you need crate-level design. It is the cheap one. |
+| `docs/plans/human-maintainability.md` | 240 | ~4k | The one section your card cites (§2 tests, §3 comments, §4 docs, §5 cards). |
+| `scripts/maintainability.py` | 440 | ~5k | **Never read it; run it.** `--help` lists the subcommands; `measure`, `check --changed`, `comment-worklist` and `duplicate-tests` produce the file lists a card works from. |
 | `docs/TESTING.md` | 398 | ~3k | Yes, whole, when writing tests. |
 | `docs/CONFIG.md` | 73 | ~1k | Yes, whole. Always cheaper than guessing an env var. |
 | `CLAUDE.md` | 138 | ~1k | **Already in your context.** Do not re-read it, and do not re-derive what it says. |
