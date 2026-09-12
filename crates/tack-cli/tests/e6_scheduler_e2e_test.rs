@@ -1,19 +1,11 @@
-//! Cross-surface end-to-end proof for the CLI side of scheduler behavior —
-//! healthy fleet selection, saturation, exact
-//! runner, unsupported model — passing through production routes in the
-//! CLI. Every operator action below shells out to the real `tack` binary
-//! (`env!("CARGO_BIN_EXE_tack")`) against a real `tack serve` subprocess
-//! (a real SQLite file, the real production router — not a
-//! stand-in, not a mock). The one thing the CLI itself has no command for —
-//! acting as a *runner* (enroll/refresh/claim) — is done via direct HTTP
-//! against the same live server, exactly as `tack-runner` would, since that
-//! is a different binary/actor than the `tack` operator CLI this file is
-//! proving.
-//!
-//! No blocking sleeps beyond the unavoidable "wait for a real subprocess to
-//! bind its port" readiness poll (bounded, short-interval, timing out with
-//! a clear failure) — every scheduling assertion itself is driven by real
-//! HTTP calls completing, not by waiting out the clock.
+//! Cross-surface proof that the CLI's production routes drive real
+//! scheduler behavior: healthy fleet selection, saturation, exact-runner
+//! targeting, an unsupported model, and an idempotency conflict. Every
+//! operator action shells out to the real `tack` binary
+//! (`env!("CARGO_BIN_EXE_tack")`) against a real `tack serve` subprocess, a
+//! real SQLite file and the production router — not a mock. The CLI has no
+//! runner-protocol commands, so enroll/claim go over direct HTTP against
+//! the same server, exactly as `tack-runner` would.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -103,6 +95,9 @@ fn wait_for_ready(base_url: &str, child: &mut Child) {
             let _ = child.kill();
             panic!("tack serve did not become ready within 15s");
         }
+        // Poll interval, not a fixed wait: the loop condition above is the
+        // real thing being awaited (a successful health response), bounded
+        // by the deadline check above it.
         std::thread::sleep(Duration::from_millis(100));
     }
 }
@@ -328,7 +323,7 @@ fn create_execution_via_cli(
 // =======================================================================
 
 #[test]
-fn healthy_runner_claims_a_cli_created_request_and_the_cli_observes_it() {
+fn eligible_runner_claims_request_and_cli_sees_it_leased() {
     let server = start_server();
     let (_project_id, item_id) = create_project_and_item(&server, "E6 CLI healthy");
     let agent_profile_id = create_agent_profile(&server);
@@ -426,7 +421,7 @@ fn a_saturated_runner_leaves_a_second_request_queued() {
 // =======================================================================
 
 #[test]
-fn an_exact_runner_request_is_never_claimed_by_a_different_runner() {
+fn exact_runner_selector_excludes_every_other_runner() {
     let server = start_server();
     let (_project_id, item_id) = create_project_and_item(&server, "E6 CLI exact runner");
     let agent_profile_id = create_agent_profile(&server);
@@ -522,7 +517,7 @@ fn a_request_for_an_undeclared_model_is_never_claimed() {
 // =======================================================================
 
 #[test]
-fn duplicate_idempotency_key_with_a_different_payload_is_a_named_conflict_via_the_cli() {
+fn changed_payload_replay_returns_idempotency_conflict() {
     let server = start_server();
     let (_project_id, item_id) = create_project_and_item(&server, "E6 CLI conflict");
     let agent_profile_id = create_agent_profile(&server);
