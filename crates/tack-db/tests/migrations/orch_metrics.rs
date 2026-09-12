@@ -1,21 +1,12 @@
-//! Tests for migrations 025 (`orch_metrics`), 026 (`orch_events_daily`), 027
-//! (`orch_metrics_daily`), and the repository functions built on them
-//! (`upsert_orch_metrics`, `list_latest_orch_metrics`, `rollup_and_purge_orch_events`,
-//! `rollup_and_purge_orch_metrics`, `list_orch_events_daily`, `list_orch_metrics_daily`).
-//!
-//! Covers:
-//!   - a fresh database migrates cleanly through 027;
-//!   - an existing database stopped at "024_orch_approvals" upgrades in place;
-//!   - FK enforcement holds for every new table;
-//!   - `orch_metrics` batch insert is append-only (never collides / overwrites);
-//!   - a 91-day-old event/metric is purged but its day's aggregate survives with the
-//!     same totals;
-//!   - re-running the rollup after everything old has already been purged is a
-//!     documented no-op (nothing left to double-count) — the externally observable
-//!     half of the atomicity guarantee described in `rollup_and_purge_orch_events`'s
-//!     doc comment (`crates/tack-db/src/repo/orch.rs`);
-//!   - batching: a backlog larger than one batch is fully swept across multiple
-//!     bounded transactions, not just the first `batch_size` rows.
+//! Tests for migrations 025-027 (`orch_metrics`, `orch_events_daily`,
+//! `orch_metrics_daily`) and the repository functions built on them:
+//! `upsert_orch_metrics`, `list_latest_orch_metrics`,
+//! `rollup_and_purge_orch_events`/`_metrics`, and their `list_*_daily` readers.
+//! Covers fresh install, upgrade-in-place, FK enforcement, append-only
+//! insert, and retention: a 91-day-old row is purged but its day's
+//! aggregate keeps the same totals, a re-run after everything is already
+//! purged is a documented no-op, and a backlog larger than one batch is
+//! swept across multiple bounded transactions.
 
 use crate::common::setup_test_db;
 use chrono::{Duration, Utc};
@@ -95,7 +86,7 @@ async fn insert_raw_metric(
 // ─── Fresh install / upgrade-in-place ──────────────────────────────────────
 
 #[tokio::test]
-async fn test_fresh_db_migrates_all_metrics_tables() {
+async fn fresh_db_migrates_all_metrics_tables() {
     let repo = setup_test_db().await;
 
     for table in NEW_TABLES {
@@ -119,18 +110,18 @@ async fn test_fresh_db_migrates_all_metrics_tables() {
     // history, not about metrics, and would break as soon as a later
     // migration lands. Presence-and-order here means a future migration
     // never breaks this test.
-    let this_cards_migrations = [
+    let this_files_migrations = [
         "025_orch_metrics",
         "026_orch_events_daily",
         "027_orch_metrics_daily",
     ];
-    let positions: Vec<Option<usize>> = this_cards_migrations
+    let positions: Vec<Option<usize>> = this_files_migrations
         .iter()
         .map(|name| applied.iter().position(|a| a == name))
         .collect();
     assert!(
         positions.iter().all(Option::is_some),
-        "expected all of {this_cards_migrations:?} to be applied; got {applied:?}"
+        "expected all of {this_files_migrations:?} to be applied; got {applied:?}"
     );
     let positions: Vec<usize> = positions.into_iter().flatten().collect();
     assert!(
@@ -140,7 +131,7 @@ async fn test_fresh_db_migrates_all_metrics_tables() {
 }
 
 #[tokio::test]
-async fn test_upgrade_from_024_applies_metrics_migrations_in_place() {
+async fn upgrade_from_024_applies_metrics_migrations_in_place() {
     let pool = init_pool("sqlite::memory:").await.expect("in-memory pool");
 
     // Simulate an installed tack.db that only ever saw migrations 001-024
@@ -173,8 +164,6 @@ async fn test_upgrade_from_024_applies_metrics_migrations_in_place() {
     // pre-existing 001-024 set — not a specific total count, which is a fact
     // about the whole project's migration history rather than about this
     // upgrade path, and breaks every time a later migration adds one more.
-    // See the equivalent note on `test_fresh_db_migrates_all_metrics_tables`
-    // above.
     let applied: Vec<String> = sqlx::query("SELECT name FROM _migrations")
         .fetch_all(&pool)
         .await
@@ -197,68 +186,49 @@ async fn test_upgrade_from_024_applies_metrics_migrations_in_place() {
 // ─── FK enforcement ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_orch_metrics_rejects_orphan_control_plane() {
+async fn orphan_fk_insert_is_rejected() {
     let repo = setup_test_db().await;
     let bogus_plane = Uuid::new_v4();
 
-    let result = sqlx::query(
-        "INSERT INTO orch_metrics (id, control_plane_id, name, value) VALUES (?, ?, 'x', 1.0)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(bogus_plane.to_string())
-    .execute(repo.pool())
-    .await;
+    let cases = [
+        (
+            "orch_metrics.control_plane_id",
+            format!(
+                "INSERT INTO orch_metrics (id, control_plane_id, name, value) \
+                 VALUES ('{}', '{bogus_plane}', 'x', 1.0)",
+                Uuid::new_v4()
+            ),
+        ),
+        (
+            "orch_events_daily.control_plane_id",
+            format!(
+                "INSERT INTO orch_events_daily (id, day, control_plane_id, event_type) \
+                 VALUES ('{}', '2026-01-01', '{bogus_plane}', 'tool_call')",
+                Uuid::new_v4()
+            ),
+        ),
+        (
+            "orch_metrics_daily.control_plane_id",
+            format!(
+                "INSERT INTO orch_metrics_daily (id, day, control_plane_id, metric_name) \
+                 VALUES ('{}', '2026-01-01', '{bogus_plane}', 'docket_agents_total')",
+                Uuid::new_v4()
+            ),
+        ),
+    ];
 
-    assert!(
-        result.is_err(),
-        "inserting an orch_metric with a dangling control_plane_id must be rejected by the FK constraint"
-    );
-}
-
-#[tokio::test]
-async fn test_orch_events_daily_rejects_orphan_control_plane() {
-    let repo = setup_test_db().await;
-    let bogus_plane = Uuid::new_v4();
-
-    let result = sqlx::query(
-        "INSERT INTO orch_events_daily (id, day, control_plane_id, event_type) \
-         VALUES (?, '2026-01-01', ?, 'tool_call')",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(bogus_plane.to_string())
-    .execute(repo.pool())
-    .await;
-
-    assert!(
-        result.is_err(),
-        "inserting an orch_events_daily row with a dangling control_plane_id must be rejected"
-    );
-}
-
-#[tokio::test]
-async fn test_orch_metrics_daily_rejects_orphan_control_plane() {
-    let repo = setup_test_db().await;
-    let bogus_plane = Uuid::new_v4();
-
-    let result = sqlx::query(
-        "INSERT INTO orch_metrics_daily (id, day, control_plane_id, metric_name) \
-         VALUES (?, '2026-01-01', ?, 'docket_agents_total')",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(bogus_plane.to_string())
-    .execute(repo.pool())
-    .await;
-
-    assert!(
-        result.is_err(),
-        "inserting an orch_metrics_daily row with a dangling control_plane_id must be rejected"
-    );
+    for (label, sql) in cases {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(repo.pool())
+            .await;
+        assert!(result.is_err(), "{label}: dangling FK must be rejected");
+    }
 }
 
 // ─── upsert_orch_metrics ─────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_upsert_orch_metrics_is_append_only_not_deduplicated() {
+async fn upsert_orch_metrics_is_append_only_not_deduplicated() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -292,7 +262,7 @@ async fn test_upsert_orch_metrics_is_append_only_not_deduplicated() {
 }
 
 #[tokio::test]
-async fn test_upsert_orch_metrics_empty_slice_is_a_noop() {
+async fn upsert_orch_metrics_empty_slice_is_noop() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -308,30 +278,23 @@ async fn test_upsert_orch_metrics_empty_slice_is_a_noop() {
 }
 
 #[tokio::test]
-async fn test_list_latest_orch_metrics_returns_the_most_recent_sample_per_series() {
+async fn list_latest_orch_metrics_returns_most_recent_sample() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
     // Three scrapes of the same series with different values, at strictly
     // increasing (backdated, to make ordering unambiguous) scraped_at.
     let base = Utc::now() - Duration::hours(1);
-    insert_raw_metric(repo.pool(), plane_id, "docket_agents_total", 1.0, base).await;
-    insert_raw_metric(
-        repo.pool(),
-        plane_id,
-        "docket_agents_total",
-        2.0,
-        base + Duration::minutes(1),
-    )
-    .await;
-    insert_raw_metric(
-        repo.pool(),
-        plane_id,
-        "docket_agents_total",
-        3.0,
-        base + Duration::minutes(2),
-    )
-    .await;
+    for (value, offset) in [(1.0, 0), (2.0, 1), (3.0, 2)] {
+        insert_raw_metric(
+            repo.pool(),
+            plane_id,
+            "docket_agents_total",
+            value,
+            base + Duration::minutes(offset),
+        )
+        .await;
+    }
 
     let latest = repo.list_latest_orch_metrics().await.expect("list latest");
     assert_eq!(latest.len(), 1, "one series should yield one latest row");
@@ -345,7 +308,7 @@ async fn test_list_latest_orch_metrics_returns_the_most_recent_sample_per_series
 // ─── Retention: rollup-before-purge, and the "same totals survive" bar ────────
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_events_preserves_totals_and_deletes_raw_rows() {
+async fn rollup_and_purge_orch_events_preserves_totals_deletes_raw() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -369,7 +332,6 @@ async fn test_rollup_and_purge_orch_events_preserves_totals_and_deletes_raw_rows
         .rollup_and_purge_orch_events(cutoff, 500)
         .await
         .expect("rollup");
-
     assert_eq!(
         stats.rows_purged, 3,
         "only the three 91-day-old rows are stale"
@@ -382,8 +344,7 @@ async fn test_rollup_and_purge_orch_events_preserves_totals_and_deletes_raw_rows
         .expect("count raw events");
     assert_eq!(raw_count, 1, "only the fresh event should remain raw");
 
-    // ...but the day's aggregate survives with the same totals (34.6's literal
-    // acceptance wording).
+    // ...but the day's aggregate survives with the same totals.
     let daily = repo
         .list_orch_events_daily(plane_id)
         .await
@@ -403,7 +364,7 @@ async fn test_rollup_and_purge_orch_events_preserves_totals_and_deletes_raw_rows
 }
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_events_rerun_with_no_new_data_is_a_noop() {
+async fn rollup_and_purge_orch_events_rerun_is_noop() {
     // The externally observable half of the atomicity guarantee: once a batch's
     // aggregate write and delete have committed together, nothing is left for a
     // re-run to reprocess — so re-running immediately must never double-count,
@@ -439,7 +400,7 @@ async fn test_rollup_and_purge_orch_events_rerun_with_no_new_data_is_a_noop() {
 }
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_events_sweeps_a_backlog_larger_than_one_batch() {
+async fn rollup_and_purge_orch_events_sweeps_backlog_over_one_batch() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
     let old = Utc::now() - Duration::days(91);
@@ -459,7 +420,6 @@ async fn test_rollup_and_purge_orch_events_sweeps_a_backlog_larger_than_one_batc
         .rollup_and_purge_orch_events(Utc::now() - Duration::days(90), 5)
         .await
         .expect("rollup");
-
     assert_eq!(
         stats.rows_purged, 12,
         "every stale row must be swept, not just the first batch"
@@ -488,7 +448,7 @@ async fn test_rollup_and_purge_orch_events_sweeps_a_backlog_larger_than_one_batc
 }
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_events_leaves_fresh_rows_untouched() {
+async fn rollup_and_purge_orch_events_leaves_fresh_rows_untouched() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
     insert_raw_event(repo.pool(), plane_id, "tool_call", Utc::now()).await;
@@ -510,35 +470,21 @@ async fn test_rollup_and_purge_orch_events_leaves_fresh_rows_untouched() {
 }
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_metrics_preserves_sum_min_max_and_deletes_raw_rows() {
+async fn rollup_and_purge_orch_metrics_preserves_sum_min_max() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
     let old = Utc::now() - Duration::days(91);
 
-    insert_raw_metric(
-        repo.pool(),
-        plane_id,
-        "docket_turn_duration_seconds",
-        1.0,
-        old,
-    )
-    .await;
-    insert_raw_metric(
-        repo.pool(),
-        plane_id,
-        "docket_turn_duration_seconds",
-        5.0,
-        old + Duration::minutes(1),
-    )
-    .await;
-    insert_raw_metric(
-        repo.pool(),
-        plane_id,
-        "docket_turn_duration_seconds",
-        3.0,
-        old + Duration::minutes(2),
-    )
-    .await;
+    for (value, offset) in [(1.0, 0), (5.0, 1), (3.0, 2)] {
+        insert_raw_metric(
+            repo.pool(),
+            plane_id,
+            "docket_turn_duration_seconds",
+            value,
+            old + Duration::minutes(offset),
+        )
+        .await;
+    }
     // A fresh sample of the same series must survive, untouched by the sweep.
     insert_raw_metric(
         repo.pool(),
@@ -574,7 +520,7 @@ async fn test_rollup_and_purge_orch_metrics_preserves_sum_min_max_and_deletes_ra
 }
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_metrics_excludes_non_finite_values_from_sum_min_max() {
+async fn rollup_and_purge_orch_metrics_excludes_non_finite_values() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
     let old = Utc::now() - Duration::days(91);
@@ -615,7 +561,7 @@ async fn test_rollup_and_purge_orch_metrics_excludes_non_finite_values_from_sum_
 }
 
 #[tokio::test]
-async fn test_rollup_and_purge_orch_events_and_orch_metrics_are_independent() {
+async fn rollup_and_purge_orch_events_and_metrics_are_independent() {
     // A regression guard: purging orch_events must never touch orch_metrics and
     // vice versa — they're separate tables with separate cutoff comparisons.
     let repo = setup_test_db().await;
@@ -654,7 +600,7 @@ async fn test_rollup_and_purge_orch_events_and_orch_metrics_are_independent() {
 // respects the retention sweep, not just directly-inserted raw rows).
 
 #[tokio::test]
-async fn test_events_inserted_via_upsert_orch_events_are_also_swept() {
+async fn events_inserted_via_upsert_are_also_swept() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
     let old = Utc::now() - Duration::days(91);
