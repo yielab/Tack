@@ -3,7 +3,7 @@
 Measured 2026-09-11 on `develop` at `1b9b7e6` plus uncommitted docs. Every number below
 was produced by the script in [Appendix A](#appendix-a--the-measurement-script); re-run it
 before quoting any of them. This document exists because two more harnesses are proposed
-(docket, ADR 0066; opencode, pending ADR 0067) and the cost of adding one is currently set
+(docket, ADR 0066; opencode, ADR 0067) and the cost of adding one is currently set
 by the shape of the two that exist.
 
 **The finding in one sentence:** the harness adapters are not over-tested, they are
@@ -33,6 +33,24 @@ The workspace-wide ratio of 1.2 is normal-to-high for a system with a wire proto
 migrations, 97 routes and crash recovery, and the whole suite runs in about 15 s. The
 adapters sit at 1.73 and are the outlier, together with a handful of test files elsewhere
 (`tack-db/tests/repository/execution_repo.rs` is 4 322 lines on its own).
+
+### 1.1 Layout after IX-M1 and IX-M2, same day
+
+Part IX's first two cards landed after the table above was taken and changed *where* the
+lines are without changing *what* they are. Re-measured with the repo's own tool
+(`python3 scripts/maintainability.py measure crates/tack-runner/src/harness`):
+
+| File | Production | Comments | Share | Tests | Longest test |
+|---|---|---|---|---|---|
+| `harness/claude_code.rs` | 903 | 257 | 22 % | — | — |
+| `harness/claude_code/tests.rs` | — | — | — | 37 in 1 735 lines | 73 |
+| `harness/codex.rs` | 778 | 167 | 17 % | — | — |
+| `harness/codex/tests.rs` | — | — | — | 26 in 1 149 lines | 54 |
+| `harness/` total | 3 591 | 872 | 24 % | 115 in 4 731 lines | ratio 1.32 |
+
+The preambles now live in `harness/fixtures/<kind>/README.md`, which is where §2.4 said they
+belonged; the live tests are `#[ignore]`d but still inside the unit modules, which IX-M5
+moves. The duplication in §2.1 and §2.2 is untouched by either card — that is IX-M5's job.
 
 ## 2. Where the size actually comes from
 
@@ -164,19 +182,21 @@ integrator verifies them the way `pre-push` verifies formatting.
    the harness itself, measured by Appendix A and recorded in the handoff. A card that
    needs more has found a gap in the shared core, which is a separate card.
 
-## 6. What this means for the docket plan
+## 6. What this means for the plans
 
-`docs/plans/docket-harness.md` gains one card ahead of T3, a sibling of T1:
+**T0 is Part IX's card IX-M5 (Wave 30)**, and the board owns it — this document is its
+specification, not a second copy of it. The card: extract `LocalProcessHarness` and
+`HarnessGrammar`; migrate `claude_code` and `codex` onto them with **no behaviour change**,
+using their current tests as the proof; move captured transcripts to fixture files; move
+the live tests under `tests/live/`; then prune the migrated tests to the shape in §5. Exit
+criteria, all measured by Appendix A and by `scripts/maintainability.py check`: zero
+near-identical test pairs across adapters, each adapter under 400 lines of production
+code, no live test under `src/`, the crash matrix and `harness/tests.rs` green.
 
-**T0 — the shared core, proven by migration.** Extract `LocalProcessHarness` and
-`HarnessGrammar`; migrate `claude_code` and `codex` onto them with **no behaviour
-change**, using their current tests as the proof; move their captured transcripts to
-fixture files; move the three live tests to `tests/live/`; then prune the migrated tests to
-the shape in §5. Exit criteria, all measured: zero near-identical test pairs across
-adapters, each adapter under 400 lines of production code, no live test under `src/`, the
-crash matrix and `harness/mod.rs` tests green. T3 (docket) and the opencode adapter then
-implement `HarnessGrammar`, and their cost is the right-hand column of §3 rather than the
-left.
+The four-harness plan — docket (ADR 0066) and opencode (ADR 0067) as grammars on that
+core — is `docs/plans/harnesses.md`. It touches no `tack-runner` file until IX-M5 lands;
+the cost it expects per harness is the right-hand column of §3, which becomes a
+measurement only once the two existing adapters have been migrated.
 
 ## 7. Why the code got this way, said plainly
 
