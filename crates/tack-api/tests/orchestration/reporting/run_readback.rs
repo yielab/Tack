@@ -1,15 +1,13 @@
 //! Tests for `GET /api/orch-runs/{run_id}` — a pipeline run's mirrored
 //! state, read back by its own id rather than through a Tack item.
 //!
-//! Covers: `409 orchestration_disabled` with `TACK_ORCH_ENABLE` off; a run
-//! id with no `orch_runs` row reports `mirrored: false` with every other
-//! field `null` — `200`, never `404`, since Tack cannot tell an un-polled
-//! run apart from an unknown one; a mirrored row (with and without an
-//! attributed item) round-trips its fields, including a `null` `item_id`
-//! for the CLI-pipeline-dispatch case ADR 0065 decision 5 describes; and
-//! the route reuses `Repository::get_orch_run` rather than adding a second
-//! `orch_runs` query — proved by reverting the handler to always answer
-//! `mirrored: false` and watching the round-trip test go red.
+//! Covers: the off guard; a run id with no `orch_runs` row reports
+//! `mirrored: false` with every other field `null` — `200`, never `404`,
+//! since Tack cannot tell an un-polled run apart from an unknown one; a
+//! mirrored row (with and without an attributed item) round-trips its
+//! fields, including a `null` `item_id` for the CLI-pipeline-dispatch case
+//! (ADR 0065 decision 5); and no response field ever claims a permission
+//! verdict.
 
 use crate::common;
 
@@ -87,6 +85,20 @@ async fn get_run(app: &Router, run_id: &str) -> axum::response::Response {
         .unwrap()
 }
 
+async fn create_plane(state: &AppState) -> Uuid {
+    state
+        .repo
+        .create_control_plane(tack_db::repo::orch::CreateControlPlane {
+            name: "docket-1".to_string(),
+            kind: None,
+            base_url: "http://docket.local".to_string(),
+            token: None,
+        })
+        .await
+        .expect("create plane")
+        .id
+}
+
 // ─── Off by default ─────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -138,21 +150,12 @@ async fn run_readback_reports_unmirrored_run_as_200_not_404() {
 #[tokio::test]
 async fn run_readback_round_trips_a_mirrored_run_with_no_item() {
     let (app, state) = app_with_state(orch_config()).await;
-    let plane = state
-        .repo
-        .create_control_plane(tack_db::repo::orch::CreateControlPlane {
-            name: "docket-1".to_string(),
-            kind: None,
-            base_url: "http://docket.local".to_string(),
-            token: None,
-        })
-        .await
-        .expect("create plane");
+    let plane_id = create_plane(&state).await;
 
     state
         .repo
         .upsert_orch_runs(
-            plane.id,
+            plane_id,
             &[NewOrchRun {
                 run_id: "run-cli-1".to_string(),
                 // The CLI-dispatched-pipeline case (ADR 0065 decision 5):
@@ -208,21 +211,12 @@ async fn run_readback_carries_an_attributed_item_id_when_one_exists() {
     assert_eq!(item_res.status(), StatusCode::OK);
     let item_id = Uuid::parse_str(body_json(item_res).await["id"].as_str().unwrap()).unwrap();
 
-    let plane = state
-        .repo
-        .create_control_plane(tack_db::repo::orch::CreateControlPlane {
-            name: "docket-1".to_string(),
-            kind: None,
-            base_url: "http://docket.local".to_string(),
-            token: None,
-        })
-        .await
-        .expect("create plane");
+    let plane_id = create_plane(&state).await;
 
     state
         .repo
         .upsert_orch_runs(
-            plane.id,
+            plane_id,
             &[NewOrchRun {
                 run_id: "run-attributed-1".to_string(),
                 item_id: Some(item_id),
@@ -245,23 +239,14 @@ async fn run_readback_carries_an_attributed_item_id_when_one_exists() {
 }
 
 #[tokio::test]
-async fn run_readback_reports_a_failed_run_state_without_calling_it_a_permission_verdict() {
+async fn run_readback_failed_state_carries_no_permission_verdict() {
     let (app, state) = app_with_state(orch_config()).await;
-    let plane = state
-        .repo
-        .create_control_plane(tack_db::repo::orch::CreateControlPlane {
-            name: "docket-1".to_string(),
-            kind: None,
-            base_url: "http://docket.local".to_string(),
-            token: None,
-        })
-        .await
-        .expect("create plane");
+    let plane_id = create_plane(&state).await;
 
     state
         .repo
         .upsert_orch_runs(
-            plane.id,
+            plane_id,
             &[NewOrchRun {
                 run_id: "run-blocked-1".to_string(),
                 item_id: None,
