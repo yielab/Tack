@@ -1,0 +1,68 @@
+# git-cliff renders CHANGELOG.md sections from the commit history.
+#   make changelog                       preview what the next release would say
+#   make changelog-release TAG=vX.Y.Z    write that section into CHANGELOG.md, then tag
+# Only conventional commits reach the changelog; the type picks the Keep a Changelog
+# section (feat → Added, fix → Fixed, refactor/perf/api → Changed, revert → Removed,
+# security → Security, docs on a user-facing scope → Documentation). Everything else —
+# tests, CI, build, board and handoff docs — is skipped. A `!` after the type marks a
+# breaking change and is never skipped.
+
+[changelog]
+# Must equal the preamble of CHANGELOG.md byte for byte: `--prepend` inserts the new
+# section right after it.
+header = """
+# Tack Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Sections from the next release on are generated from the commit history by
+[git-cliff](https://git-cliff.org) (`make changelog`); earlier sections were written by hand.
+
+---
+
+"""
+body = """
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif -%}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.breaking %}**Breaking:** {% endif %}{% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+{%- endfor %}
+{% endfor %}
+{%- if version and previous.version %}
+[{{ version | trim_start_matches(pat="v") }}]: https://github.com/yielab/tack/compare/{{ previous.version }}...{{ version }}
+{% endif %}
+---
+
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+filter_commits = true
+tag_pattern = "^v[0-9]"
+topo_order = false
+sort_commits = "oldest"
+commit_preprocessors = [
+  # "(#123)" at the end of a squash-merged subject becomes a link.
+  { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/yielab/tack/issues/${2}))" },
+]
+# The HTML comment prefixes only order the sections; the template strips them.
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^(refactor|perf|api)", group = "<!-- 1 -->Changed" },
+  { message = "^fix", group = "<!-- 2 -->Fixed" },
+  { message = "^revert", group = "<!-- 3 -->Removed" },
+  { message = "^security", group = "<!-- 4 -->Security" },
+  { message = "^docs\\((book|readme|config|api|mcp|deploy|deployment|cli|install|desktop)\\)", group = "<!-- 5 -->Documentation" },
+  { message = ".*", skip = true },
+]

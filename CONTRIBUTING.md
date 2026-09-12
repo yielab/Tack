@@ -274,7 +274,14 @@ curl -s localhost:3210/api/debug/db-stats | jq
 
 ### Writing Tests
 
-**Unit tests** go in the same file as the code, inside a `#[cfg(test)]` module:
+Every test follows the size rules in `docs/TESTING.md` ("Where a test lives, and how big
+it may be"): one claim per test, a name of at most 60 characters that states it, a body of
+at most 60 lines, helpers in `tests/common`, no fixed waits.
+`python3 scripts/maintainability.py check --changed` tells you before the push does.
+
+**Unit tests** go in the same file as the code, inside a `#[cfg(test)]` module, while that
+module is under 150 lines; past that they move to `<module>/tests.rs`
+(`#[cfg(test)] mod tests;` in the source file, `use super::*;` at the top of the new one):
 
 ```rust
 #[cfg(test)]
@@ -507,15 +514,30 @@ that may not fit the roadmap.
    npm run build                                                         # entry bundle stays < 30 KB gzipped
    ```
 
-5. **Update docs and the changelog.** If you changed behavior, config, or the API,
-   update the relevant docs in the same PR and add an entry to the `[Unreleased]`
-   section of [CHANGELOG.md](CHANGELOG.md). If you changed an API response shape,
-   update the Rust handler **and** the matching frontend types / test mocks.
+5. **Update docs.** If you changed behavior, config, or the API, update the relevant docs
+   in the same PR. Do **not** edit [CHANGELOG.md](CHANGELOG.md): its release sections are
+   generated from commit messages by [git-cliff](https://git-cliff.org) (`cliff.toml`,
+   `make changelog` to preview). If you changed an API response shape, update the Rust
+   handler **and** the matching frontend types / test mocks.
 6. **Write a clear PR description** — what changed and why, how you tested it, and
    any follow-ups. Fill out the [PR template](.github/PULL_REQUEST_TEMPLATE.md).
-7. **Keep commit messages clean.** Conventional-commit prefixes (`feat:`, `fix:`,
-   `docs:`, `refactor:`, `chore:`, `test:`) are appreciated. **No AI-attribution
-   lines** (no `Co-Authored-By` bot trailers) in commit messages.
+7. **Write conventional commit messages — they are the changelog.** `type(scope): what
+   changed`, where the type picks the section a user reads:
+
+   | Type | CHANGELOG section |
+   |---|---|
+   | `feat` | Added |
+   | `fix` | Fixed |
+   | `refactor`, `perf`, `api` | Changed |
+   | `revert` | Removed |
+   | `security` | Security |
+   | `docs(book\|readme\|config\|api\|mcp\|deploy\|cli\|install\|desktop)` | Documentation |
+   | `test`, `build`, `ci`, `chore`, `style`, other `docs` scopes | not in the changelog |
+
+   A `!` after the type (`feat(api)!:`) marks a breaking change and is listed first. The
+   subject should read as a changelog line on its own — say what a user can now do, not
+   which file moved. A commit that does not follow the form never reaches the changelog.
+   **No AI-attribution lines** (no `Co-Authored-By` bot trailers) in commit messages.
 8. **Review.** The maintainer reviews, may request changes, and merges once CI is
    green and the change is approved. Green CI is required — all ten jobs in
    `.github/workflows/ci.yml` (`rust`, `msrv`, `desktop`, `coverage`, `deny`,

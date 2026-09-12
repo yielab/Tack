@@ -1,4 +1,4 @@
-.PHONY: build run dev debug cli test test-verbose test-core test-db e2e e2e-install e2e-ui screenshots audit load check lint fmt fmt-check reset-db inspect-db api-health api-stats api-projects clean clean-all desktop-sidecar desktop help
+.PHONY: build run dev debug cli test test-verbose test-core test-db e2e e2e-install e2e-ui screenshots audit load check lint fmt fmt-check reset-db inspect-db api-health api-stats api-projects clean clean-all desktop-sidecar desktop changelog changelog-release help
 
 # ─── Default ──────────────────────────────────────
 help: ## Show this help
@@ -108,6 +108,16 @@ coverage: ## Rust + frontend coverage against CI's thresholds (see ci.yml's `cov
 	cd frontend && npx vitest run --coverage --coverage.provider=v8 \
 		--coverage.thresholds.lines=70 --coverage.thresholds.functions=70 \
 		--coverage.thresholds.statements=70 --coverage.thresholds.branches=60
+
+changelog: ## Preview the next release's CHANGELOG section from conventional commits since the last tag (git-cliff)
+	@command -v git-cliff >/dev/null 2>&1 || { echo "Installing git-cliff..."; cargo install git-cliff --locked; }
+	git-cliff --unreleased --strip all
+
+changelog-release: ## Write TAG's section into CHANGELOG.md, e.g. `make changelog-release TAG=v0.1.0-beta.9` — run it, commit, then tag
+	@test -n "$(TAG)" || { echo "usage: make changelog-release TAG=vX.Y.Z"; exit 2; }
+	@command -v git-cliff >/dev/null 2>&1 || { echo "Installing git-cliff..."; cargo install git-cliff --locked; }
+	git-cliff --unreleased --tag "$(TAG)" --prepend CHANGELOG.md
+	@echo "  CHANGELOG.md now has the $(TAG) section — review it, commit, then: git tag $(TAG)"
 
 deny: ## Dependency policy check, both workspaces (policy generated to match ci.yml's `deny` job exactly)
 	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install cargo-deny --locked; }

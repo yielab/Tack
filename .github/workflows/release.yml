@@ -474,6 +474,38 @@ jobs:
       id-token: write        # OIDC token for provenance signing
       attestations: write    # write build-provenance attestations
     steps:
+      # git-cliff renders the tag's CHANGELOG section from the commit history
+      # (cliff.toml), so the release notes say what `make changelog-release`
+      # wrote. It needs the whole history and every tag, hence fetch-depth 0.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Install git-cliff (prebuilt)
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
+        with:
+          tool: git-cliff
+      - name: Render release notes from the commit history
+        run: |
+          set -euo pipefail
+          # ADR 0062 decision 7: desktop bundles are unsigned (signing needs a
+          # paid certificate, a separate decision) — the fixed warning comes
+          # first, the generated section after it.
+          cat > release-notes.md <<'EOF'
+          The desktop app (`.deb`, `.AppImage`, `.dmg`, `.msi` below) is unsigned:
+          signing certificates are a separate, not-yet-made decision. Two
+          one-time warnings to expect on first launch:
+
+          - **macOS:** Gatekeeper blocks the unsigned app on a normal double-click.
+            Right-click (or Control-click) the app → **Open** → **Open** in the
+            dialog. Only needed once.
+          - **Windows:** SmartScreen will warn about an unrecognized app. Click
+            **More info** → **Run anyway**. Only needed once.
+
+          EOF
+          git-cliff --latest --strip all >> release-notes.md
+          echo "----- release-notes.md -----"
+          cat release-notes.md
+
       # Explicit pattern, not "download everything": docker/build-push-action
       # (the `container` job) auto-uploads its own internal build-record
       # artifact (named `<owner>~<repo>~<random>.dockerbuild`, for its own
@@ -510,20 +542,11 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*
+          # The unsigned-app warning plus the tag's CHANGELOG section, rendered
+          # above; GitHub's own generated notes (PR list, full-changelog link)
+          # are appended after it.
+          body_path: release-notes.md
           generate_release_notes: true
-          # ADR 0062 decision 7: desktop bundles are unsigned (signing needs a
-          # paid certificate, a separate decision) — `body` is a fixed prefix,
-          # softprops/action-gh-release appends the auto-generated notes after it.
-          body: |
-            The desktop app (`.deb`, `.AppImage`, `.dmg`, `.msi` below) is unsigned:
-            signing certificates are a separate, not-yet-made decision. Two
-            one-time warnings to expect on first launch:
-
-            - **macOS:** Gatekeeper blocks the unsigned app on a normal double-click.
-              Right-click (or Control-click) the app → **Open** → **Open** in the
-              dialog. Only needed once.
-            - **Windows:** SmartScreen will warn about an unrecognized app. Click
-              **More info** → **Run anyway**. Only needed once.
           # Tags with a pre-release suffix (v0.1.0-beta.7) are marked as
           # GitHub pre-releases and excluded from /releases/latest.
           prerelease: ${{ contains(github.ref_name, '-') }}

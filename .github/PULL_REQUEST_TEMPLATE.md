@@ -25,5 +25,5 @@
 - [ ] Frontend changed? `cd frontend && npm run type-check && npm test` passes, and
       `npm run gen:api` produces no diff in `schema.gen.ts` if the API response shape
       changed
-- [ ] Docs/`CHANGELOG.md` updated if this changes behavior, config, or the API
+- [ ] Docs updated if this changes behavior, config, or the API (the changelog is generated from the commit messages — use `feat:`/`fix:`/… types)
 - [ ] Commit messages have no AI-attribution trailers (see `CONTRIBUTING.md`)
