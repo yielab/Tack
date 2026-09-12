@@ -1,30 +1,23 @@
-//! End-to-end integration tests for runs + approvals ingestion: a real
-//! `tack_db::Repository` (in-memory
-//! SQLite, real migrations), a real `DocketAdapter` pointed at a `wiremock`
-//! stand-in for docket, and the real `reconciler::spawn_reconcilers` loop —
-//! proving the whole chain (fetch → correlate → persist) composes
-//! correctly, not just that each piece compiles against the others' types.
+//! Runs + approvals ingestion against a real `Repository`, a real
+//! `DocketAdapter`, and the real reconciler loop — proving the whole chain
+//! (fetch -> correlate -> persist) composes correctly, not just that each
+//! piece compiles against the others' types.
 //!
-//! `TestRepoStore` lives in `support.rs`, shared with `traces.rs` — see that
-//! module's doc for why it can't just be the real
-//! `tack-api::orch_store::RepoControlPlaneStore`. The pool and
-//! workspace/project/item seed come from `crate::common`.
+//! `TestRepoStore` and the polling helpers live in `support.rs`, shared
+//! with `traces.rs`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
-use chrono::Utc;
+use tack_orch::reconciler::DEFAULT_RETENTION_DAYS;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-use tack_db::repo::orch::NewOrchTask;
-use tack_orch::reconciler::{ControlPlaneStore, ReconcilerConfig, spawn_reconcilers};
-
-use crate::common::{create_test_workspace, make_item, make_project, setup_test_db};
+use crate::common::setup_test_db;
 use crate::support::{
-    EMPTY_APPROVALS_BODY, TestRepoStore, mount_health_and_status as mount_common,
-    seed_control_plane_and_link,
+    EMPTY_APPROVALS_BODY, expect_approval, expect_run, fast_poll_config, last_seen_at,
+    mount_health_and_status as mount_common, orch_approval_count, orch_run_count, plane_health,
+    poll_until, seed_control_plane_and_link, seed_project_with_pending_task, spawn_reconciler,
+    wait_and_stop,
 };
 
 fn run_json(id: &str, task_ids: &str) -> String {
@@ -36,35 +29,9 @@ fn run_json(id: &str, task_ids: &str) -> String {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn correlated_and_uncorrelated_runs_and_approvals_mirror_idempotently() {
-    let repo = setup_test_db().await;
-    let workspace_id = create_test_workspace(&repo).await;
-    let project = make_project(&repo, workspace_id).await;
-    let item = make_item(&repo, &project).await;
-
-    repo.upsert_orch_tasks(&[NewOrchTask {
-        item_id: item.id,
-        remote_task_id: "task-1".into(),
-        remote_run_id: None,
-        remote_status: "pending".into(),
-        attempt: 1,
-        tokens_in: 0,
-        tokens_out: 0,
-        cost_usd_estimated: None,
-        dispatched_at: Utc::now(),
-        trusted: true,
-    }])
-    .await
-    .expect("seed orch task");
-
-    let server = MockServer::start().await;
-    mount_common(&server).await;
-
+/// `run-1` correlates via `task-1`; `run-cli-only` and `apr-uncorrelated`
+/// have no matching task and must still mirror, unattributed.
+async fn mount_runs_and_approvals(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path("/runs"))
         .and(query_param("project", "demo"))
@@ -73,9 +40,8 @@ async fn correlated_and_uncorrelated_runs_and_approvals_mirror_idempotently() {
             run_json("run-1", r#"["task-1"]"#),
             run_json("run-cli-only", "[]"),
         )))
-        .mount(&server)
+        .mount(server)
         .await;
-
     Mock::given(method("GET"))
         .and(path("/approvals"))
         .respond_with(ResponseTemplate::new(200).set_body_string(
@@ -87,89 +53,60 @@ async fn correlated_and_uncorrelated_runs_and_approvals_mirror_idempotently() {
                  "state":"pending","created":"2026-08-04T19:50:51Z","context":{}}
             ]}"#,
         ))
-        .mount(&server)
+        .mount(server)
         .await;
+}
 
-    let control_plane_id = seed_control_plane_and_link(&repo, project.id, &server.uri()).await;
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
-    let store: Arc<dyn ControlPlaneStore> = Arc::new(TestRepoStore { repo: repo.clone() });
-    let handles = spawn_reconcilers(
-        true,
-        store,
-        ReconcilerConfig {
-            poll_secs: 1,
-            ..Default::default()
-        },
-    )
+#[tokio::test]
+async fn runs_and_approvals_correlate_and_repoll_idempotently() {
+    let repo = setup_test_db().await;
+    let fixture = seed_project_with_pending_task(&repo).await;
+
+    let server = MockServer::start().await;
+    mount_common(&server).await;
+    mount_runs_and_approvals(&server).await;
+
+    let control_plane_id =
+        seed_control_plane_and_link(&repo, fixture.project.id, &server.uri()).await;
+    let handles = spawn_reconciler(&repo, fast_poll_config(DEFAULT_RETENTION_DAYS)).await;
+    poll_until("run-1 and apr-1 correlate", || async {
+        matches!(repo.get_orch_run("run-1").await, Ok(Some(r)) if r.item_id == Some(fixture.item.id))
+            && matches!(repo.get_orch_approval("apr-1").await, Ok(Some(a)) if a.item_id == Some(fixture.item.id))
+    })
     .await;
-    assert_eq!(handles.len(), 1);
 
-    // One tick is enough for the first poll's correlation to land.
-    tokio::time::sleep(Duration::from_millis(400)).await;
-
-    let run1 = repo
-        .get_orch_run("run-1")
-        .await
-        .expect("query")
-        .expect("run-1 must be mirrored");
-    assert_eq!(run1.item_id, Some(item.id), "run-1's task_ids correlate");
-
-    let run_cli = repo
-        .get_orch_run("run-cli-only")
-        .await
-        .expect("query")
-        .expect("run-cli-only must still be mirrored, unattributed");
+    let run_cli = expect_run(&repo, "run-cli-only").await;
     assert_eq!(
         run_cli.item_id, None,
         "an empty task_ids run must land unattributed, not be dropped or error"
     );
-
-    let apr1 = repo
-        .get_orch_approval("apr-1")
-        .await
-        .expect("query")
-        .expect("apr-1 must be mirrored");
-    assert_eq!(apr1.item_id, Some(item.id));
+    let apr1 = expect_approval(&repo, "apr-1").await;
     assert_eq!(apr1.remote_task_id.as_deref(), Some("task-1"));
-
-    let apr_uncorrelated = repo
-        .get_orch_approval("apr-uncorrelated")
-        .await
-        .expect("query")
-        .expect("an uncorrelated approval must still surface, not be dropped");
+    let apr_uncorrelated = expect_approval(&repo, "apr-uncorrelated").await;
     assert_eq!(apr_uncorrelated.item_id, None);
 
-    // Let at least one more tick happen (poll_secs=1, jittered 0.8–1.2s) and
-    // confirm re-polling the exact same docket state is idempotent: no
-    // duplicate rows, same content.
-    tokio::time::sleep(Duration::from_millis(1_400)).await;
-    for h in handles {
-        h.abort();
-    }
+    // Confirm re-polling the exact same docket state is idempotent: wait
+    // for at least one more tick, then check for duplicate rows.
+    let since = last_seen_at(&repo, control_plane_id).await;
+    wait_and_stop(&repo, control_plane_id, since, handles).await;
 
-    let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_runs")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count runs");
-    assert_eq!(run_count, 2, "re-polling must not duplicate orch_runs rows");
-
-    let approval_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_approvals")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count approvals");
     assert_eq!(
-        approval_count, 2,
+        orch_run_count(&repo).await,
+        2,
+        "re-polling must not duplicate orch_runs rows"
+    );
+    assert_eq!(
+        orch_approval_count(&repo).await,
+        2,
         "re-polling must not duplicate orch_approvals rows"
     );
-
-    // Control-plane health must still read healthy — an /approvals or /runs
-    // failure never happened here, but this also proves the ingestion
-    // machinery didn't somehow interfere with the health persistence path.
-    let plane = repo
-        .get_control_plane(control_plane_id)
-        .await
-        .expect("get control plane");
-    assert_eq!(plane.health, "healthy");
+    // Also proves the ingestion machinery didn't interfere with the health
+    // persistence path.
+    assert_eq!(plane_health(&repo, control_plane_id).await, "healthy");
 }
 
 /// A `Respond` impl that returns a different body on each successive call,
@@ -196,26 +133,9 @@ impl Respond for SequentialBody {
 }
 
 #[tokio::test]
-async fn a_later_poll_does_not_erase_an_earlier_run_attribution() {
+async fn later_polls_never_erase_earlier_run_attribution() {
     let repo = setup_test_db().await;
-    let workspace_id = create_test_workspace(&repo).await;
-    let project = make_project(&repo, workspace_id).await;
-    let item = make_item(&repo, &project).await;
-
-    repo.upsert_orch_tasks(&[NewOrchTask {
-        item_id: item.id,
-        remote_task_id: "task-1".into(),
-        remote_run_id: None,
-        remote_status: "pending".into(),
-        attempt: 1,
-        tokens_in: 0,
-        tokens_out: 0,
-        cost_usd_estimated: None,
-        dispatched_at: Utc::now(),
-        trusted: true,
-    }])
-    .await
-    .expect("seed orch task");
+    let fixture = seed_project_with_pending_task(&repo).await;
 
     let server = MockServer::start().await;
     mount_common(&server).await;
@@ -252,44 +172,23 @@ async fn a_later_poll_does_not_erase_an_earlier_run_attribution() {
         .mount(&server)
         .await;
 
-    let control_plane_id = seed_control_plane_and_link(&repo, project.id, &server.uri()).await;
-    let store: Arc<dyn ControlPlaneStore> = Arc::new(TestRepoStore { repo: repo.clone() });
-    let handles = spawn_reconcilers(
-        true,
-        store,
-        ReconcilerConfig {
-            poll_secs: 1,
-            ..Default::default()
-        },
-    )
+    let control_plane_id =
+        seed_control_plane_and_link(&repo, fixture.project.id, &server.uri()).await;
+    let handles = spawn_reconciler(&repo, fast_poll_config(DEFAULT_RETENTION_DAYS)).await;
+    poll_until("run-1 correlates on the first poll", || async {
+        matches!(repo.get_orch_run("run-1").await, Ok(Some(r)) if r.item_id == Some(fixture.item.id))
+    })
     .await;
-    assert_eq!(handles.len(), 1);
 
-    // First tick: correlated.
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    let run_after_first_poll = repo
-        .get_orch_run("run-1")
-        .await
-        .expect("query")
-        .expect("run-1 mirrored");
-    assert_eq!(run_after_first_poll.item_id, Some(item.id));
+    // At least one more poll, returning an empty task_ids list, must not
+    // erase the attribution the first poll already learned.
+    let since = last_seen_at(&repo, control_plane_id).await;
+    wait_and_stop(&repo, control_plane_id, since, handles).await;
 
-    // Two more ticks, each returning an empty task_ids list.
-    tokio::time::sleep(Duration::from_millis(2_400)).await;
-    for h in handles {
-        h.abort();
-    }
-
-    let run_after_later_polls = repo
-        .get_orch_run("run-1")
-        .await
-        .expect("query")
-        .expect("run-1 still mirrored");
+    let run_after_later_polls = expect_run(&repo, "run-1").await;
     assert_eq!(
         run_after_later_polls.item_id,
-        Some(item.id),
+        Some(fixture.item.id),
         "a later poll that doesn't know the attribution must never erase one already learned"
     );
-
-    let _ = control_plane_id;
 }
