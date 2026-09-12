@@ -20,7 +20,7 @@ const TARGET: &str = "In Progress";
 const WIP_LIMIT: usize = 5;
 
 #[tokio::test]
-async fn applies_the_transition_when_under_the_limit() {
+async fn applies_transition_under_limit() {
     let repo = common::setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = make_project(&repo, ws).await;
@@ -45,7 +45,7 @@ async fn applies_the_transition_when_under_the_limit() {
 }
 
 #[tokio::test]
-async fn rejects_and_leaves_the_item_untouched_once_the_column_is_at_its_limit() {
+async fn rejects_at_limit_leaves_item_and_count_untouched() {
     let repo = common::setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = make_project(&repo, ws).await;
@@ -117,7 +117,7 @@ async fn rejects_and_leaves_the_item_untouched_once_the_column_is_at_its_limit()
 }
 
 #[tokio::test]
-async fn a_status_with_no_configured_limit_always_applies() {
+async fn status_with_no_limit_always_applies() {
     let repo = common::setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = make_project(&repo, ws).await;
@@ -159,7 +159,7 @@ async fn a_status_with_no_configured_limit_always_applies() {
 }
 
 #[tokio::test]
-async fn status_category_updates_started_at_and_completed_at_the_same_way_update_item_does() {
+async fn status_category_stamps_started_and_completed_at() {
     let repo = common::setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = make_project(&repo, ws).await;
@@ -207,7 +207,7 @@ async fn status_category_updates_started_at_and_completed_at_the_same_way_update
 }
 
 #[tokio::test]
-async fn an_unknown_item_id_returns_none_rather_than_an_error() {
+async fn unknown_item_id_returns_none_not_error() {
     let repo = common::setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = make_project(&repo, ws).await;
