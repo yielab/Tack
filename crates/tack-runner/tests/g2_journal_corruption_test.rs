@@ -18,14 +18,8 @@ use tack_runner::client::{
     JournalState, OwnerOnlyJournal, RunnerId, Timestamp, WorkspaceId, WorkspaceJournal,
 };
 
-/// A scratch directory that removes itself, and everything written under it,
-/// when the returned guard drops — including when an assertion panics first.
-fn temporary_root(label: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("temporary directory")
-}
+mod common;
+use common::temp_dir as temporary_root;
 
 fn record(attempt_id: &str, fencing_token: u64) -> AttemptJournal {
     let lease = AttemptLease {

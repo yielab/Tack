@@ -26,6 +26,10 @@ use tack_runner::{
     },
 };
 
+mod common;
+use common::temp_dir as root;
+use common::usage;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FailurePoint {
     None,
@@ -342,15 +346,6 @@ impl WorktreeProvisioner for FakeWorktree {
     }
 }
 
-/// A scratch directory that removes itself, and everything written under it,
-/// when the returned guard drops — including when an assertion panics first.
-fn root(label: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("temporary directory")
-}
-
 fn actual_execution() -> tack_orch::execution::ActualExecution {
     serde_json::from_str(
         r#"{
@@ -370,18 +365,6 @@ fn actual_execution() -> tack_orch::execution::ActualExecution {
         }"#,
     )
     .expect("actual execution")
-}
-
-fn usage() -> tack_orch::execution::Usage {
-    serde_json::from_str(
-        r#"{
-            "tokens_in":{"value":1,"source":"measured"},
-            "tokens_out":{"value":2,"source":"measured"},
-            "duration_ms":{"value":3,"source":"measured"},
-            "cost_usd":{"value":null,"source":"not_measured"}
-        }"#,
-    )
-    .expect("usage")
 }
 
 fn work() -> ClaimedWork {
