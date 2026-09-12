@@ -87,30 +87,6 @@ async fn get_run(app: &Router, run_id: &str) -> axum::response::Response {
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/api/projects")
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    serde_json::to_vec(&json!({
-                        "name": "Run Readback Test Project",
-                        "project_type": "software",
-                    }))
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 // ─── Off by default ─────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -214,7 +190,7 @@ async fn run_readback_round_trips_a_mirrored_run_with_no_item() {
 #[tokio::test]
 async fn run_readback_carries_an_attributed_item_id_when_one_exists() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Run Readback Test Project", "software").await;
     let item_res = app
         .clone()
         .oneshot(

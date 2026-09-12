@@ -22,6 +22,7 @@
 //! keeps the MCP tools working unchanged until they're updated to send the
 //! header.
 
+use crate::common;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
@@ -105,19 +106,6 @@ async fn req_with_if_match(
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Item Concurrency Test", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
     let res = req(
         app,
@@ -149,7 +137,7 @@ async fn get_etag(app: &Router, item_id: Uuid) -> String {
 #[tokio::test]
 async fn get_item_returns_an_etag_derived_from_id_and_version() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Has an ETag").await;
 
     let etag = get_etag(&app, item_id).await;
@@ -164,7 +152,7 @@ async fn get_item_returns_an_etag_derived_from_id_and_version() {
 #[tokio::test]
 async fn patch_with_no_if_match_header_succeeds_exactly_as_before_this_card() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "No If-Match sent").await;
 
     let res = req(
@@ -197,7 +185,7 @@ async fn patch_with_no_if_match_header_succeeds_exactly_as_before_this_card() {
 #[tokio::test]
 async fn patch_with_a_matching_if_match_succeeds() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Matching If-Match").await;
 
     let etag = get_etag(&app, item_id).await;
@@ -215,7 +203,7 @@ async fn patch_with_a_matching_if_match_succeeds() {
 #[tokio::test]
 async fn patch_with_a_stale_if_match_is_rejected_with_412_and_the_standard_envelope() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Stale If-Match").await;
 
     let etag = get_etag(&app, item_id).await;
@@ -261,7 +249,7 @@ async fn patch_with_a_stale_if_match_is_rejected_with_412_and_the_standard_envel
 #[tokio::test]
 async fn patch_with_an_if_match_for_a_different_item_is_rejected() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_a = create_item(&app, project_id, "Item A").await;
     let item_b = create_item(&app, project_id, "Item B").await;
 
@@ -301,7 +289,7 @@ async fn patch_with_an_if_match_for_a_different_item_is_rejected() {
 #[tokio::test]
 async fn a_stale_if_match_is_rejected_with_412_with_no_racer_involved() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "No racer, just a stale header").await;
 
     let etag = get_etag(&app, item_id).await;
@@ -368,7 +356,7 @@ async fn a_stale_if_match_is_rejected_with_412_with_no_racer_involved() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn two_concurrent_patches_sharing_one_still_valid_version_yield_exactly_one_cas_winner() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Race target").await;
     let etag = get_etag(&app, item_id).await;
 
@@ -427,7 +415,7 @@ async fn two_concurrent_patches_sharing_one_still_valid_version_yield_exactly_on
 async fn concurrent_patches_at_higher_fanout_still_yield_exactly_one_winner() {
     const N: usize = 6;
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Race target, N racers").await;
     let etag = get_etag(&app, item_id).await;
 
@@ -466,7 +454,7 @@ async fn concurrent_patches_at_higher_fanout_still_yield_exactly_one_winner() {
 #[tokio::test]
 async fn multi_field_wip_rejection_writes_nothing_and_does_not_bump_version() {
     let (app, state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     for i in 0..5 {
         let item_id = create_item(&app, project_id, &format!("Capacity {i}")).await;
         let moved = req(
@@ -503,7 +491,7 @@ async fn multi_field_wip_rejection_writes_nothing_and_does_not_bump_version() {
 #[tokio::test]
 async fn nullable_patch_fields_clear_and_patch_body_etag_describe_one_snapshot() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Nullable fields").await;
     let etag = get_etag(&app, item_id).await;
 
@@ -554,7 +542,7 @@ async fn nullable_patch_fields_clear_and_patch_body_etag_describe_one_snapshot()
 #[tokio::test]
 async fn before_update_failure_cannot_partially_apply_a_multi_field_patch() {
     let (app, state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Original").await;
     let before = state.repo.get_item_version(item_id).await.unwrap().unwrap();
 

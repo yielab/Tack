@@ -11,6 +11,7 @@
 //! nothing" claim below is backed by a direct row-count assertion, not just a
 //! status code.
 
+use crate::common;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
@@ -26,9 +27,10 @@ use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ─── Harness (mirrors orchestration/dispatch/item.rs's own helpers,
-// deliberately not shared — a private copy avoids coupling this file's
-// tests to that file's helper signatures changing later) ──────────────────
+// ─── Harness (mirrors orchestration/dispatch/item.rs's own `app_with_state`/
+// `req`/`body_json` helpers, deliberately not shared — a private copy avoids
+// coupling this file's tests to that file's helper signatures changing
+// later; project creation goes through `common::create_project` instead) ──
 
 fn orch_config() -> AppConfig {
     AppConfig {
@@ -91,19 +93,6 @@ async fn req(
         .oneshot(builder.body(body).unwrap())
         .await
         .unwrap()
-}
-
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Dual Dispatch Test", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
 }
 
 async fn create_item(app: &Router, project_id: Uuid) -> Uuid {
@@ -355,7 +344,7 @@ async fn dispatch_refuses_when_item_has_active_runner_v1_request() {
         .mount(&mock)
         .await;
 
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
     let cp = create_control_plane(&app, &mock.uri()).await;
     link_project(&app, project_id, cp).await;
@@ -405,7 +394,7 @@ async fn dispatch_proceeds_when_runner_v1_request_is_terminal() {
         .mount(&mock)
         .await;
 
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
     let cp = create_control_plane(&app, &mock.uri()).await;
     link_project(&app, project_id, cp).await;
@@ -536,7 +525,7 @@ async fn has_active_execution_request_for_item_ignores_terminal_states() {
 #[tokio::test]
 async fn active_docket_task_for_item_ignores_terminal_statuses() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
 
     assert_eq!(
@@ -587,7 +576,7 @@ async fn active_docket_task_for_item_ignores_terminal_statuses() {
 #[tokio::test]
 async fn create_execution_refuses_when_item_has_an_active_docket_task() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
 
     insert_orch_task(&state, item_id, "remote-task-mirror", "running").await;
@@ -613,7 +602,7 @@ async fn create_execution_refuses_when_item_has_an_active_docket_task() {
 #[tokio::test]
 async fn create_execution_proceeds_when_docket_task_is_terminal() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
 
     insert_orch_task(&state, item_id, "remote-task-done", "completed").await;
@@ -636,7 +625,7 @@ async fn create_execution_proceeds_when_docket_task_is_terminal() {
 #[tokio::test]
 async fn create_execution_ignores_an_active_docket_task_when_orchestration_is_off() {
     let (app, state) = app_with_state(AppConfig::default()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
 
     insert_orch_task(&state, item_id, "remote-task-stranded", "running").await;
@@ -779,7 +768,7 @@ async fn submit_execution_request(
 #[tokio::test]
 async fn create_execution_replay_succeeds_despite_an_active_docket_task() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
     let (agent_profile_id, runner_id) = enroll_g1_runner(&app).await;
 
@@ -823,7 +812,7 @@ async fn create_execution_replay_succeeds_despite_an_active_docket_task() {
 #[tokio::test]
 async fn create_execution_conflict_names_the_colliding_docket_task() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Dual Dispatch Test", "software").await;
     let item_id = create_item(&app, project_id).await;
 
     insert_orch_task(&state, item_id, "remote-task-named", "waiting_approval").await;

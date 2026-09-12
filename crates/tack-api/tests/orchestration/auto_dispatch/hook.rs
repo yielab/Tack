@@ -18,6 +18,7 @@
 //! edited while it's already sitting in a `dispatch_from` status must not
 //! re-dispatch.
 
+use crate::common;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
@@ -97,19 +98,6 @@ async fn req(
         .oneshot(builder.body(body).unwrap())
         .await
         .unwrap()
-}
-
-async fn create_project(app: &Router, project_type: &str) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Auto-dispatch Test Project", "project_type": project_type})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
 }
 
 async fn patch_status(app: &Router, item_id: Uuid, status: &str) -> axum::response::Response {
@@ -274,7 +262,7 @@ async fn auto_dispatch_sends_trusted_false_on_the_wire_for_a_github_imported_ite
         .await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Auto-dispatch Test Project", "software").await;
     let item_id = seed_item(
         &state,
         project_id,
@@ -332,7 +320,7 @@ async fn auto_dispatch_sends_trusted_true_for_a_manually_created_item() {
         .await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Auto-dispatch Test Project", "software").await;
     // ItemSource::Manual — the default for the ordinary create-item path.
     let item_id = seed_item(
         &state,
@@ -373,7 +361,7 @@ async fn auto_dispatch_does_not_fire_when_orch_disabled() {
 
     // `AppConfig::default()` has `orch_enable: false`.
     let (app, state) = app_with_state(AppConfig::default()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Auto-dispatch Test Project", "software").await;
     let item_id = seed_item(
         &state,
         project_id,
@@ -414,7 +402,7 @@ async fn auto_dispatch_does_not_fire_when_link_auto_dispatch_is_off() {
     let server = MockServer::start().await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Auto-dispatch Test Project", "software").await;
     let item_id = seed_item(
         &state,
         project_id,
@@ -463,7 +451,7 @@ async fn auto_dispatch_does_not_refire_on_an_edit_that_does_not_change_status() 
         .await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Auto-dispatch Test Project", "software").await;
     let item_id = seed_item(
         &state,
         project_id,

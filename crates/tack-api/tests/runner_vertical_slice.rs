@@ -7,5 +7,7 @@
 //! `wave2_gate.rs` cover the same lifecycle through the real production
 //! router.
 
+mod common;
+
 #[path = "runner_vertical_slice/repository_crash.rs"]
 mod repository_crash;

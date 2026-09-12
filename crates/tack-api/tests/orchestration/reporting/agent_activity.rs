@@ -93,19 +93,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Agent Activity Test Project", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
     let res = req(
         app,
@@ -185,7 +172,7 @@ async fn item_agent_activity_404s_for_unknown_item() {
 #[tokio::test]
 async fn item_agent_activity_empty_for_item_with_no_dispatches() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Untouched item").await;
 
     let res = req(
@@ -207,7 +194,7 @@ async fn item_agent_activity_empty_for_item_with_no_dispatches() {
 #[tokio::test]
 async fn project_agent_activity_is_inner_join_excludes_items_with_no_tasks() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let dispatched_item = create_item(&app, project_id, "Dispatched").await;
     let _untouched_item = create_item(&app, project_id, "Never dispatched").await;
 
@@ -238,7 +225,7 @@ async fn project_agent_activity_is_inner_join_excludes_items_with_no_tasks() {
 #[tokio::test]
 async fn project_agent_activity_returns_empty_rows_for_project_with_no_activity() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     create_item(&app, project_id, "No activity").await;
 
     let res = req(
@@ -256,7 +243,7 @@ async fn project_agent_activity_returns_empty_rows_for_project_with_no_activity(
 #[tokio::test]
 async fn project_agent_activity_latest_attempt_wins_by_highest_attempt_number() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Redispatched item").await;
 
     let now = Utc::now();
@@ -297,7 +284,7 @@ async fn project_agent_activity_latest_attempt_wins_by_highest_attempt_number() 
 #[tokio::test]
 async fn project_agent_activity_ties_on_attempt_break_by_dispatched_at_desc() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Two same-attempt rows").await;
 
     let now = Utc::now();
@@ -341,7 +328,7 @@ async fn project_agent_activity_ties_on_attempt_break_by_dispatched_at_desc() {
 #[tokio::test]
 async fn item_agent_activity_attempts_are_newest_first() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Multi-attempt item").await;
 
     let now = Utc::now();
@@ -384,7 +371,7 @@ async fn item_agent_activity_attempts_are_newest_first() {
 #[tokio::test]
 async fn item_agent_activity_correlates_run_and_events_via_remote_run_id() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Correlated item").await;
     let plane = state
         .repo
@@ -464,7 +451,7 @@ async fn item_agent_activity_correlates_run_and_events_via_remote_run_id() {
 #[tokio::test]
 async fn item_agent_activity_run_is_null_when_remote_run_id_unresolved() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Queued item").await;
 
     let mut task = new_task(item_id, "task-no-run-yet", 1, Utc::now());
@@ -491,7 +478,7 @@ async fn item_agent_activity_run_is_null_when_remote_run_id_unresolved() {
 #[tokio::test]
 async fn item_agent_activity_includes_pending_and_decided_approvals_newest_first() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Approvals item").await;
     let plane = state
         .repo
@@ -555,7 +542,7 @@ async fn item_agent_activity_includes_pending_and_decided_approvals_newest_first
 #[tokio::test]
 async fn events_truncated_is_false_when_nothing_predates_the_retention_cutoff() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Fresh item").await;
 
     state
@@ -586,7 +573,7 @@ async fn events_truncated_is_true_when_an_attempt_predates_the_retention_cutoff(
         ..orch_config()
     };
     let (app, state) = app_with_state(config).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Old item").await;
 
     // Dispatched well before the 1-day retention cutoff.

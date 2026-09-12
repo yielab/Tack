@@ -5,14 +5,13 @@
 //! not a test-local stand-in, including the honest "empty, not yet" and
 //! 404 cases.
 
-use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use crate::common;
+use axum::http::StatusCode;
 use chrono::Utc;
 use serde_json::{Value, json};
 use tack_api::config::AppConfig;
 use tack_api::{AppState, orch_runtime::OrchRuntime, router::build_router};
 use tack_db::{Repository, init_pool, migrations};
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const OPERATOR_TOKEN: &str = "e6-routes-operator-token";
@@ -80,37 +79,6 @@ async fn setup() -> (axum::Router, Repository, String) {
     (app, repo, item.id.to_string())
 }
 
-async fn send(
-    app: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, value)
-}
-
 fn operator_headers() -> Vec<(&'static str, &'static str)> {
     vec![("authorization", "Bearer e6-routes-operator-token")]
 }
@@ -143,7 +111,7 @@ fn full_capabilities() -> Value {
 
 /// Enrolls a runner and returns (runner_id, bearer-auth-header-pair).
 async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, String); 1]) {
-    let (status, pending) = send(
+    let (status, pending) = common::send(
         app,
         "POST",
         "/api/runners/enrollment",
@@ -155,7 +123,7 @@ async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, Str
     let runner_id = pending["runner_id"].as_str().unwrap().to_owned();
     let raw_token = pending["enrollment_token"].as_str().unwrap().to_owned();
 
-    let (status, enrolled) = send(
+    let (status, enrolled) = common::send(
         app,
         "POST",
         "/api/runner/v1/enroll",
@@ -185,7 +153,7 @@ fn headers_ref(owned: &[(String, String); 1]) -> Vec<(&str, &str)> {
 }
 
 async fn create_agent_profile(app: &axum::Router) -> String {
-    let (status, profile) = send(
+    let (status, profile) = common::send(
         app,
         "POST",
         "/api/agent-profiles",
@@ -231,7 +199,7 @@ async fn list_runners_returns_real_capability_and_capacity_data() {
     let (app, _repo, _item_id) = setup().await;
     let (runner_id, _auth) = enroll_runner(&app, "Runner A").await;
 
-    let (status, listed) = send(
+    let (status, listed) = common::send(
         &app,
         "GET",
         "/api/runners",
@@ -260,7 +228,7 @@ async fn list_runners_fleet_filter_only_returns_members() {
     let (runner_in, _auth_in) = enroll_runner(&app, "In Fleet").await;
     let (runner_out, _auth_out) = enroll_runner(&app, "Not In Fleet").await;
 
-    let (status, fleet) = send(
+    let (status, fleet) = common::send(
         &app,
         "POST",
         "/api/runner-fleets",
@@ -284,7 +252,7 @@ async fn list_runners_fleet_filter_only_returns_members() {
     .await
     .expect("membership");
 
-    let (status, filtered) = send(
+    let (status, filtered) = common::send(
         &app,
         "GET",
         &format!("/api/runners?fleet_id={fleet_id}"),
@@ -302,7 +270,7 @@ async fn list_runners_fleet_filter_only_returns_members() {
 #[tokio::test]
 async fn list_runners_requires_operator_auth_like_every_other_operator_route() {
     let (app, _repo, _item_id) = setup().await;
-    let (status, _) = send(&app, "GET", "/api/runners", Value::Null, &[]).await;
+    let (status, _) = common::send(&app, "GET", "/api/runners", Value::Null, &[]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -317,7 +285,7 @@ async fn attempts_are_empty_before_a_claim_and_populated_after() {
     let auth = headers_ref(&auth_owned);
     let agent_profile_id = create_agent_profile(&app).await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -329,7 +297,7 @@ async fn attempts_are_empty_before_a_claim_and_populated_after() {
     let request_id = created["request_id"].as_str().unwrap().to_owned();
 
     // Before any claim: a real, empty list — not a placeholder.
-    let (status, before) = send(
+    let (status, before) = common::send(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts"),
@@ -340,7 +308,7 @@ async fn attempts_are_empty_before_a_claim_and_populated_after() {
     assert_eq!(status, StatusCode::OK, "{before}");
     assert_eq!(before["data"], json!([]));
 
-    let (status, claimed) = send(
+    let (status, claimed) = common::send(
         &app,
         "POST",
         "/api/runner/v1/claim",
@@ -351,7 +319,7 @@ async fn attempts_are_empty_before_a_claim_and_populated_after() {
     assert_eq!(status, StatusCode::OK, "{claimed}");
     let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
 
-    let (status, after) = send(
+    let (status, after) = common::send(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts"),
@@ -371,7 +339,7 @@ async fn attempts_are_empty_before_a_claim_and_populated_after() {
 #[tokio::test]
 async fn attempts_for_an_unknown_request_id_is_404() {
     let (app, _repo, _item_id) = setup().await;
-    let (status, body) = send(
+    let (status, body) = common::send(
         &app,
         "GET",
         "/api/executions/does-not-exist/attempts",
@@ -390,7 +358,7 @@ async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404(
     let auth = headers_ref(&auth_owned);
     let agent_profile_id = create_agent_profile(&app).await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -401,7 +369,7 @@ async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404(
     assert_eq!(status, StatusCode::OK, "{created}");
     let request_id = created["request_id"].as_str().unwrap().to_owned();
 
-    let (status, claimed) = send(
+    let (status, claimed) = common::send(
         &app,
         "POST",
         "/api/runner/v1/claim",
@@ -414,7 +382,7 @@ async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404(
     let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
     // Attempt number 1 exists but has no events yet — an honest empty list.
-    let (status, before) = send(
+    let (status, before) = common::send(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/events"),
@@ -425,7 +393,7 @@ async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404(
     assert_eq!(status, StatusCode::OK, "{before}");
     assert_eq!(before["data"], json!([]));
 
-    let (status, batch) = send(
+    let (status, batch) = common::send(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/events"),
@@ -450,7 +418,7 @@ async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404(
     .await;
     assert_eq!(status, StatusCode::OK, "{batch}");
 
-    let (status, after) = send(
+    let (status, after) = common::send(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/events"),
@@ -477,7 +445,7 @@ async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404(
     );
 
     // Attempt number 2 was never claimed for this request — distinct 404.
-    let (status, body) = send(
+    let (status, body) = common::send(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/2/events"),

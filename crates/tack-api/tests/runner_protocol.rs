@@ -4,6 +4,8 @@
 //! against its own directly-constructed router rather than the production
 //! one.
 
+mod common;
+
 #[path = "runner_protocol/artifact_events.rs"]
 mod artifact_events;
 #[path = "runner_protocol/decisions.rs"]

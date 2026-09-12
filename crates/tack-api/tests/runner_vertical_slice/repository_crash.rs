@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use crate::common;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::Row;
 use tack_core::{
@@ -190,22 +191,6 @@ async fn enqueue(fixture: &Fixture) {
         .expect("enqueue");
 }
 
-async fn claim(fixture: &Fixture) {
-    fixture
-        .repo
-        .claim_execution_idempotent_with_snapshot(
-            "runner-crash",
-            "claim-crash",
-            "attempt-crash",
-            Duration::seconds(60),
-            &fixture.clock,
-            RequestSelection::Naive,
-        )
-        .await
-        .expect("claim query")
-        .expect("lease");
-}
-
 #[tokio::test]
 async fn crash_before_claim_commit_rolls_back_request_capacity_and_fence() {
     let fixture = fixture().await;
@@ -274,7 +259,7 @@ async fn crash_before_claim_commit_rolls_back_request_capacity_and_fence() {
 async fn post_spawn_recovery_audits_needs_operator_and_never_grants_a_second_fence() {
     let fixture = fixture().await;
     enqueue(&fixture).await;
-    claim(&fixture).await;
+    common::claim_execution_for_test(&fixture.repo, &fixture.clock).await;
     let recovery = fixture
         .repo
         .recover_attempt(
@@ -330,7 +315,7 @@ async fn post_spawn_recovery_audits_needs_operator_and_never_grants_a_second_fen
 async fn crash_during_event_batch_rolls_back_rows_and_checkpoint_then_replays_once() {
     let fixture = fixture().await;
     enqueue(&fixture).await;
-    claim(&fixture).await;
+    common::claim_execution_for_test(&fixture.repo, &fixture.clock).await;
     sqlx::query(
         "CREATE TRIGGER inject_second_event_crash BEFORE INSERT ON execution_events \
          WHEN NEW.sequence = 2 BEGIN SELECT RAISE(ABORT, 'injected second event crash'); END",
@@ -442,7 +427,7 @@ async fn crash_during_event_batch_rolls_back_rows_and_checkpoint_then_replays_on
 async fn crash_during_completion_rolls_back_attempt_and_request_then_replays_once() {
     let fixture = fixture().await;
     enqueue(&fixture).await;
-    claim(&fixture).await;
+    common::claim_execution_for_test(&fixture.repo, &fixture.clock).await;
     sqlx::query(
         "CREATE TRIGGER inject_completion_crash BEFORE UPDATE OF state ON execution_requests \
          WHEN NEW.state = 'succeeded' BEGIN SELECT RAISE(ABORT, 'injected completion crash'); END",
@@ -512,7 +497,7 @@ async fn crash_during_completion_rolls_back_attempt_and_request_then_replays_onc
 async fn crash_during_cancellation_request_is_retryable_without_false_terminal_state() {
     let fixture = fixture().await;
     enqueue(&fixture).await;
-    claim(&fixture).await;
+    common::claim_execution_for_test(&fixture.repo, &fixture.clock).await;
     sqlx::query(
         "CREATE TRIGGER inject_cancel_crash BEFORE UPDATE OF cancellation_requested_at \
          ON execution_requests BEGIN SELECT RAISE(ABORT, 'injected cancellation crash'); END",
@@ -639,7 +624,7 @@ async fn enrollment_redemption_has_one_concurrent_winner_and_consumes_the_hash_o
 async fn heartbeat_fault_rolls_back_then_replays_the_authoritative_response_once() {
     let fixture = fixture().await;
     enqueue(&fixture).await;
-    claim(&fixture).await;
+    common::claim_execution_for_test(&fixture.repo, &fixture.clock).await;
     let lease = [HeartbeatLease {
         attempt_id: "attempt-crash",
         fencing_token: 1,

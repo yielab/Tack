@@ -21,6 +21,7 @@
 
 use std::time::Duration;
 
+use crate::common;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
@@ -99,24 +100,6 @@ async fn req(
         .oneshot(builder.body(body).unwrap())
         .await
         .unwrap()
-}
-
-async fn create_project(app: &Router) -> Uuid {
-    // "software" -> scrum_workflow(): "In Progress" has wip_limit = Some(5),
-    // and `transitions: None` (no explicit-transition restriction), so every
-    // item created here can go straight from the initial status ("Backlog")
-    // to "In Progress" without construction-workflow-style gating getting in
-    // the way of the race this test is trying to trigger.
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "WIP Race Test Project", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
 }
 
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
@@ -198,7 +181,11 @@ async fn mock_list_tasks(server: &MockServer, task_id: &str) {
 /// into the same WIP-limited column (scrum's "In Progress", limit 5).
 /// Dispatched genuinely concurrently. However many of the `N` requests win
 /// the race, the column must never end up holding more than its configured
-/// limit.
+/// limit. "software" -> scrum_workflow(): "In Progress" has wip_limit =
+/// Some(5) and `transitions: None` (no explicit-transition restriction), so
+/// every item created here can go straight from the initial status
+/// ("Backlog") to "In Progress" without construction-workflow-style gating
+/// getting in the way of the race this test is trying to trigger.
 #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
 async fn concurrent_dispatch_into_the_same_wip_limited_column_never_exceeds_the_limit() {
     const N: usize = 12;
@@ -209,7 +196,7 @@ async fn concurrent_dispatch_into_the_same_wip_limited_column_never_exceeds_the_
     mock_list_tasks(&server, "task-shared").await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "WIP Race Test Project", "software").await;
 
     let mut item_ids = Vec::with_capacity(N);
     for i in 0..N {

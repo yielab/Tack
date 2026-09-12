@@ -109,20 +109,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router, project_type: &str) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        &[],
-        Some(json!({"name": "Pipeline Dispatch Test Project", "project_type": project_type})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json_val(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_control_plane(app: &Router, base_url: &str) -> Uuid {
     let res = req(
         app,
@@ -227,7 +213,8 @@ async fn dispatch_409s_when_orch_disabled() {
 async fn dispatch_403s_when_dispatch_token_unset() {
     // orch_dispatch_token: None — the safe default this test pins.
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
 
     let res = dispatch_pipeline(&app, project_id, Some("anything"), None).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
@@ -242,7 +229,8 @@ async fn dispatch_403s_when_dispatch_token_unset() {
 #[tokio::test]
 async fn dispatch_403s_when_dispatch_token_wrong() {
     let (app, _) = app_with_state(orch_config_with_dispatch_token("correct-token")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
 
     let res = dispatch_pipeline(&app, project_id, Some("wrong-token"), None).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
@@ -251,7 +239,8 @@ async fn dispatch_403s_when_dispatch_token_wrong() {
 #[tokio::test]
 async fn dispatch_403s_when_dispatch_token_header_missing() {
     let (app, _) = app_with_state(orch_config_with_dispatch_token("correct-token")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
 
     let res = dispatch_pipeline(&app, project_id, None, None).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
@@ -269,7 +258,8 @@ async fn dispatch_404s_for_unknown_project() {
 #[tokio::test]
 async fn dispatch_404s_when_project_not_linked() {
     let (app, _) = app_with_state(orch_config_with_dispatch_token("tok")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
 
     let res = dispatch_pipeline(&app, project_id, Some("tok"), None).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -283,7 +273,8 @@ async fn dispatch_success_returns_run_id_and_writes_no_item_scoped_row() {
     mock_dispatch_allow(&server, "demo-pipeline", "run-happy-1").await;
 
     let (app, state) = app_with_state(orch_config_with_dispatch_token("tok")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(&app, project_id, cp, "demo-pipeline").await;
 
@@ -338,7 +329,8 @@ async fn dispatch_sends_variables_to_docket_verbatim() {
         .await;
 
     let (app, _) = app_with_state(orch_config_with_dispatch_token("tok")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(&app, project_id, cp, "demo-pipeline").await;
 
@@ -372,7 +364,8 @@ async fn dispatch_omitted_variables_default_to_empty_object() {
         .await;
 
     let (app, _) = app_with_state(orch_config_with_dispatch_token("tok")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(&app, project_id, cp, "demo-pipeline").await;
 
@@ -474,7 +467,8 @@ async fn dispatch_variables_never_reach_the_logs() {
     mock_dispatch_allow(&server, "demo-pipeline", "run-redaction").await;
 
     let (app, _) = app_with_state(orch_config_with_dispatch_token("tok")).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id =
+        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(&app, project_id, cp, "demo-pipeline").await;
 

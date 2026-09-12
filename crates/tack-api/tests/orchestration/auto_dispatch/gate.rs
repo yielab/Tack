@@ -15,6 +15,7 @@
 //! reads `!state.config.orch_enable` directly (which never consults
 //! `app_meta`) and passes once the gate reads `effective_orch_enabled`.
 
+use crate::common;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
@@ -86,19 +87,6 @@ async fn req(
         .oneshot(builder.body(body).unwrap())
         .await
         .unwrap()
-}
-
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Auto-dispatch Gate Test", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
 }
 
 async fn patch_status(app: &Router, item_id: Uuid, status: &str) -> axum::response::Response {
@@ -209,7 +197,7 @@ async fn auto_dispatch_does_not_fire_when_orch_enable_env_is_set_but_the_ui_togg
     // is the exact sequence: env on, UI off.
     turn_orchestration_off_via_the_ui_toggle(&app).await;
 
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Auto-dispatch Gate Test", "software").await;
     let item_id = seed_item(&state, project_id, "Backlog", "Should not auto-dispatch").await;
     link_project(&state, project_id, &server.uri()).await;
 
@@ -279,7 +267,7 @@ async fn auto_dispatch_fires_when_the_ui_toggle_is_on_even_with_the_env_flag_uns
     .await;
     assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
 
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Auto-dispatch Gate Test", "software").await;
     let item_id = seed_item(&state, project_id, "Backlog", "Should auto-dispatch").await;
     link_project(&state, project_id, &server.uri()).await;
 

@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tack_api::config::AppConfig;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
@@ -477,28 +478,8 @@ async fn spa_unknown_route_returns_index_html() {
 
 // ─── Custom field value validation (handler integration) ─────────────────────
 
-/// Helper: create a project and return its id string.
-async fn make_project(app: &axum::Router) -> String {
-    use axum::body::to_bytes;
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/api/projects")
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"name":"P","project_type":"software"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let bytes = to_bytes(res.into_body(), 65536).await.unwrap();
-    let p: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    p["id"].as_str().unwrap().to_owned()
-}
-
 /// Helper: create a custom field and return its id string.
-async fn make_custom_field(app: &axum::Router, project_id: &str, body: &str) -> String {
+async fn make_custom_field(app: &axum::Router, project_id: Uuid, body: &str) -> String {
     use axum::body::to_bytes;
     let res = app
         .clone()
@@ -518,7 +499,7 @@ async fn make_custom_field(app: &axum::Router, project_id: &str, body: &str) -> 
 }
 
 /// Helper: create a default item and return its id string.
-async fn make_item(app: &axum::Router, project_id: &str) -> String {
+async fn make_item(app: &axum::Router, project_id: Uuid) -> String {
     use axum::body::to_bytes;
     let res = app
         .clone()
@@ -590,11 +571,11 @@ async fn backup_settings_validation_returns_structured_422_envelope() {
 async fn list_items_returns_pagination_envelope_and_slices_pages() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     // Three items so a per_page=2 page 1 has a remainder on page 2.
     for _ in 0..3 {
-        make_item(&app, &pid).await;
+        make_item(&app, pid).await;
     }
 
     // Page 1: envelope shape + total count + first slice.
@@ -646,9 +627,9 @@ async fn list_items_returns_pagination_envelope_and_slices_pages() {
 #[tokio::test]
 async fn set_custom_field_value_correct_type_returns_ok() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let fid = make_custom_field(&app, &pid, r#"{"name":"Score","field_type":"number"}"#).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let fid = make_custom_field(&app, pid, r#"{"name":"Score","field_type":"number"}"#).await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -667,9 +648,9 @@ async fn set_custom_field_value_correct_type_returns_ok() {
 #[tokio::test]
 async fn set_custom_field_value_wrong_type_returns_422() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let fid = make_custom_field(&app, &pid, r#"{"name":"Score","field_type":"number"}"#).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let fid = make_custom_field(&app, pid, r#"{"name":"Score","field_type":"number"}"#).await;
+    let iid = make_item(&app, pid).await;
 
     // Send a string value to a Number field — must be rejected
     let res = app
@@ -689,14 +670,14 @@ async fn set_custom_field_value_wrong_type_returns_422() {
 #[tokio::test]
 async fn set_custom_field_select_invalid_option_returns_422() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
     let fid = make_custom_field(
         &app,
-        &pid,
+        pid,
         r#"{"name":"Priority","field_type":"select","options":["Low","High"]}"#,
     )
     .await;
-    let iid = make_item(&app, &pid).await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -715,14 +696,14 @@ async fn set_custom_field_select_invalid_option_returns_422() {
 #[tokio::test]
 async fn set_custom_field_value_passes_pattern_validation() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
     let fid = make_custom_field(
         &app,
-        &pid,
+        pid,
         r#"{"name":"Code","field_type":"text","validation":{"pattern":"^[A-Z]{3}$"}}"#,
     )
     .await;
-    let iid = make_item(&app, &pid).await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -741,14 +722,14 @@ async fn set_custom_field_value_passes_pattern_validation() {
 #[tokio::test]
 async fn set_custom_field_value_fails_pattern_validation() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
     let fid = make_custom_field(
         &app,
-        &pid,
+        pid,
         r#"{"name":"Code","field_type":"text","validation":{"pattern":"^[A-Z]{3}$"}}"#,
     )
     .await;
-    let iid = make_item(&app, &pid).await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -767,14 +748,14 @@ async fn set_custom_field_value_fails_pattern_validation() {
 #[tokio::test]
 async fn set_custom_field_number_out_of_range_returns_422() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
     let fid = make_custom_field(
         &app,
-        &pid,
+        pid,
         r#"{"name":"Score","field_type":"number","validation":{"min":0,"max":100}}"#,
     )
     .await;
-    let iid = make_item(&app, &pid).await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -796,7 +777,7 @@ async fn set_custom_field_number_out_of_range_returns_422() {
 async fn board_view_filter_by_item_type_returns_only_matching_items() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     // Create a task and a bug
     for (title, item_type) in [("Task A", "task"), ("Bug B", "bug")] {
@@ -893,8 +874,8 @@ async fn api_routes_take_priority_over_spa_fallback() {
 async fn update_item_title_persists() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .clone()
@@ -929,8 +910,8 @@ async fn update_item_title_persists() {
 async fn update_item_status_moves_to_in_progress() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .clone()
@@ -964,8 +945,8 @@ async fn update_item_status_moves_to_in_progress() {
 #[tokio::test]
 async fn delete_item_returns_404_on_subsequent_get() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let iid = make_item(&app, pid).await;
 
     let del = app
         .clone()
@@ -999,7 +980,7 @@ async fn delete_item_returns_404_on_subsequent_get() {
 async fn create_sprint_appears_in_list() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let res = app
         .clone()
@@ -1036,7 +1017,7 @@ async fn create_sprint_appears_in_list() {
 async fn sprint_status_transitions_to_active() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let res = app
         .clone()
@@ -1087,7 +1068,7 @@ async fn sprint_status_transitions_to_active() {
 async fn editing_a_sprint_rewrites_its_fields_and_clears_the_ones_left_out() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let res = app
         .clone()
@@ -1177,7 +1158,7 @@ async fn editing_a_sprint_that_does_not_exist_is_a_404() {
 async fn create_and_list_roles() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let res = app
         .clone()
@@ -1215,8 +1196,8 @@ async fn create_and_list_roles() {
 async fn create_and_list_comments() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let iid = make_item(&app, pid).await;
 
     let res = app
         .clone()
@@ -1257,9 +1238,9 @@ async fn create_and_list_comments() {
 async fn add_dependency_blocks_relationship() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let item_a = make_item(&app, &pid).await;
-    let item_b = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let item_a = make_item(&app, pid).await;
+    let item_b = make_item(&app, pid).await;
 
     let body = format!(r#"{{"target_item_id":"{item_b}","dependency_type":"blocks"}}"#);
     let res = app
@@ -1295,8 +1276,8 @@ async fn add_dependency_blocks_relationship() {
 #[tokio::test]
 async fn self_dependency_rejected() {
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    let iid = make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    let iid = make_item(&app, pid).await;
 
     let body = format!(r#"{{"target_item_id":"{iid}","dependency_type":"blocks"}}"#);
     let res = app
@@ -1319,7 +1300,7 @@ async fn self_dependency_rejected() {
 async fn project_search_finds_matching_item() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     // Create an item with a distinctive title
     app.clone()
@@ -1361,7 +1342,7 @@ async fn project_search_finds_matching_item() {
 async fn global_search_finds_item_across_projects() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     app.clone()
         .oneshot(
@@ -1403,8 +1384,8 @@ async fn global_search_finds_item_across_projects() {
 async fn export_json_contains_project_and_items() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -1434,8 +1415,8 @@ async fn export_json_contains_project_and_items() {
 async fn export_csv_starts_with_header_row() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    make_item(&app, pid).await;
 
     let res = app
         .oneshot(
@@ -1465,8 +1446,8 @@ async fn export_csv_starts_with_header_row() {
 async fn export_yaml_round_trips_through_import() {
     use axum::body::to_bytes;
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
-    make_item(&app, &pid).await;
+    let pid = common::create_project(&app, "P", "software").await;
+    make_item(&app, pid).await;
 
     // Export as YAML.
     let res = app
@@ -1513,7 +1494,7 @@ async fn export_yaml_round_trips_through_import() {
     let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(out["success"], true, "import response: {out}");
     let new_pid = out["project"]["id"].as_str().unwrap();
-    assert_ne!(new_pid, pid, "import must create a new project");
+    assert_ne!(new_pid, pid.to_string(), "import must create a new project");
 
     // The imported project has the round-tripped item.
     let res = app
@@ -1574,7 +1555,7 @@ async fn github_imported_item_source_is_untrusted_and_survives_export_import_rou
         ..AppConfig::default()
     };
     let (app, _) = common::test_app_with_config(config).await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let res = app
         .clone()
@@ -1639,7 +1620,7 @@ async fn github_imported_item_source_is_untrusted_and_survives_export_import_rou
     let bytes = to_bytes(res.into_body(), 131072).await.unwrap();
     let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let new_pid = out["project"]["id"].as_str().unwrap();
-    assert_ne!(new_pid, pid);
+    assert_ne!(new_pid, pid.to_string());
 
     let res = app
         .clone()
@@ -1681,7 +1662,7 @@ async fn github_import_redirect_does_not_leak_user_token_to_private_destination(
         ..AppConfig::default()
     };
     let (app, _) = common::test_app_with_config(config).await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let response = app
         .oneshot(
@@ -1711,7 +1692,7 @@ async fn csv_import_marks_items_with_csv_import_source() {
     use axum::body::to_bytes;
 
     let (app, _) = common::test_app().await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     let csv = "title,description\nFrom a spreadsheet,could be anyone's data\n";
     let res = app
@@ -1784,7 +1765,7 @@ async fn github_import_links_items_then_completion_pushes_close() {
         ..AppConfig::default()
     };
     let (app, _) = common::test_app_with_config(config).await;
-    let pid = make_project(&app).await;
+    let pid = common::create_project(&app, "P", "software").await;
 
     // Import → creates one item linked to issue #42.
     let res = app

@@ -98,19 +98,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Sprint Dispatch Test Project", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_sprint(app: &Router, project_id: Uuid) -> Uuid {
     let res = req(
         app,
@@ -316,7 +303,7 @@ async fn dispatch_sprint_404s_for_unknown_sprint() {
 #[tokio::test]
 async fn dispatch_sprint_409s_when_project_not_linked() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
 
     let res = req(
@@ -334,7 +321,7 @@ async fn dispatch_sprint_409s_when_project_not_linked() {
 #[tokio::test]
 async fn dry_run_reports_an_empty_plan_for_a_sprint_with_no_items() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let cp = create_control_plane(&app, "http://docket.local:9999").await;
     link_project(&app, project_id, cp, json!({"dispatch_from": ["Backlog"]})).await;
@@ -369,7 +356,7 @@ async fn seed_diamond(app: &Router, project_id: Uuid, sprint_id: Uuid) -> [Uuid;
 #[tokio::test]
 async fn dry_run_diamond_orders_a_first_then_b_and_c_then_d_and_gates_downstream() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let [a, b, c, d] = seed_diamond(&app, project_id, sprint_id).await;
     let cp = create_control_plane(&app, "http://docket.local:9999").await;
@@ -429,7 +416,7 @@ async fn dry_run_diamond_orders_a_first_then_b_and_c_then_d_and_gates_downstream
 #[tokio::test]
 async fn a_completed_dependency_unblocks_its_direct_dependents_but_not_their_dependents() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let [a, b, c, d] = seed_diamond(&app, project_id, sprint_id).await;
     let cp = create_control_plane(&app, "http://docket.local:9999").await;
@@ -465,7 +452,7 @@ async fn real_dispatch_matches_the_dry_run_order_and_skips_exactly_as_previewed(
     mock_list_tasks(&server, "task-diamond").await;
 
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let [a, b, c, d] = seed_diamond(&app, project_id, sprint_id).await;
     let cp = create_control_plane(&app, &server.uri()).await;
@@ -510,7 +497,7 @@ async fn real_dispatch_matches_the_dry_run_order_and_skips_exactly_as_previewed(
 #[tokio::test]
 async fn a_dependency_outside_the_sprint_gates_readiness_the_same_way() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let other_sprint_id = create_sprint(&app, project_id).await;
 
@@ -564,7 +551,7 @@ async fn a_policy_block_on_one_item_does_not_abort_the_rest_of_the_sprint() {
     mock_list_tasks(&server, "task-ok").await;
 
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     // Two independent items — no dependency between them.
     let blocked = create_item(&app, project_id, sprint_id, "Blocked Item").await;
@@ -629,7 +616,7 @@ async fn trust_is_threaded_per_item_not_as_one_blanket_value_for_the_batch() {
         .await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let manual = create_item(&app, project_id, sprint_id, "Manual Item").await;
     let github = seed_github_item(&state, project_id, sprint_id, "GitHub Item").await;
@@ -661,7 +648,7 @@ async fn trust_is_threaded_per_item_not_as_one_blanket_value_for_the_batch() {
 #[tokio::test]
 async fn max_in_flight_is_clamped_into_range_and_reported_back() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     let cp = create_control_plane(&app, "http://docket.local:9999").await;
     link_project(&app, project_id, cp, json!({"dispatch_from": ["Backlog"]})).await;
@@ -699,7 +686,7 @@ async fn max_in_flight_actually_bounds_concurrent_dispatch_calls() {
     mock_list_tasks(&server, "task-slow").await;
 
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     for i in 0..4 {
         create_item(&app, project_id, sprint_id, &format!("Item {i}")).await;
@@ -737,7 +724,7 @@ async fn a_generous_cap_lets_independent_items_dispatch_concurrently() {
     mock_list_tasks(&server, "task-slow").await;
 
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Sprint Dispatch Test Project", "software").await;
     let sprint_id = create_sprint(&app, project_id).await;
     for i in 0..4 {
         create_item(&app, project_id, sprint_id, &format!("Item {i}")).await;
