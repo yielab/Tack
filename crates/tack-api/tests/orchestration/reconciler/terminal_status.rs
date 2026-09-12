@@ -1,15 +1,12 @@
 //! Tests for the reconciler-driven counterpart to
 //! `orchestration/dispatch/item.rs`'s dispatch-time application. When
-//! `RepoControlPlaneStore::upsert_runs` (`crates/tack-api/src/orch_store.rs`)
-//! sees a run reach a terminal `RunState`, it applies
-//! `status_map.on_succeeded`/`on_failed`/`on_cancelled` through the workflow
-//! engine — unless a human has moved the card since dispatch, in which case
-//! the human's decision wins and the attempt is recorded as a
-//! `status_map_skipped_human_override` `orch_events` row.
-//!
-//! Deliberately calls `upsert_runs` directly rather than going through the
-//! HTTP router: the surface under test is `RepoControlPlaneStore`, not an
-//! endpoint (same choice `reconciler/broadcast.rs` makes).
+//! `RepoControlPlaneStore::upsert_runs` sees a run reach a terminal
+//! `RunState`, it applies `status_map.on_succeeded`/`on_failed`/
+//! `on_cancelled` through the workflow engine — unless a human has moved
+//! the card since dispatch, in which case the human wins and the attempt
+//! is recorded as `status_map_skipped_human_override`. Calls `upsert_runs`
+//! directly (like `reconciler/broadcast.rs`): the surface under test is
+//! `RepoControlPlaneStore`, not an HTTP endpoint.
 
 use chrono::Utc;
 use serde_json::{Value, json};

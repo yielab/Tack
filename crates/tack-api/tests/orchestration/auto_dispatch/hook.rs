@@ -1,15 +1,10 @@
-//! Tests for the auto-dispatch hook:
-//! `handlers::items::maybe_auto_dispatch`, wired into `PATCH /api/items/{id}`
-//! beside `maybe_sync_github`/`propagate_parent_completion`. When
-//! `orch_links.auto_dispatch` is on and an item's status changes into one of
-//! `status_map.dispatch_from`, the hook calls `dispatcher::dispatch_item`
-//! off the request path, passing the item's own **persisted** trust value
-//! (`item.source.is_trusted()` — migration 029; see the trust test below for
-//! why that matters).
-//!
-//! Also covers: the off/auto_dispatch-off guards, and that it must not
-//! dispatch on every update — an item edited while already sitting in a
-//! `dispatch_from` status must not re-dispatch.
+//! Tests for the auto-dispatch hook (`handlers::items::maybe_auto_dispatch`,
+//! wired into `PATCH /api/items/{id}`). When `orch_links.auto_dispatch` is
+//! on and an item's status enters `status_map.dispatch_from`, the hook
+//! dispatches off the request path, passing the item's own **persisted**
+//! trust value (`item.source.is_trusted()` — migration 029; see the trust
+//! test below for why). Also covers: the off/auto_dispatch-off guards, and
+//! that an edit sitting in an already-dispatched status must not re-fire.
 
 use crate::common;
 use axum::Router;
