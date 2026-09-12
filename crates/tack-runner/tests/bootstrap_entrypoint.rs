@@ -96,7 +96,7 @@ fn spawn_delayed_enrollment_server(respond_after: Duration) -> String {
 }
 
 #[tokio::test]
-async fn the_composition_root_stops_on_an_injected_shutdown_with_no_process_signal() {
+async fn composition_root_stops_on_injected_shutdown_without_a_signal() {
     let state_dir = temp_state_dir("shutdown");
     let base_url = spawn_delayed_enrollment_server(Duration::from_millis(300));
     let config = RunnerConfig::from_sources(RunnerConfigSources {

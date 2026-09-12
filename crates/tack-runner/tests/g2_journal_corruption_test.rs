@@ -1,14 +1,11 @@
-//! Corrupt-journal adversarial coverage for the local runner
-//! journal. This file owns adversarial tests and the audit report only —
-//! no production source is touched here.
+//! Corrupt-journal adversarial coverage for the local runner journal:
+//! tests and the audit report only, no production source touched here.
 //!
-//! `OwnerOnlyJournal` already has in-module unit tests for a symlinked
-//! journal/quarantine directory and a filename that disagrees with its own
-//! record (`journal.rs`'s own test module). This file targets a case
-//! neither covers: a journal file whose *bytes* are corrupted on disk
-//! outside any journal API call — simulating bit rot, a truncated write
-//! after a crash mid-`fsync`, or an operator/tooling mistake — and,
-//! specifically, what that corruption does to *other, healthy* attempts'
+//! `OwnerOnlyJournal`'s in-module tests already cover a symlinked
+//! journal/quarantine directory and a mismatched filename. This file
+//! covers what those don't: a journal file corrupted on disk outside any
+//! journal API call (bit rot, a truncated write after a crash mid-`fsync`,
+//! an operator mistake), and what that does to *other, healthy* attempts'
 //! recoverability, not just to itself.
 
 use std::path::PathBuf;
@@ -46,7 +43,7 @@ fn record(attempt_id: &str, fencing_token: u64) -> AttemptJournal {
 //    error, not a panic, when loaded directly by id.
 // =======================================================================
 #[test]
-fn a_bit_rotted_journal_file_is_a_typed_malformed_error_not_a_panic() {
+fn a_bit_rotted_journal_file_is_malformed_not_a_panic() {
     let root_dir = temporary_root("bitrot-single");
     let root = root_dir.path();
     let journal = OwnerOnlyJournal::new(root);
@@ -86,7 +83,7 @@ fn a_bit_rotted_journal_file_is_a_typed_malformed_error_not_a_panic() {
 //    Not fixed here — this file's scope is tests/audit only.
 // =======================================================================
 #[test]
-fn one_corrupted_journal_file_currently_blocks_recovery_of_every_other_attempt() {
+fn a_corrupted_journal_file_blocks_recovery_of_other_attempts() {
     let root_dir = temporary_root("bitrot-batch");
     let root = root_dir.path();
     let journal = OwnerOnlyJournal::new(root);
@@ -150,7 +147,7 @@ fn one_corrupted_journal_file_currently_blocks_recovery_of_every_other_attempt()
 //    proceed as if this attempt had never been journaled).
 // =======================================================================
 #[test]
-fn a_truncated_zero_length_journal_file_is_malformed_not_missing() {
+fn a_truncated_journal_file_is_malformed_not_missing() {
     let root_dir = temporary_root("truncated");
     let root = root_dir.path();
     let journal = OwnerOnlyJournal::new(root);
