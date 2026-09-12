@@ -82,7 +82,7 @@ block only.
 |---|---|---|---|
 | 27 — The tool and the mechanical moves | IX-M0 → IX-M1 → IX-M2 | 63 | done — `7ffd192`, `45edaba`, `dfa62aa`; 284 files baselined, budgets hold |
 | 28 — One place for a helper | IX-M3-db, then IX-M3-orch ∥ IX-M3-api ∥ IX-M3-runner ∥ IX-M3-cli | 63 | done — all five sub-cards integrated, 1502/1502 tests hold, budgets hold |
-| 29 — Prune per binary | IX-M4-<crate>-<binary>, 28 sub-cards, largest first | 63 | open; after 28; two at a time under the load cap |
+| 29 — Prune per binary | IX-M4-<crate>-<binary>, 28 sub-cards, largest first | 63 | done — all sub-cards integrated (renames, table-driving, sleep→poll), 1439/1439 tests hold (8 skipped), budgets hold |
 | 30 — Harness core | IX-M5 (= T0 of `docs/plans/harness-maintainability-audit.md`) | 63 | open; after 29 |
 | 31 — Comments and docs | IX-M6 batches ∥ IX-M7 | 63 | open; after 27; M6 may overlap 29 on files 29 does not own |
 | 32 — Ratchet down | IX-M8 | 63 | open; last |
