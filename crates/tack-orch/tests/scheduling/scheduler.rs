@@ -1,16 +1,9 @@
-//! Black-box tests for the deterministic fleet scheduler, exercised
-//! only through `tack_orch::scheduler`'s public API — no access to private
-//! module internals, the same vantage point an external caller has.
-//!
-//! These complement (do not duplicate) the table tests inside
-//! `crates/tack-orch/src/scheduler/{select,batch}.rs`: this file's job is
-//! the property-style "identical input selects identically, regardless of
-//! arrival order" claim, exercised over every permutation of a small
-//! candidate/request set rather than a couple of hand-picked reorderings.
-//! No `proptest`/`quickcheck` dependency is added, so permutations are
-//! enumerated by hand with a small recursive generator, the same
-//! no-new-dependency discipline `reconciler.rs`'s deterministic jitter
-//! already uses instead of pulling in `rand`.
+//! Black-box tests for the deterministic fleet scheduler, exercised only through
+//! `tack_orch::scheduler`'s public API. Complements (does not duplicate) the table tests in
+//! `crates/tack-orch/src/scheduler/{select,batch}.rs`: this file's job is the property-style
+//! "identical input selects identically, regardless of arrival order" claim, checked over
+//! every permutation of a small candidate/request set via a hand-rolled recursive generator
+//! rather than a `proptest`/`quickcheck` dependency.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,7 +103,7 @@ fn permutations_helper_produces_the_expected_count() {
 }
 
 #[test]
-fn selection_is_identical_across_every_permutation_of_a_heterogeneous_fleet() {
+fn selection_is_stable_across_every_permutation_of_a_fleet() {
     // Four candidates, each disqualified (or not) for a different reason —
     // deliberately heterogeneous, deliberately including a near-tie so the
     // capacity/id tie-break is exercised too.
@@ -144,7 +137,7 @@ fn selection_is_identical_across_every_permutation_of_a_heterogeneous_fleet() {
 }
 
 #[test]
-fn no_eligible_runner_outcome_is_identical_across_every_permutation() {
+fn no_eligible_outcome_is_identical_across_every_permutation() {
     // Three candidates, all ineligible for distinct reasons — the NoEligibleRunner
     // `reasons` list must come back byte-identical (already sorted by runner_id
     // inside select_runner) no matter what order the caller supplies them in.
@@ -174,7 +167,7 @@ fn no_eligible_runner_outcome_is_identical_across_every_permutation() {
 }
 
 #[test]
-fn batch_schedule_outcome_is_identical_across_every_permutation_of_requests() {
+fn batch_schedule_outcome_is_stable_across_every_permutation() {
     let candidates = vec![candidate("runner-a", 1)];
     let policy = SchedulingPolicy::default();
 
@@ -235,7 +228,7 @@ fn advisory_selection_never_claims_to_be_a_lease() {
 }
 
 #[test]
-fn stale_heartbeat_wins_over_capacity_when_both_would_otherwise_pass() {
+fn stale_heartbeat_rejects_even_with_ample_capacity() {
     // A scheduler must read freshness, not assume a quiet runner is still
     // alive. This proves the check is load-bearing, not merely present: a
     // candidate with ample capacity and a perfectly matching harness is
@@ -276,7 +269,7 @@ fn passthrough_harness(kind: &str, support: CapabilitySupport) -> HarnessCapabil
 /// structurally unschedulable on its own; with a `supported` pass-through
 /// attestation it selects.
 #[test]
-fn undeclared_pairing_selects_when_the_harness_attests_supported_passthrough() {
+fn undeclared_pairing_selects_with_supported_passthrough() {
     let mut runner = candidate("runner-a", 1);
     runner.harnesses = vec![passthrough_harness(
         "claude_code",
@@ -298,7 +291,7 @@ fn undeclared_pairing_selects_when_the_harness_attests_supported_passthrough() {
 /// same named reason — capability claims are load-bearing, so nothing short
 /// of `supported` schedules.
 #[test]
-fn advisory_unsupported_and_absent_passthrough_all_reject_identically() {
+fn advisory_unsupported_and_absent_passthrough_all_reject() {
     let mut req = request();
     req.requested_model = ModelSelector::Explicit {
         provider: RequestedModelProvider::new("anthropic"),
@@ -355,7 +348,7 @@ fn auto_select_stays_rejected_even_with_supported_passthrough() {
 /// A pass-through attestation must not weaken any earlier eligibility check:
 /// the harness itself still has to be declared and probe-clean.
 #[test]
-fn passthrough_does_not_bypass_probe_error_or_harness_declaration() {
+fn passthrough_does_not_bypass_probe_error_or_harness_check() {
     // Probe error on the attested harness.
     let mut errored = passthrough_harness("claude_code", CapabilitySupport::Supported);
     errored.probe_error = Some("binary not found".to_string());
