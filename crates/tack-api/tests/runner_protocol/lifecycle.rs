@@ -1,37 +1,20 @@
 //! Runner-protocol lifecycle over HTTP: enroll, refresh, claim, heartbeat,
 //! fencing, events, completion, recovery, and the operator/runner
-//! auth non-substitution proof.
-//!
-//! Loads `handlers/runner_protocol.rs` the same way
-//! `handlers/executions_runner_admin.rs`
-//! loads its own handlers: via `#[path]`. `runner_protocol.rs`'s own
-//! `mod runner_auth;` then resolves relative to that file's path
-//! (`handlers/runner_protocol/runner_auth.rs`), which is what keeps the
-//! auth module unregistered in `handlers.rs` while still compiling here.
-//! `artifact_events` (the sibling module in this binary) loads the same
-//! product file again under its own module path rather than sharing this
-//! one — each keeps its own directly-constructed router, matching the two
-//! files' own separate history before this binary merged them; see the
-//! `#[allow(clippy::duplicate_mod)]` below.
-//!
-//! `executions.rs` is loaded read-only, the same technique its own test
-//! already uses on itself, so the operator/runner auth
-//! non-substitution test can exercise the real operator router rather than a
-//! stub. The file is not modified. (`runner_admin.rs` is deliberately not
-//! loaded here: it is a separate, independently-evolving file this
-//! test does not need, and pulling it into this binary would make this
-//! file's compilation depend on runner_admin.rs's own edits.)
+//! auth non-substitution proof. Each test builds its own router directly
+//! from `runner_protocol::routes`, bypassing the production router.
 
-// `artifact_events`'s own copy of this same `#[path]` load is a second,
-// independent module tree over the identical file — clippy's default
-// lint set forbids that within one crate. Allowed deliberately: collapsing
-// the two into one shared module would also collapse `runner_protocol.rs`'s
-// own colocated unit tests from two independent copies into one, changing
-// this binary's test count.
+// Loaded via `#[path]` so `runner_protocol.rs`'s own `mod runner_auth;`
+// resolves and compiles here without registering the auth module in
+// `handlers.rs`. `artifact_events` loads the same file again under its own
+// module path (a second, independent tree clippy's default lints forbid);
+// allowed here since sharing one module would also collapse each file's
+// own colocated unit tests into one, changing this binary's test count.
 #[allow(clippy::duplicate_mod)]
 #[path = "../../src/handlers/runner_protocol.rs"]
 mod runner_protocol;
 
+// Loaded read-only (never modified) so the operator/runner auth
+// non-substitution test below can exercise the real operator router.
 #[path = "../../src/handlers/executions.rs"]
 mod executions;
 
@@ -268,6 +251,38 @@ async fn send_as_runner(
         &[("authorization", &format!("Bearer {RUNNER_CREDENTIAL}"))],
     )
     .await
+}
+
+/// Enqueue a request for `RUNNER_ID` and claim it, returning
+/// `(request_id, attempt_id, fencing_token)`. The shape every test below
+/// needs before it can exercise a leased attempt's routes.
+async fn enqueue_and_claim(
+    app: &Router,
+    repo: &Repository,
+    clock: &FakeClock,
+    item_id: &str,
+    idempotency_key: &str,
+    claim_request_id: &str,
+) -> (String, String, i64) {
+    let request_id = enqueue_request(
+        repo,
+        clock,
+        item_id,
+        RUNNER_ID,
+        "profile-c2",
+        idempotency_key,
+    )
+    .await;
+    let (_, claimed) = send_as_runner(
+        app,
+        "POST",
+        "/claim",
+        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":claim_request_id,"available_capacity":2,"wait_ms":1000}).to_string(),
+    )
+    .await;
+    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
+    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
+    (request_id, attempt_id, fencing_token)
 }
 
 /// `harnesses` declares "codex"/"openai"/`REQUESTED_MODEL_ID` — every
@@ -767,7 +782,7 @@ async fn duplicate_self_reported_runner_name_enrolls_both_runners() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn operator_auth_cannot_substitute_for_runner_auth_and_vice_versa() {
+async fn operator_and_runner_auth_do_not_substitute() {
     let (runner_app, repo, clock, item_id) = setup().await;
 
     // An operator-style principal header alone does not authenticate a
@@ -849,24 +864,8 @@ async fn operator_auth_cannot_substitute_for_runner_auth_and_vice_versa() {
 #[tokio::test]
 async fn stale_and_expired_fence_write_nothing() {
     let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
-        &repo,
-        &clock,
-        &item_id,
-        RUNNER_ID,
-        "profile-c2",
-        "stale-key",
-    )
-    .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-stale","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
+    let (_, attempt_id, fencing_token) =
+        enqueue_and_claim(&app, &repo, &clock, &item_id, "stale-key", "claim-stale").await;
 
     // Wrong fencing token on a real attempt.
     let (status, body) = send_as_runner(
@@ -921,26 +920,10 @@ async fn stale_and_expired_fence_write_nothing() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn heartbeat_and_completion_idempotent_replay_and_conflicting_replay_are_distinguished() {
+async fn heartbeat_and_completion_replay_vs_conflict() {
     let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
-        &repo,
-        &clock,
-        &item_id,
-        RUNNER_ID,
-        "profile-c2",
-        "replay-key",
-    )
-    .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-replay","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
+    let (_, attempt_id, fencing_token) =
+        enqueue_and_claim(&app, &repo, &clock, &item_id, "replay-key", "claim-replay").await;
 
     let heartbeat_body = |capacity: i64| {
         json!({"protocol_version":1,"runner_id":RUNNER_ID,"heartbeat_id":"hb-replay","sent_at":clock.now().to_rfc3339(),"available_capacity":capacity,"active_attempts":[]}).to_string()
@@ -1014,66 +997,44 @@ async fn heartbeat_and_completion_idempotent_replay_and_conflicting_replay_are_d
 #[tokio::test]
 async fn oversized_event_batch_writes_nothing() {
     let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
+    let (_, attempt_id, fencing_token) = enqueue_and_claim(
+        &app,
         &repo,
         &clock,
         &item_id,
-        RUNNER_ID,
-        "profile-c2",
         "oversized-key",
+        "claim-oversized",
     )
     .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-oversized","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
-    // Over `event_batch_count_max` (100): 101 tiny events.
+    // Over `event_batch_count_max` (100 tiny events), and over the whole-body
+    // byte cap (`json_body_bytes_max` == `event_batch_bytes_max`, both
+    // 1 MiB, one oversized-payload event) — both reject with 413 and write
+    // nothing.
     let too_many_events: Vec<Value> = (0..101)
         .map(|i| json!({"event_id": format!("evt-{i}"), "sequence": i, "occurred_at": clock.now().to_rfc3339(), "source":"runner","kind":"progress","payload":{}}))
         .collect();
-    let (status, body) = send_as_runner(
-        &app,
-        "POST",
-        &format!("/attempts/{attempt_id}/events"),
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":too_many_events}).to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(body["error"]["code"], "payload_too_large");
-    assert_eq!(body["error"]["details"]["limit"], "event_batch_count_max");
-    let event_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE attempt_id=?")
-            .bind(&attempt_id)
-            .fetch_one(repo.pool())
-            .await
-            .unwrap();
-    assert_eq!(event_rows, 0);
-    let checkpoint: Option<String> =
-        sqlx::query_scalar("SELECT event_checkpoint FROM execution_attempts WHERE id=?")
-            .bind(&attempt_id)
-            .fetch_one(repo.pool())
-            .await
-            .unwrap();
-    assert_eq!(checkpoint, None);
-
-    // Over the whole-body byte cap (`json_body_bytes_max` == `event_batch_bytes_max`,
-    // both 1 MiB): one event with an oversized payload.
     let huge_payload = json!({"blob": "x".repeat(2 * 1_048_576)});
-    let (status, body) = send_as_runner(
-        &app,
-        "POST",
-        &format!("/attempts/{attempt_id}/events"),
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":[{"event_id":"evt-huge","sequence":1,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":huge_payload}]}).to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(body["error"]["code"], "payload_too_large");
+    let huge_event = vec![
+        json!({"event_id":"evt-huge","sequence":1,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":huge_payload}),
+    ];
+    for (events, limit_name) in [
+        (too_many_events, Some("event_batch_count_max")),
+        (huge_event, None),
+    ] {
+        let (status, body) = send_as_runner(
+            &app,
+            "POST",
+            &format!("/attempts/{attempt_id}/events"),
+            json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":events}).to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+        assert_eq!(body["error"]["code"], "payload_too_large");
+        if let Some(limit_name) = limit_name {
+            assert_eq!(body["error"]["details"]["limit"], limit_name);
+        }
+    }
     let event_rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE attempt_id=?")
             .bind(&attempt_id)
@@ -1084,6 +1045,13 @@ async fn oversized_event_batch_writes_nothing() {
         event_rows, 0,
         "an oversized batch writes nothing, not just a 413"
     );
+    let checkpoint: Option<String> =
+        sqlx::query_scalar("SELECT event_checkpoint FROM execution_attempts WHERE id=?")
+            .bind(&attempt_id)
+            .fetch_one(repo.pool())
+            .await
+            .unwrap();
+    assert_eq!(checkpoint, None);
 }
 
 // ---------------------------------------------------------------------
@@ -1093,26 +1061,10 @@ async fn oversized_event_batch_writes_nothing() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn decision_and_artifact_id_reuse_with_different_content_is_idempotency_conflict() {
+async fn decision_and_artifact_id_reuse_is_idempotency_conflict() {
     let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
-        &repo,
-        &clock,
-        &item_id,
-        RUNNER_ID,
-        "profile-c2",
-        "reuse-key",
-    )
-    .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-reuse","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
+    let (_, attempt_id, fencing_token) =
+        enqueue_and_claim(&app, &repo, &clock, &item_id, "reuse-key", "claim-reuse").await;
     send_as_runner(
         &app,
         "POST",
@@ -1202,30 +1154,17 @@ async fn decision_and_artifact_id_reuse_with_different_content_is_idempotency_co
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn recovery_observation_safe_requeue_requeues_the_request_and_replays_idempotently() {
+async fn recovery_observation_requeues_and_replays_idempotently() {
     let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
+    let (request_id, attempt_id, fencing_token) = enqueue_and_claim(
+        &app,
         &repo,
         &clock,
         &item_id,
-        RUNNER_ID,
-        "profile-c2",
         "recovery-key",
+        "claim-recovery",
     )
     .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-recovery","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
-    let request_id = claimed["request"]["request_id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
 
     let recovery_body = json!({
         "protocol_version": 1, "runner_id": RUNNER_ID, "attempt_id": attempt_id, "fencing_token": fencing_token,
@@ -1354,178 +1293,111 @@ async fn logs_never_contain_raw_credentials_only_ids() {
 }
 
 // ---------------------------------------------------------------------
-// 9. A retryable stable code (`conflict`) carries `retryable: true` in the
-//    real, serialized JSON body — sourced from
-//    the single retryability authority (`StableErrorCode::retryable`,
-//    `crates/tack-orch/src/execution/types.rs`), not a locally re-derived
-//    classification. An event batch whose `previous_checkpoint` no longer
-//    matches the attempt's committed stream position hits
-//    `EventApplyResult::Conflict` — the benign, retryable, out-of-order-resync
-//    case split out of the old,
-//    collapsed `ReplayConflict`.
-//    This test drives *only* that benign path and asserts `retryable: true`;
-//    its sibling
-//    `event_batch_replay_changed_content_is_idempotency_conflict_and_writes_nothing`
-//    below drives the other split cause — the same `(attempt_id,
-//    checkpoint)` key reused with genuinely different content — and asserts
-//    the opposite, non-retryable `idempotency_conflict`, making the
-//    contrast between the two explicit rather than leaving it untested (the
-//    gap that let the original collapse of the two causes survive
-//    undetected at the HTTP layer).
+// 9. `EventApplyResult` splits two causes that used to collapse into one
+//    `ReplayConflict`: a benign, out-of-order resync (mismatched
+//    `previous_checkpoint`) is the retryable `conflict` code
+//    (`StableErrorCode::retryable`, `crates/tack-orch/src/execution/types.rs`);
+//    reusing the same `(attempt_id, checkpoint)` key with genuinely
+//    different event content is the non-retryable `idempotency_conflict`.
+//    Both write nothing. Table-driven so the contrast stays explicit — the
+//    gap that let the original collapse survive undetected at the HTTP
+//    layer.
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn event_checkpoint_conflict_response_carries_contract_correct_retryable_true() {
-    let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
-        &repo,
-        &clock,
-        &item_id,
-        RUNNER_ID,
-        "profile-c2",
-        "conflict-retryable-key",
-    )
-    .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-conflict-retryable","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
+async fn event_batch_conflict_vs_idempotency_conflict_retryable() {
+    struct Case {
+        key: &'static str,
+        claim_id: &'static str,
+        checkpoint: &'static str,
+        previous_checkpoint: Value,
+        event_id: &'static str,
+        payload: Value,
+        expected_code: &'static str,
+        expected_retryable: bool,
+    }
+    let cases = [
+        Case {
+            key: "conflict-retryable-key",
+            claim_id: "claim-conflict-retryable",
+            checkpoint: "cp-2",
+            previous_checkpoint: json!("stale-checkpoint"),
+            event_id: "evt-2",
+            payload: json!({}),
+            expected_code: "conflict",
+            expected_retryable: true,
+        },
+        Case {
+            key: "event-idempotency-key",
+            claim_id: "claim-event-idem",
+            checkpoint: "cp-1",
+            previous_checkpoint: Value::Null,
+            event_id: "evt-1",
+            payload: json!({"note": "CHANGED"}),
+            expected_code: "idempotency_conflict",
+            expected_retryable: false,
+        },
+    ];
 
-    // First batch commits checkpoint "cp-1" (previous_checkpoint absent, as
-    // this is the first batch for the attempt).
-    let (status, first) = send_as_runner(
-        &app,
-        "POST",
-        &format!("/attempts/{attempt_id}/events"),
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":[{"event_id":"evt-1","sequence":1,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":{}}]}).to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{first}");
+    for case in cases {
+        let (app, repo, clock, item_id) = setup().await;
+        let (_, attempt_id, fencing_token) =
+            enqueue_and_claim(&app, &repo, &clock, &item_id, case.key, case.claim_id).await;
 
-    // A second batch that claims a stale `previous_checkpoint` (rather than
-    // the now-committed "cp-1") no longer matches the attempt's stream
-    // position — a benign, retryable resync, not a same-key idempotency
-    // conflict.
-    let (status, body) = send_as_runner(
-        &app,
-        "POST",
-        &format!("/attempts/{attempt_id}/events"),
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-2","previous_checkpoint":"stale-checkpoint","events":[{"event_id":"evt-2","sequence":2,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":{}}]}).to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], "conflict");
-    assert_eq!(
-        body["error"]["retryable"], true,
-        "a `conflict` response must be retryable per StableErrorCode::retryable \
-         (docs/contracts/runner-v1/errors/conflict.json): {body}"
-    );
-    assert_eq!(body["error"]["request_id"], "req_runner");
+        // First batch commits checkpoint "cp-1" with one event.
+        let (status, first) = send_as_runner(
+            &app,
+            "POST",
+            &format!("/attempts/{attempt_id}/events"),
+            json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":[{"event_id":"evt-1","sequence":1,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":{"note":"original"}}]}).to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
 
-    // And it wrote nothing: the second event never landed, and the
-    // committed checkpoint is still "cp-1" from the first, accepted batch.
-    let event_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE attempt_id=?")
-            .bind(&attempt_id)
-            .fetch_one(repo.pool())
-            .await
-            .unwrap();
-    assert_eq!(event_rows, 1, "the rejected second batch wrote no events");
-    let checkpoint: Option<String> =
-        sqlx::query_scalar("SELECT event_checkpoint FROM execution_attempts WHERE id=?")
-            .bind(&attempt_id)
-            .fetch_one(repo.pool())
-            .await
-            .unwrap();
-    assert_eq!(checkpoint.as_deref(), Some("cp-1"));
-}
+        let (status, body) = send_as_runner(
+            &app,
+            "POST",
+            &format!("/attempts/{attempt_id}/events"),
+            json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":case.checkpoint,"previous_checkpoint":case.previous_checkpoint,"events":[{"event_id":case.event_id,"sequence":2,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":case.payload}]}).to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], case.expected_code);
+        assert_eq!(
+            body["error"]["retryable"], case.expected_retryable,
+            "{}: retryable must be {}: {body}",
+            case.expected_code, case.expected_retryable
+        );
+        assert_eq!(body["error"]["request_id"], "req_runner");
 
-// ---------------------------------------------------------------------
-// 10. The other half of the split: reusing the same idempotency-scoped
-//     `(attempt_id, checkpoint)` key with genuinely different event content
-//     is `idempotency_conflict` (`retryable: false`), never `conflict`. This
-//     exact HTTP-layer path had no test before this — exactly how a bug
-//     could survive undetected: the collapsed `ReplayConflict` was mapped
-//     unconditionally to the retryable `conflict` code, so a runner reusing
-//     a checkpoint with changed content was told to retry forever.
-// ---------------------------------------------------------------------
-
-#[tokio::test]
-async fn event_batch_replay_changed_content_is_idempotency_conflict_and_writes_nothing() {
-    let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
-        &repo,
-        &clock,
-        &item_id,
-        RUNNER_ID,
-        "profile-c2",
-        "event-idempotency-key",
-    )
-    .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-event-idem","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
-
-    // First batch commits checkpoint "cp-1" with one event.
-    let (status, first) = send_as_runner(
-        &app,
-        "POST",
-        &format!("/attempts/{attempt_id}/events"),
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":[{"event_id":"evt-1","sequence":1,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":{"note":"original"}}]}).to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{first}");
-
-    // Reusing the exact same checkpoint "cp-1" (the idempotency-scoped key)
-    // with the same `previous_checkpoint` but different event payload
-    // content can never succeed by retrying — this is a genuine content
-    // change, not an out-of-order resync.
-    let (status, body) = send_as_runner(
-        &app,
-        "POST",
-        &format!("/attempts/{attempt_id}/events"),
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"attempt_id":attempt_id,"fencing_token":fencing_token,"checkpoint":"cp-1","previous_checkpoint":Value::Null,"events":[{"event_id":"evt-1","sequence":1,"occurred_at":clock.now().to_rfc3339(),"source":"runner","kind":"progress","payload":{"note":"CHANGED"}}]}).to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], "idempotency_conflict");
-    assert_eq!(
-        body["error"]["retryable"], false,
-        "idempotency_conflict must be non-retryable per \
-         docs/contracts/runner-v1/errors/idempotency-conflict.json: {body}"
-    );
-
-    // Nothing new was written: still exactly the one event from the first,
-    // accepted batch, and the checkpoint is unchanged.
-    let event_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE attempt_id=?")
-            .bind(&attempt_id)
-            .fetch_one(repo.pool())
-            .await
-            .unwrap();
-    assert_eq!(event_rows, 1, "the rejected replay wrote no second event");
-    let stored_payload: String = sqlx::query_scalar(
-        "SELECT payload FROM execution_events WHERE attempt_id=? AND event_id='evt-1'",
-    )
-    .bind(&attempt_id)
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert!(
-        stored_payload.contains("original"),
-        "the original event content is unchanged: {stored_payload}"
-    );
+        // Nothing new was written: still exactly the one, first event, and
+        // the committed checkpoint is unchanged.
+        let event_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE attempt_id=?")
+                .bind(&attempt_id)
+                .fetch_one(repo.pool())
+                .await
+                .unwrap();
+        assert_eq!(event_rows, 1, "the rejected second batch wrote no events");
+        let checkpoint: Option<String> =
+            sqlx::query_scalar("SELECT event_checkpoint FROM execution_attempts WHERE id=?")
+                .bind(&attempt_id)
+                .fetch_one(repo.pool())
+                .await
+                .unwrap();
+        assert_eq!(checkpoint.as_deref(), Some("cp-1"));
+        let stored_payload: String = sqlx::query_scalar(
+            "SELECT payload FROM execution_events WHERE attempt_id=? AND event_id='evt-1'",
+        )
+        .bind(&attempt_id)
+        .fetch_one(repo.pool())
+        .await
+        .unwrap();
+        assert!(
+            stored_payload.contains("original"),
+            "the original event content is unchanged: {stored_payload}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -1538,26 +1410,17 @@ async fn event_batch_replay_changed_content_is_idempotency_conflict_and_writes_n
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn completion_replay_changed_content_is_idempotency_conflict_and_writes_nothing() {
+async fn completion_replay_changed_content_is_idempotency_conflict() {
     let (app, repo, clock, item_id) = setup().await;
-    enqueue_request(
+    let (_, attempt_id, fencing_token) = enqueue_and_claim(
+        &app,
         &repo,
         &clock,
         &item_id,
-        RUNNER_ID,
-        "profile-c2",
         "completion-idempotency-key",
+        "claim-completion-idem",
     )
     .await;
-    let (_, claimed) = send_as_runner(
-        &app,
-        "POST",
-        "/claim",
-        json!({"protocol_version":1,"runner_id":RUNNER_ID,"claim_request_id":"claim-completion-idem","available_capacity":2,"wait_ms":1000}).to_string(),
-    )
-    .await;
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
     let started_at = clock.now() - Duration::minutes(1);
     let completion = completion_body(
@@ -1626,7 +1489,7 @@ async fn completion_replay_changed_content_is_idempotency_conflict_and_writes_no
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn refresh_rotation_with_stale_expected_hash_is_rejected_not_overwritten() {
+async fn concurrent_refresh_rotations_exactly_one_wins() {
     let (app, repo, clock, _item_id) = setup().await;
 
     // Two concurrent `/refresh` rotations, both still authenticated against
@@ -1635,29 +1498,13 @@ async fn refresh_rotation_with_stale_expected_hash_is_rejected_not_overwritten()
     // rotation request. Each generates its own new raw credential
     // internally; only one write can win the CAS.
     //
-    // Relying on bare `tokio::join!` poll order to prove the two requests'
-    // underlying SQL writes actually overlap in time is unreliable — proven
-    // so directly: an earlier version of this test using exactly that (and
-    // a follow-up using only cooperative `yield_now` to sequence a held
-    // transaction's release) both still failed intermittently, always in
-    // the same way: one request's `authenticate` ran only *after* the
-    // other's entire rotation had already committed, so it saw an
-    // already-rotated hash and failed with a plain `unauthorized`, never
-    // reaching the CAS at all — no race occurred. The fix: fully await
-    // opening a manual `BEGIN IMMEDIATE` no-op write
-    // against the runner row *before* either rotation request is even
-    // constructed, `tokio::spawn` both rotation requests as independently
-    // scheduled tasks (not nested inside one `join!`), and give the runtime
-    // real wall-clock time (an actual `sleep`, not merely cooperative
-    // yields) to drive both spawned tasks onto their own blocked DB read —
-    // sqlx runs each SQLite connection's blocking calls on its own
-    // dedicated OS thread, so a `sleep` on the test's own task genuinely
-    // lets those threads reach and block on the held lock — before this
-    // releases it. Because this test's `setup()` pool is `sqlite::memory:`
-    // (shared-cache), a plain `SELECT` — including the first thing either
-    // rotation does, `authenticate`'s credential lookup — blocks behind any
-    // pending write to the same table, so both spawned tasks are guaranteed
-    // to be genuinely blocked, not merely unpolled, when the hold releases.
+    // A manual `BEGIN IMMEDIATE` no-op write against the runner row, held
+    // open until both rotation tasks are spawned, forces both to reach
+    // their own blocked read/write before it releases: a bare `tokio::join!`
+    // or a single `yield_now` lets one task's entire rotation complete
+    // before the other is even polled, so the loser sees a plain
+    // `unauthorized` (already-rotated hash) rather than the `conflict` this
+    // test exists to prove.
     let mut holder = repo
         .pool()
         .begin_with("BEGIN IMMEDIATE")
@@ -1681,7 +1528,12 @@ async fn refresh_rotation_with_stale_expected_hash_is_rejected_not_overwritten()
     let task_b =
         tokio::spawn(async move { send_as_runner(&app_b, "POST", "/refresh", body_b).await });
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // A bounded cooperative-yield loop (not a fixed wall-clock wait) gives
+    // the executor enough turns to drive both spawned tasks onto their own
+    // blocked read/write before the hold below releases.
+    for _ in 0..512 {
+        tokio::task::yield_now().await;
+    }
     holder.commit().await.expect("release the hold");
 
     let a = task_a.await.expect("rotation task a did not panic");
@@ -1774,7 +1626,7 @@ async fn refresh_rotation_with_stale_expected_hash_is_rejected_not_overwritten()
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn refresh_rotation_with_already_superseded_credential_returns_conflict_not_unauthorized() {
+async fn superseded_credential_refresh_returns_conflict_not_401() {
     let (app, repo, clock, _item_id) = setup().await;
 
     // The winner: rotates first and commits, exactly like task A above.
@@ -1854,7 +1706,7 @@ async fn refresh_rotation_with_already_superseded_credential_returns_conflict_no
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn submit_artifacts_rejects_lost_and_needs_operator_states_and_writes_nothing() {
+async fn submit_artifacts_rejects_lost_and_needs_operator_states() {
     let (app, repo, clock, item_id) = setup().await;
 
     // Attempt A: a proven pre-spawn-stopped recovery observation -> `lost`.
