@@ -2,13 +2,11 @@
 //! 6): the routes exist only on a loopback bind with a control actually
 //! wired in, they are a genuine 404 otherwise (never present-and-refusing),
 //! the on/off preference persists in `app_meta` and nowhere else, and a
-//! secret value is never echoed back.
-//!
-//! A fake [`LocalRunnerControl`] stands in for the real embedded-runner
-//! composition (`crates/tack-cli/src/local_runner.rs`), which needs a real
-//! runner process and isn't reachable from this crate — this test proves
-//! the HTTP contract those routes must uphold regardless of which control
-//! answers them.
+//! secret value is never echoed back. A fake [`LocalRunnerControl`] stands
+//! in for the real embedded-runner composition
+//! (`crates/tack-cli/src/local_runner.rs`), unreachable from this crate —
+//! this proves the HTTP contract those routes must uphold regardless of
+//! which control answers them.
 
 use std::sync::{
     Arc,
@@ -103,52 +101,45 @@ fn non_loopback_config() -> AppConfig {
     }
 }
 
+type MaybeControl = Option<Arc<dyn LocalRunnerControl>>;
+
 #[tokio::test]
-async fn routes_are_absent_on_a_non_loopback_bind_even_with_a_control_wired_in() {
+async fn routes_are_absent_without_both_loopback_and_a_control() {
     let control: Arc<dyn LocalRunnerControl> = Arc::new(FakeControl::default());
-    let (app, _workspace_id) =
-        test_app_with_local_runner(non_loopback_config(), Some(control)).await;
+    let cases: Vec<(&str, AppConfig, MaybeControl)> = vec![
+        (
+            "non-loopback bind, control wired in",
+            non_loopback_config(),
+            Some(control.clone()),
+        ),
+        (
+            "loopback bind, no control wired in",
+            loopback_config(),
+            None,
+        ),
+    ];
+    for (name, config, control) in cases {
+        let (app, _workspace_id) = test_app_with_local_runner(config, control).await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/local-runner")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/local-runner")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    // A genuine 404 — not a 409/403 "disabled" envelope. `build_router`
-    // never merges `local_runner_routes` at all on this bind, so this is
-    // axum's own fallback for an unmatched path, proving the routes are
-    // absent rather than present-and-refusing.
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        // A genuine 404 — not a 409/403 "disabled" envelope. `build_router`
+        // never merges `local_runner_routes` at all unless both hold, so
+        // this is axum's own fallback for an unmatched path, proving the
+        // routes are absent rather than present-and-refusing.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{name}");
+    }
 }
 
 #[tokio::test]
-async fn routes_are_absent_on_a_loopback_bind_with_no_control_wired_in() {
-    let (app, _workspace_id) = test_app_with_local_runner(loopback_config(), None).await;
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/local-runner")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(
-        response.status(),
-        StatusCode::NOT_FOUND,
-        "a bare embedder that never wired a runner in must not expose these routes either"
-    );
-}
-
-#[tokio::test]
-async fn a_loopback_bind_with_a_control_wired_in_mounts_the_routes_and_starts_it() {
+async fn loopback_bind_with_control_mounts_routes_and_starts_it() {
     let control = Arc::new(FakeControl::default());
     let control_trait_object: Arc<dyn LocalRunnerControl> = control.clone();
     let (app, _workspace_id) =
@@ -214,7 +205,7 @@ async fn a_loopback_bind_with_a_control_wired_in_mounts_the_routes_and_starts_it
 }
 
 #[tokio::test]
-async fn the_enable_preference_is_the_only_app_meta_row_a_secret_write_ever_adds() {
+async fn secret_write_never_touches_the_enable_preference_row() {
     let control: Arc<dyn LocalRunnerControl> = Arc::new(FakeControl::default());
     let (app, _workspace_id) = test_app_with_local_runner(loopback_config(), Some(control)).await;
 
