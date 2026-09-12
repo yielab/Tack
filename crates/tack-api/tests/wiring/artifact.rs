@@ -1,43 +1,9 @@
-//! Proof that two artifact-download wiring points are actually load-bearing
-//! in *production*, not merely present as source text in `router.rs`.
-//!
-//! Unlike `artifact_events.rs` (a module of the `runner_protocol` binary,
-//! which loads `runner_protocol.rs` via `#[path]` and constructs
-//! `artifact_download::routes(...)` as its own, separately-mounted local
-//! router), this file builds its own app/router setup — never
-//! `common::test_app` or another file's harness — and drives only the public
-//! `tack_api::router::build_router`/`tack_api::AppState` — the exact
-//! function `tack serve` calls, over pure HTTP end to end (mirroring
-//! `wave2_gate.rs`'s own established convention for proving claims against
-//! the real, unmodified production router — including its "no direct
-//! repository writes, no injected fake clock" discipline, since the
-//! production router hard-codes `SystemExecutionClock` and a hand-picked
-//! fixture timestamp would drift out of its expiry/liveness windows against
-//! real wall-clock comparisons).
-//!
-//! Two claims are proved by
-//! `artifact_content_is_stored_under_configured_storage_dir_and_downloadable_through_the_real_router`:
-//!
-//! 1. **The operator artifact-download route is mounted on the real
-//!    production router** at
-//!    `GET /api/executions/{request_id}/attempts/{attempt_number}/artifacts/{artifact_id}/content`,
-//!    reachable through the real operator auth layer, and serves the exact
-//!    bytes a runner uploaded through the real `/api/runner/v1` surface.
-//! 2. **Artifact storage actually follows `AppConfig::storage_dir`**
-//!    (`TACK_STORAGE_DIR` in production), not the hardcoded
-//!    `./storage/execution-artifacts` fallback `RunnerProtocolState::new`
-//!    alone would produce. A distinctive, per-test temp directory is
-//!    configured; the uploaded artifact's exact bytes are asserted to be
-//!    present *somewhere under that configured directory* and confirmed
-//!    absent from the hardcoded default — the strongest form of this claim,
-//!    not just "the download round-trips" (which a wrong-but-*consistent*
-//!    storage root could also satisfy by accident).
-//!
-//! A second test,
-//! `unauthenticated_operator_download_request_is_still_gated_by_a_real_lookup`,
-//! proves the mounted route runs the real handler (a genuine repository
-//! lookup returning a named 404) rather than some unrelated route silently
-//! matching.
+//! Proves the operator artifact-download route is mounted on the real
+//! production router (`tack_api::router::build_router`) and that artifact
+//! storage actually follows `AppConfig::storage_dir`
+//! (`TACK_STORAGE_DIR` in production), not the hardcoded
+//! `./storage/execution-artifacts` fallback. Builds its own app/router
+//! setup rather than `common::test_app`, driven over pure HTTP end to end.
 
 use crate::common;
 use axum::body::{Body, to_bytes};
@@ -56,7 +22,7 @@ const BASE_REVISION: &str = "abc123def456abc123def456abc123def456abc";
 /// bytes found under `./storage/execution-artifacts` after this test runs
 /// would prove the wiring did *not* take effect. The storage path itself is
 /// `path().join("storage")`, which does not exist until the router creates
-/// it: the tests assert its absence first and its presence afterwards.
+/// it: callers assert its absence first and its presence afterwards.
 fn distinctive_temp_root(label: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix(label)
@@ -64,24 +30,21 @@ fn distinctive_temp_root(label: &str) -> tempfile::TempDir {
         .expect("temporary directory")
 }
 
-/// Builds the real production router (`tack_api::router::build_router`)
-/// around a fresh in-memory database, with `storage_dir` pointed at the
-/// given directory — exactly what an operator setting `TACK_STORAGE_DIR`
-/// would produce. No `api_token` is configured (pure-local mode), so every
-/// `/api/*` request below needs no `Authorization` header — this test is
-/// about the artifact-storage wiring, not the separate operator-auth gate
-/// `wave2_gate.rs` already covers.
+/// Builds the real production router around a fresh in-memory database, with
+/// `storage_dir` pointed at the given directory — exactly what an operator
+/// setting `TACK_STORAGE_DIR` would produce. No `api_token` is configured
+/// (pure-local mode), so every `/api/*` request below needs no
+/// `Authorization` header — this file is about the artifact-storage wiring,
+/// not the separate operator-auth gate.
 async fn real_app(storage_dir: &std::path::Path) -> (axum::Router, sqlx::SqlitePool) {
     let pool = init_pool("sqlite::memory:").await.expect("in-memory pool");
     migrations::run_all(&pool).await.expect("migrations");
     let workspace_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO workspaces (id, name, default_vocabulary) VALUES (?, 'F6aWiring', '{}')",
-    )
-    .bind(workspace_id.to_string())
-    .execute(&pool)
-    .await
-    .expect("insert workspace");
+    sqlx::query("INSERT INTO workspaces (id, name, default_vocabulary) VALUES (?, 'W', '{}')")
+        .bind(workspace_id.to_string())
+        .execute(&pool)
+        .await
+        .expect("insert workspace");
 
     let repo = Repository::new(pool.clone());
     let (tx, _rx) = tokio::sync::broadcast::channel(16);
@@ -130,8 +93,7 @@ async fn put_content(
 /// Real current wall-clock time, not a frozen fixture date — the production
 /// router hard-codes `SystemExecutionClock`, so a hand-picked past/future
 /// timestamp would drift out of the enrollment token's expiry window and
-/// the scheduler's liveness fallback (see `wave2_gate.rs::full_capabilities`'s
-/// own doc comment for the identical rationale).
+/// the scheduler's liveness fallback.
 fn full_capabilities() -> Value {
     let now = Utc::now().to_rfc3339();
     json!({
@@ -145,7 +107,7 @@ fn full_capabilities() -> Value {
             "probed_at": now,
             "model_combinations": [{
                 "model_provider": "openai",
-                "model_ids": ["opaque/model-f6a"],
+                "model_ids": ["opaque/model-wiring"],
                 "discovery": "reported"
             }],
         }],
@@ -154,14 +116,12 @@ fn full_capabilities() -> Value {
     })
 }
 
-/// Operator creates a real project and item over HTTP — mirrors
-/// `wave2_gate.rs::create_project_and_item`.
 async fn create_project_and_item(app: &axum::Router) -> String {
     let (status, project) = common::send_large(
         app,
         "POST",
         "/api/projects",
-        json!({"name": "F6a wiring", "project_type": "software"}),
+        json!({"name": "Artifact wiring", "project_type": "software"}),
         &[],
     )
     .await;
@@ -190,9 +150,8 @@ struct RunningAttempt {
 /// Operator creates an agent profile + pending runner/enrollment token, a
 /// mock runner redeems it, an operator creates an execution request bound
 /// to `item_id`, and the runner claims/accepts/starts it — entirely through
-/// the real production router's HTTP surface (mirroring `wave2_gate.rs`'s
-/// own `enroll_runner` + inline claim/accept/start sequence), leaving the
-/// attempt `running`.
+/// the real production router's HTTP surface, leaving the attempt
+/// `running`.
 async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -> RunningAttempt {
     let (status, profile) = common::send_large(
         app,
@@ -209,7 +168,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
         app,
         "POST",
         "/api/runners/enrollment",
-        json!({"name": format!("F6a runner {label}"), "total_capacity": 1, "available_capacity": 1}),
+        json!({"name": format!("runner {label}"), "total_capacity": 1, "available_capacity": 1}),
         &[],
     )
     .await;
@@ -224,7 +183,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
         json!({
             "protocol_version": 1,
             "enrollment_token": raw_enrollment_token,
-            "runner_name": format!("F6a runner {label}"),
+            "runner_name": format!("runner {label}"),
             "runner_version": "0.1.0",
             "capabilities": full_capabilities(),
         }),
@@ -247,9 +206,9 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
             "agent_profile_id": agent_profile_id,
             "requested_harness_kind": "codex",
             "requested_model_provider": "openai",
-            "requested_model_id": "opaque/model-f6a",
+            "requested_model_id": "opaque/model-wiring",
             "agent_profile_snapshot": {"name": "profile", "instructions": "work safely", "tool_policy": {}, "timeout_seconds": 60, "budgets": {}},
-            "repository_snapshot": {"kind": "git", "remote": "https://example.test/f6a.git", "base_revision": BASE_REVISION, "subdirectory": null},
+            "repository_snapshot": {"kind": "git", "remote": "https://example.test/wiring.git", "base_revision": BASE_REVISION, "subdirectory": null},
             "permission_policy": {"tools": ["shell"], "network": false},
             "timeout_seconds": 60,
             "budgets": {},
@@ -336,25 +295,32 @@ async fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-// ---------------------------------------------------------------------
-// 1 & 2 combined: the operator download route is mounted on the real
-// `build_router` output, and the bytes it serves came from a file that
-// physically lives under the operator-configured `storage_dir`, never the
-// hardcoded `./storage` default.
-// ---------------------------------------------------------------------
-#[tokio::test]
-async fn artifact_content_is_stored_under_configured_storage_dir_and_downloadable_through_the_real_router()
- {
-    let storage_root = distinctive_temp_root("roundtrip");
-    let storage_dir = storage_root.path().join("storage");
-    // The directory must not exist yet — proves nothing pre-seeded it.
-    assert!(!storage_dir.exists());
+/// Everything shared by both tests below: a real router with a distinctive
+/// configured `storage_dir`, a running attempt, and one artifact uploaded
+/// through the real runner-v1 manifest+content-PUT surface. `_root` keeps
+/// the temp directory alive for as long as the returned paths are read.
+struct UploadedArtifact {
+    _root: tempfile::TempDir,
+    app: axum::Router,
+    storage_dir: std::path::PathBuf,
+    request_id: String,
+    attempt_number: i64,
+    content: Vec<u8>,
+}
+
+async fn upload_artifact(label: &str) -> UploadedArtifact {
+    let root = distinctive_temp_root(label);
+    let storage_dir = root.path().join("storage");
+    assert!(
+        !storage_dir.exists(),
+        "nothing must pre-seed the storage dir"
+    );
 
     let (app, pool) = real_app(&storage_dir).await;
     let item_id = create_project_and_item(&app).await;
-    let attempt = ready_running_attempt(&app, &item_id, "roundtrip").await;
+    let attempt = ready_running_attempt(&app, &item_id, label).await;
 
-    let content = b"diff --git a/x b/x\n+hello from f6a\n".to_vec();
+    let content = b"diff --git a/x b/x\n+hello from wiring\n".to_vec();
     let auth = format!("Bearer {}", attempt.credential);
     let (status, manifest) = common::send_large(
         &app,
@@ -400,58 +366,6 @@ async fn artifact_content_is_stored_under_configured_storage_dir_and_downloadabl
     assert_eq!(status, StatusCode::OK, "{uploaded}");
     assert_eq!(uploaded["state"], "content_verified");
 
-    // ---- Claim 2: the storage root actually followed configuration ----
-    // The configured directory must now contain the uploaded content
-    // somewhere under it (recursively — `ArtifactStorage` nests by hex-
-    // encoded attempt id).
-    assert!(
-        storage_dir.exists(),
-        "expected {storage_dir:?} (the configured TACK_STORAGE_DIR-equivalent) to now exist"
-    );
-    let written = walk_files(&storage_dir).await;
-    assert!(
-        !written.is_empty(),
-        "expected at least one file under the configured storage_dir, found none"
-    );
-    let mut found_matching_bytes = false;
-    for path in &written {
-        if let Ok(bytes) = tokio::fs::read(path).await
-            && bytes == content
-        {
-            found_matching_bytes = true;
-        }
-    }
-    assert!(
-        found_matching_bytes,
-        "expected the uploaded artifact's exact bytes to be present under the configured \
-         storage_dir ({storage_dir:?}); found files: {written:?}"
-    );
-    // Every written path must be a descendant of the configured directory —
-    // trivially true given how `written` was collected via `walk_files`,
-    // but restated here as an explicit assertion of the absence claim: no
-    // file escaped to `./storage` or anywhere else.
-    for path in &written {
-        assert!(
-            path.starts_with(&storage_dir),
-            "artifact file {path:?} is not under the configured storage_dir {storage_dir:?}"
-        );
-    }
-    let default_storage_dir = std::path::Path::new("./storage/execution-artifacts");
-    if default_storage_dir.exists() {
-        let stray = walk_files(default_storage_dir).await;
-        for path in &stray {
-            let bytes = tokio::fs::read(path).await.ok();
-            assert_ne!(
-                bytes.as_deref(),
-                Some(content.as_slice()),
-                "artifact bytes leaked into the hardcoded default storage dir instead of the \
-                 configured one"
-            );
-        }
-    }
-
-    // ---- Claim 1: the operator download route is mounted on the real
-    // production router and serves those exact bytes end to end. ----
     let attempt_number: i64 =
         sqlx::query_scalar("SELECT attempt_number FROM execution_attempts WHERE id=?")
             .bind(&attempt.attempt_id)
@@ -465,18 +379,89 @@ async fn artifact_content_is_stored_under_configured_storage_dir_and_downloadabl
             .await
             .unwrap();
 
-    // No `Authorization` header at all — this is the *operator* surface
-    // (`/api/...`), gated by `require_token`/`inject_operator_principal`,
-    // never the runner bearer credential. With no `TACK_API_TOKEN`
-    // configured (pure-local mode, matching this test's `AppConfig`), the
-    // request must succeed without one.
-    let response = app
+    UploadedArtifact {
+        _root: root,
+        app,
+        storage_dir,
+        request_id,
+        attempt_number,
+        content,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Claim: artifact storage actually follows the operator-configured
+// `storage_dir`, not the hardcoded `./storage` fallback.
+// ---------------------------------------------------------------------
+#[tokio::test]
+async fn artifact_bytes_land_under_the_configured_storage_dir() {
+    let uploaded = upload_artifact("storage-location").await;
+
+    assert!(
+        uploaded.storage_dir.exists(),
+        "expected {:?} (the configured TACK_STORAGE_DIR-equivalent) to now exist",
+        uploaded.storage_dir
+    );
+    let written = walk_files(&uploaded.storage_dir).await;
+    assert!(
+        !written.is_empty(),
+        "expected at least one file under the configured storage_dir"
+    );
+    let mut found_matching_bytes = false;
+    for path in &written {
+        if let Ok(bytes) = tokio::fs::read(path).await
+            && bytes == uploaded.content
+        {
+            found_matching_bytes = true;
+        }
+        assert!(
+            path.starts_with(&uploaded.storage_dir),
+            "artifact file {path:?} is not under the configured storage_dir"
+        );
+    }
+    assert!(
+        found_matching_bytes,
+        "expected the uploaded artifact's exact bytes under the configured storage_dir"
+    );
+
+    // Negative control: the bytes must never have leaked into the hardcoded
+    // default location either.
+    let default_storage_dir = std::path::Path::new("./storage/execution-artifacts");
+    if default_storage_dir.exists() {
+        for path in &walk_files(default_storage_dir).await {
+            let bytes = tokio::fs::read(path).await.ok();
+            assert_ne!(
+                bytes.as_deref(),
+                Some(uploaded.content.as_slice()),
+                "artifact bytes leaked into the hardcoded default storage dir"
+            );
+        }
+    }
+
+    let _ = tokio::fs::remove_dir_all(&uploaded.storage_dir).await;
+}
+
+// ---------------------------------------------------------------------
+// Claim: the operator download route is mounted on the real production
+// router and serves those exact bytes end to end.
+// ---------------------------------------------------------------------
+#[tokio::test]
+async fn uploaded_artifact_is_downloadable_through_the_real_router() {
+    let uploaded = upload_artifact("download").await;
+
+    // No `Authorization` header — this is the operator surface (`/api/...`),
+    // gated by `require_token`/`inject_operator_principal`, never the runner
+    // bearer credential. With no `TACK_API_TOKEN` configured (pure-local
+    // mode), the request must succeed without one.
+    let response = uploaded
+        .app
         .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
                 .uri(format!(
-                    "/api/executions/{request_id}/attempts/{attempt_number}/artifacts/art-1/content"
+                    "/api/executions/{}/attempts/{}/artifacts/art-1/content",
+                    uploaded.request_id, uploaded.attempt_number
                 ))
                 .body(Body::empty())
                 .unwrap(),
@@ -498,25 +483,20 @@ async fn artifact_content_is_stored_under_configured_storage_dir_and_downloadabl
         .to_owned();
     assert_eq!(content_type, "text/x-diff");
     let downloaded = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-    assert_eq!(downloaded.as_ref(), content.as_slice());
+    assert_eq!(downloaded.as_ref(), uploaded.content.as_slice());
 
-    let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    let _ = tokio::fs::remove_dir_all(&uploaded.storage_dir).await;
 }
 
-// ---------------------------------------------------------------------
-// 2. The mounted route runs the real handler (a genuine repository lookup
-//    returning a named 404), not some unrelated route silently matching.
-// ---------------------------------------------------------------------
+/// Proves the mounted route runs the real handler (a genuine repository
+/// lookup returning a named 404) rather than some unrelated route silently
+/// matching.
 #[tokio::test]
-async fn unauthenticated_operator_download_request_is_still_gated_by_a_real_lookup() {
+async fn download_of_an_unknown_artifact_returns_a_named_404() {
     let storage_root = distinctive_temp_root("unknown");
     let storage_dir = storage_root.path().join("storage");
     let (app, _pool) = real_app(&storage_dir).await;
 
-    // No such execution/attempt/artifact exists at all. This proves the
-    // mounted route runs the real handler (which does a real repository
-    // lookup and returns a named 404) rather than, say, silently matching
-    // some unrelated wildcard route and returning 200 with an empty body.
     let response = app
         .clone()
         .oneshot(

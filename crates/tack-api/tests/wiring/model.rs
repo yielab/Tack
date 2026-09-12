@@ -1,16 +1,10 @@
-//! Proves two wiring points in
-//! `crates/tack-api/src/handlers/executions.rs` work through the *real*
-//! production router (`tack_api::router::build_router` — exactly what `tack
-//! serve` mounts), not just a handler-local test harness.
-//!
-//! 1. `create_execution` resolves an absent client model choice via
-//!    `tack_orch::model_policy::wiring::resolve_request_model_policy`.
-//! 2. `GET /api/executions/{id}/attempts` carries `model_provenance` and
-//!    `usage_economics` on each `AttemptSummary`, built via
-//!    `derive_attempt_facts`.
-//!
-//! Every claim below is proved against persisted database state or an exact
-//! JSON shape, not merely a 2xx status code.
+//! Proves `create_execution`'s model-policy resolution
+//! (`tack_orch::model_policy::wiring::resolve_request_model_policy`) and
+//! `GET /api/executions/{id}/attempts`'s `model_provenance`/
+//! `usage_economics` fields work through the real production router
+//! (`tack_api::router::build_router`), not a handler-local harness. Every
+//! claim is checked against persisted database state or an exact JSON
+//! shape, never a bare 2xx status.
 
 use crate::common;
 use axum::http::StatusCode;
@@ -21,22 +15,15 @@ use tack_api::{AppState, orch_runtime::OrchRuntime, router::build_router};
 use tack_db::{Repository, init_pool, migrations};
 use uuid::Uuid;
 
-const OPERATOR_TOKEN: &str = "f6b-model-wiring-operator-token";
+const OPERATOR_TOKEN: &str = "model-wiring-operator-token";
 const BASE_REVISION: &str = "f6b0123456789abcdef0123456789abcdef0123";
-
-// ---------------------------------------------------------------------
-// Infrastructure — same shape as `wave2_gate.rs`/`handlers/operator_read_routes.rs`: a
-// fresh in-memory database and the real production router, so this file's
-// assertions can read persisted rows directly rather than trusting a
-// handler's own return value.
-// ---------------------------------------------------------------------
 
 async fn setup() -> (axum::Router, sqlx::SqlitePool, String) {
     let pool = init_pool("sqlite::memory:").await.expect("in-memory pool");
     migrations::run_all(&pool).await.expect("migrations");
     let workspace_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO workspaces (id, name, default_vocabulary) VALUES (?, 'F6b model wiring', '{}')",
+        "INSERT INTO workspaces (id, name, default_vocabulary) VALUES (?, 'Model wiring', '{}')",
     )
     .bind(workspace_id.to_string())
     .execute(&pool)
@@ -63,7 +50,7 @@ async fn setup() -> (axum::Router, sqlx::SqlitePool, String) {
         .create_project(
             workspace_id,
             tack_core::models::CreateProject {
-                name: "F6b model wiring".into(),
+                name: "Model wiring".into(),
                 description: None,
                 project_type: tack_core::models::ProjectType::Software,
                 template: None,
@@ -95,7 +82,7 @@ async fn setup() -> (axum::Router, sqlx::SqlitePool, String) {
 }
 
 fn operator_headers() -> Vec<(&'static str, &'static str)> {
-    vec![("authorization", "Bearer f6b-model-wiring-operator-token")]
+    vec![("authorization", "Bearer model-wiring-operator-token")]
 }
 
 fn bearer(token: &str) -> String {
@@ -104,8 +91,7 @@ fn bearer(token: &str) -> String {
 
 /// A runner declaring exactly the `openai`/`opaque/model-f6b` combination —
 /// every fixture in this file that needs a successful claim requests exactly
-/// this pair (matching `wave2_gate.rs`'s pattern of a scheduler that
-/// actually checks declared capability, not a naive FIFO match).
+/// this pair.
 fn full_capabilities() -> Value {
     let now = Utc::now().to_rfc3339();
     json!({
@@ -223,7 +209,7 @@ fn execution_request_body(
         "requested_model_provider": requested_model_provider,
         "requested_model_id": requested_model_id,
         "agent_profile_snapshot": {"name": "profile", "instructions": "work safely", "tool_policy": {}, "timeout_seconds": 60, "budgets": {}},
-        "repository_snapshot": {"kind": "git", "remote": "https://example.test/f6b.git", "base_revision": BASE_REVISION, "subdirectory": null},
+        "repository_snapshot": {"kind": "git", "remote": "https://example.test/wiring.git", "base_revision": BASE_REVISION, "subdirectory": null},
         "permission_policy": {"tools": ["shell"], "network": false},
         "timeout_seconds": 60,
         "budgets": {},
@@ -245,198 +231,125 @@ async fn stored_requested_model(
     .expect("execution_requests row must exist")
 }
 
-// =======================================================================
-// 1. `create_execution` resolves an absent model choice via
-//    `resolve_request_model_policy` — proved against the persisted row.
-// =======================================================================
-
-#[tokio::test]
-async fn create_execution_resolves_agent_profile_default_when_client_omits_both_fields() {
-    let (app, pool, item_id) = setup().await;
-    let (runner_id, _auth) = enroll_runner(&app, "F6b agent-profile runner").await;
-    let agent_profile_id = create_agent_profile(
-        &app,
-        "F6b profile with default",
-        json!({"default_model": {"provider": "openai", "model_id": "opaque/model-f6b"}}),
-    )
-    .await;
-
-    let (status, created) = common::send(
-        &app,
-        "POST",
-        "/api/executions",
-        execution_request_body(
-            &item_id,
-            "f6b-agent-profile-default",
-            "exact_runner",
-            &runner_id,
-            &agent_profile_id,
-            None,
-            None,
-        ),
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    let request_id = created["request_id"].as_str().unwrap().to_owned();
-
-    // The load-bearing assertion: the *stored row*, not just a 2xx. Without
-    // the resolver wiring, this column pair would be NULL/NULL (the client
-    // sent no explicit choice and nothing ever called the resolver).
-    let (provider, model_id) = stored_requested_model(&pool, &request_id).await;
-    assert_eq!(
-        provider.as_deref(),
-        Some("openai"),
-        "the agent profile's configured default_model.provider must be persisted"
-    );
-    assert_eq!(
-        model_id.as_deref(),
-        Some("opaque/model-f6b"),
-        "the agent profile's configured default_model.model_id must be persisted"
-    );
-
-    // The request snapshot (used for idempotency fingerprinting/replay) must
-    // agree with the stored columns — no split-brain between the two.
+async fn stored_requested_model_snapshot(pool: &sqlx::SqlitePool, request_id: &str) -> Value {
     let snapshot: String =
         sqlx::query_scalar("SELECT request_snapshot FROM execution_requests WHERE id = ?")
-            .bind(&request_id)
-            .fetch_one(&pool)
+            .bind(request_id)
+            .fetch_one(pool)
             .await
             .unwrap();
-    let snapshot: Value = serde_json::from_str(&snapshot).unwrap();
-    assert_eq!(snapshot["requested_model_provider"], "openai");
-    assert_eq!(snapshot["requested_model_id"], "opaque/model-f6b");
-}
-
-#[tokio::test]
-async fn create_execution_does_not_override_an_explicit_client_supplied_model() {
-    let (app, pool, item_id) = setup().await;
-    let (runner_id, _auth) = enroll_runner(&app, "F6b explicit-wins runner").await;
-    // The agent profile's default deliberately names a *different* model
-    // than the client will request — if the wiring ever ignored request
-    // precedence, this test would see the profile's default leak through.
-    let agent_profile_id = create_agent_profile(
-        &app,
-        "F6b profile with a decoy default",
-        json!({"default_model": {"provider": "anthropic", "model_id": "opaque/should-never-be-used"}}),
-    )
-    .await;
-
-    let (status, created) = common::send(
-        &app,
-        "POST",
-        "/api/executions",
-        execution_request_body(
-            &item_id,
-            "f6b-explicit-wins",
-            "exact_runner",
-            &runner_id,
-            &agent_profile_id,
-            Some("openai"),
-            Some("opaque/model-f6b"),
-        ),
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    let request_id = created["request_id"].as_str().unwrap().to_owned();
-
-    let (provider, model_id) = stored_requested_model(&pool, &request_id).await;
-    assert_eq!(
-        provider.as_deref(),
-        Some("openai"),
-        "the client's explicit provider must win over the agent profile's default"
-    );
-    assert_eq!(
-        model_id.as_deref(),
-        Some("opaque/model-f6b"),
-        "the client's explicit model_id must win over the agent profile's default"
-    );
-}
-
-#[tokio::test]
-async fn create_execution_resolves_fleet_default_only_when_selector_is_fleet() {
-    let (app, pool, item_id) = setup().await;
-    let fleet_id = create_fleet(
-        &app,
-        "F6b fleet with default",
-        json!({"default_model": {"provider": "openai", "model_id": "opaque/model-fleet-f6b"}}),
-    )
-    .await;
-    // No agent-profile default configured — the fleet tier must be the one
-    // that supplies the resolved value.
-    let agent_profile_id =
-        create_agent_profile(&app, "F6b profile with no default", json!({})).await;
-
-    let (status, created) = common::send(
-        &app,
-        "POST",
-        "/api/executions",
-        execution_request_body(
-            &item_id,
-            "f6b-fleet-default",
-            "fleet",
-            &fleet_id,
-            &agent_profile_id,
-            None,
-            None,
-        ),
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    let request_id = created["request_id"].as_str().unwrap().to_owned();
-
-    let (provider, model_id) = stored_requested_model(&pool, &request_id).await;
-    assert_eq!(provider.as_deref(), Some("openai"));
-    assert_eq!(model_id.as_deref(), Some("opaque/model-fleet-f6b"));
-}
-
-#[tokio::test]
-async fn create_execution_resolves_to_auto_select_when_no_tier_is_configured() {
-    let (app, pool, item_id) = setup().await;
-    let (runner_id, _auth) = enroll_runner(&app, "F6b auto-select runner").await;
-    // Empty `limits` — the agent profile expresses no default_model opinion,
-    // and there is no fleet in play (`exact_runner` selector).
-    let agent_profile_id =
-        create_agent_profile(&app, "F6b profile with empty limits", json!({})).await;
-
-    let (status, created) = common::send(
-        &app,
-        "POST",
-        "/api/executions",
-        execution_request_body(
-            &item_id,
-            "f6b-auto-select",
-            "exact_runner",
-            &runner_id,
-            &agent_profile_id,
-            None,
-            None,
-        ),
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    let request_id = created["request_id"].as_str().unwrap().to_owned();
-
-    // `ModelSelector::AutoSelect` converts back to *both* wire fields being
-    // `NULL` — never a fabricated "unknown" provider/model string.
-    let (provider, model_id) = stored_requested_model(&pool, &request_id).await;
-    assert_eq!(
-        provider, None,
-        "auto-select must persist as NULL, not a placeholder string"
-    );
-    assert_eq!(
-        model_id, None,
-        "auto-select must persist as NULL, not a placeholder string"
-    );
+    serde_json::from_str(&snapshot).unwrap()
 }
 
 // =======================================================================
-// 2. `GET /api/executions/{id}/attempts` carries honest
-//    `model_provenance`/`usage_economics` — proved end to end through
-//    claim → accept → start → completion.
+// `create_execution` resolves an absent/explicit model choice through the
+// agent-profile/fleet/auto-select precedence tiers — proved against the
+// persisted row and its idempotency-fingerprint snapshot.
+// =======================================================================
+
+struct ModelResolutionCase {
+    name: &'static str,
+    profile_limits: Value,
+    fleet_default: Option<Value>,
+    requested: Option<(&'static str, &'static str)>,
+    expected: Option<(&'static str, &'static str)>,
+}
+
+/// Runs one [`ModelResolutionCase`] end to end and asserts its expectation —
+/// factored out of the table-driven test so each case reads as one call.
+async fn assert_model_resolution_case(i: usize, case: ModelResolutionCase) {
+    let (app, pool, item_id) = setup().await;
+    let agent_profile_id = create_agent_profile(&app, "profile", case.profile_limits).await;
+    let (selector_kind, selector_id) = match case.fleet_default {
+        Some(policy) => ("fleet", create_fleet(&app, "fleet", policy).await),
+        None => ("exact_runner", enroll_runner(&app, "runner").await.0),
+    };
+
+    let (status, created) = common::send(
+        &app,
+        "POST",
+        "/api/executions",
+        execution_request_body(
+            &item_id,
+            &format!("model-precedence-{i}"),
+            selector_kind,
+            &selector_id,
+            &agent_profile_id,
+            case.requested.map(|(p, _)| p),
+            case.requested.map(|(_, m)| m),
+        ),
+        &operator_headers(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}: {created}", case.name);
+    let request_id = created["request_id"].as_str().unwrap().to_owned();
+
+    let (provider, model_id) = stored_requested_model(&pool, &request_id).await;
+    match case.expected {
+        Some((exp_provider, exp_model)) => {
+            assert_eq!(provider.as_deref(), Some(exp_provider), "{}", case.name);
+            assert_eq!(model_id.as_deref(), Some(exp_model), "{}", case.name);
+            // The idempotency-fingerprint snapshot must agree with the stored
+            // columns — no split-brain between the two.
+            let snapshot = stored_requested_model_snapshot(&pool, &request_id).await;
+            assert_eq!(
+                snapshot["requested_model_provider"], exp_provider,
+                "{}",
+                case.name
+            );
+            assert_eq!(snapshot["requested_model_id"], exp_model, "{}", case.name);
+        }
+        None => {
+            assert_eq!(provider, None, "{}: must persist as NULL", case.name);
+            assert_eq!(model_id, None, "{}: must persist as NULL", case.name);
+        }
+    }
+}
+
+#[tokio::test]
+async fn create_execution_resolves_model_by_precedence_tier() {
+    let cases = [
+        ModelResolutionCase {
+            name: "agent profile default applies when neither client nor fleet has an opinion",
+            profile_limits: json!({"default_model": {"provider": "openai", "model_id": "opaque/model-f6b"}}),
+            fleet_default: None,
+            requested: None,
+            expected: Some(("openai", "opaque/model-f6b")),
+        },
+        ModelResolutionCase {
+            name: "an explicit client choice overrides the agent profile's default",
+            profile_limits: json!({"default_model": {"provider": "anthropic", "model_id": "opaque/should-never-be-used"}}),
+            fleet_default: None,
+            requested: Some(("openai", "opaque/model-f6b")),
+            expected: Some(("openai", "opaque/model-f6b")),
+        },
+        ModelResolutionCase {
+            name: "the fleet default applies only when the selector targets a fleet",
+            profile_limits: json!({}),
+            fleet_default: Some(
+                json!({"default_model": {"provider": "openai", "model_id": "opaque/model-fleet-f6b"}}),
+            ),
+            requested: None,
+            expected: Some(("openai", "opaque/model-fleet-f6b")),
+        },
+        ModelResolutionCase {
+            name: "auto-select persists as NULL, never a placeholder string",
+            profile_limits: json!({}),
+            fleet_default: None,
+            requested: None,
+            expected: None,
+        },
+    ];
+
+    for (i, case) in cases.into_iter().enumerate() {
+        assert_model_resolution_case(i, case).await;
+    }
+}
+
+// =======================================================================
+// `GET /api/executions/{id}/attempts` carries honest
+// `model_provenance`/`usage_economics` — proved end to end through
+// claim → accept → start → completion.
 // =======================================================================
 
 struct LiveAttempt {
@@ -444,6 +357,7 @@ struct LiveAttempt {
     attempt_id: String,
     runner_id: String,
     runner_auth: [(String, String); 1],
+    agent_profile_id: String,
     fencing_token: i64,
 }
 
@@ -458,9 +372,9 @@ async fn claim_accept_start(
     requested_model_provider: &str,
     requested_model_id: &str,
 ) -> LiveAttempt {
-    let (runner_id, runner_auth_owned) = enroll_runner(app, "F6b provenance runner").await;
+    let (runner_id, runner_auth_owned) = enroll_runner(app, "provenance runner").await;
     let runner_auth = headers_ref(&runner_auth_owned);
-    let agent_profile_id = create_agent_profile(app, "F6b provenance profile", json!({})).await;
+    let agent_profile_id = create_agent_profile(app, "provenance profile", json!({})).await;
 
     let (status, created) = common::send(
         app,
@@ -497,7 +411,7 @@ async fn claim_accept_start(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
-        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-f6b", "base_revision": BASE_REVISION}),
+        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-wiring", "base_revision": BASE_REVISION}),
         &runner_auth,
     )
     .await;
@@ -507,7 +421,7 @@ async fn claim_accept_start(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/start"),
-        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-f6b", "base_revision": BASE_REVISION, "process_id": "pid-f6b"}),
+        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-wiring", "base_revision": BASE_REVISION, "process_id": "pid-wiring"}),
         &runner_auth,
     )
     .await;
@@ -518,6 +432,7 @@ async fn claim_accept_start(
         attempt_id,
         runner_id,
         runner_auth: runner_auth_owned,
+        agent_profile_id,
         fencing_token,
     }
 }
@@ -553,7 +468,7 @@ fn completion_body(
                 "artifacts": {"support": "supported", "reason": null},
                 "usage": {"support": "advisory", "reason": "usage may be absent"},
             },
-            "workspace_id": "ws-f6b",
+            "workspace_id": "ws-wiring",
             "base_revision": BASE_REVISION,
             "started_at": "2026-08-08T12:00:00Z",
             "ended_at": "2026-08-08T12:05:00Z",
@@ -577,12 +492,12 @@ async fn get_attempts(app: &axum::Router, request_id: &str) -> Value {
 }
 
 #[tokio::test]
-async fn attempt_summary_omits_provenance_and_shows_no_wall_clock_before_completion() {
+async fn attempt_summary_hides_provenance_and_costs_before_completion() {
     let (app, _pool, item_id) = setup().await;
     let live = claim_accept_start(
         &app,
         &item_id,
-        "f6b-provenance-in-flight",
+        "provenance-in-flight",
         "openai",
         "opaque/model-f6b",
     )
@@ -612,16 +527,28 @@ async fn attempt_summary_omits_provenance_and_shows_no_wall_clock_before_complet
     );
 }
 
-#[tokio::test]
-async fn attempt_summary_reports_matched_provenance_and_honest_runner_time_cost() {
+struct ProvenanceCase {
+    name: &'static str,
+    key: &'static str,
+    actual_model_id: &'static str,
+    usage: Value,
+    expected_provenance: Value,
+    expected_cost: Value,
+}
+
+/// Runs one [`ProvenanceCase`] end to end (claim → accept → start →
+/// completion) and asserts its expected `model_provenance`/cost shape,
+/// plus the cross-cutting invariants that hold regardless of which case:
+/// the runner-time dollar dimension always stays `not_measured` (no
+/// infra cost-rate exists in this schema, so it must never borrow the
+/// harness's own figure or default to 0), and `wall_clock_ms` is computed
+/// independently here — not trusted from the handler's own arithmetic —
+/// and cross-checked against the database.
+async fn assert_provenance_case(case: ProvenanceCase) {
     let (app, pool, item_id) = setup().await;
-    let live =
-        claim_accept_start(&app, &item_id, "f6b-matched", "openai", "opaque/model-f6b").await;
+    let live = claim_accept_start(&app, &item_id, case.key, "openai", "opaque/model-f6b").await;
     let runner_auth = headers_ref(&live.runner_auth);
 
-    // The harness's own self-reported dollar figure — measured, non-null —
-    // to prove `model_token_cost_usd_estimated` is a real pass-through, not
-    // vacuously always null.
     let (status, completed) = common::send(
         &app,
         "POST",
@@ -630,108 +557,111 @@ async fn attempt_summary_reports_matched_provenance_and_honest_runner_time_cost(
             &live.runner_id,
             &live.attempt_id,
             live.fencing_token,
-            "f6b-matched-completion",
+            &format!("{}-completion", case.key),
             "openai",
-            "opaque/model-f6b",
-            json!({
-                "tokens_in": {"value": 1000, "source": "measured"},
-                "tokens_out": {"value": 500, "source": "measured"},
-                "duration_ms": {"value": 300000, "source": "measured"},
-                "cost_usd": {"value": 0.42, "source": "measured"},
-            }),
+            case.actual_model_id,
+            case.usage,
         ),
         &runner_auth,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{completed}");
+    assert_eq!(status, StatusCode::OK, "{}: {completed}", case.name);
 
     let body = get_attempts(&app, &live.request_id).await;
-    let data = body["data"].as_array().expect("data array");
-    assert_eq!(data.len(), 1);
-    let attempt = &data[0];
-
+    let attempt = &body["data"].as_array().expect("data array")[0];
     assert_eq!(
-        attempt["model_provenance"],
-        json!({"kind": "matched", "provider": "openai", "model_id": "opaque/model-f6b"}),
-        "requested and actual agree — this must read as matched, not silently reconciled away"
+        attempt["model_provenance"], case.expected_provenance,
+        "{}",
+        case.name
+    );
+    assert_eq!(
+        attempt["usage_economics"]["model_token_cost_usd_estimated"], case.expected_cost,
+        "{}",
+        case.name
     );
 
-    // The harness's own self-report passes through honestly...
-    assert_eq!(
-        attempt["usage_economics"]["model_token_cost_usd_estimated"],
-        json!({"value": 0.42, "source": "measured"})
-    );
-    // ...while the runner-time dimension stays independently `not_measured`
-    // — no infra cost-rate is stored anywhere in this schema today, so this
-    // must never silently borrow the harness's own figure or default to 0.
-    // Asserted as an explicit null, not merely
-    // "falsy" — a structural zero here would be the exact bug this project's
-    // rule 7 forbids.
     let runner_cost = &attempt["usage_economics"]["runner_time_cost"]["cost_usd_estimated"];
     assert_eq!(
         runner_cost["value"],
         Value::Null,
-        "must be null, not 0 or 0.0"
+        "{}: must be null, not 0",
+        case.name
     );
     assert_eq!(runner_cost["source"], "not_measured");
-    assert_ne!(
-        runner_cost["value"], attempt["usage_economics"]["model_token_cost_usd_estimated"]["value"],
-        "the two dollar dimensions must never be conflated"
-    );
 
-    // Positive control: wall_clock_ms *is* known (both `execution_attempts`
-    // timestamps exist after completion) even though the dollar estimate
-    // above is not — proving the null case above is not a vacuous
-    // "always null" implementation. Computed independently here from the
-    // attempt's own `started_at`/`ended_at` wire fields so this assertion
-    // does not simply trust the handler's own arithmetic.
-    let started_at: DateTime<Utc> = attempt["started_at"]
-        .as_str()
-        .unwrap()
-        .parse()
-        .expect("started_at must be a real RFC3339 timestamp by now");
-    let ended_at: DateTime<Utc> = attempt["ended_at"]
-        .as_str()
-        .unwrap()
-        .parse()
-        .expect("ended_at must be a real RFC3339 timestamp by now");
+    let started_at: DateTime<Utc> = attempt["started_at"].as_str().unwrap().parse().unwrap();
+    let ended_at: DateTime<Utc> = attempt["ended_at"].as_str().unwrap().parse().unwrap();
     let expected_wall_clock_ms = ended_at
         .signed_duration_since(started_at)
         .num_milliseconds();
     assert_eq!(
         attempt["usage_economics"]["runner_time_cost"]["wall_clock_ms"],
-        json!(expected_wall_clock_ms)
+        json!(expected_wall_clock_ms),
+        "{}",
+        case.name
     );
-
-    // Also confirm directly against the database — the attempt row really
-    // does carry both timestamps now, independent of what the handler chose
-    // to render.
     let (db_started, db_ended): (Option<String>, Option<String>) =
         sqlx::query_as("SELECT started_at, ended_at FROM execution_attempts WHERE id = ?")
             .bind(&live.attempt_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(db_started.is_some());
-    assert!(db_ended.is_some());
+    assert!(db_started.is_some() && db_ended.is_some(), "{}", case.name);
 }
 
 #[tokio::test]
-async fn attempt_summary_reports_mismatched_provenance_with_both_sides_visible() {
+async fn attempt_summary_reports_provenance_and_cost_after_completion() {
+    let cases = [
+        ProvenanceCase {
+            name: "matched: requested and actual model agree",
+            key: "matched",
+            actual_model_id: "opaque/model-f6b",
+            usage: json!({
+                "tokens_in": {"value": 1000, "source": "measured"},
+                "tokens_out": {"value": 500, "source": "measured"},
+                "duration_ms": {"value": 300000, "source": "measured"},
+                "cost_usd": {"value": 0.42, "source": "measured"},
+            }),
+            expected_provenance: json!({"kind": "matched", "provider": "openai", "model_id": "opaque/model-f6b"}),
+            expected_cost: json!({"value": 0.42, "source": "measured"}),
+        },
+        ProvenanceCase {
+            name: "mismatched: the harness ran a different declared model than requested",
+            key: "mismatched",
+            actual_model_id: "opaque/model-f6b-mismatch",
+            usage: json!({
+                "tokens_in": {"value": null, "source": "not_measured"},
+                "tokens_out": {"value": null, "source": "not_measured"},
+                "duration_ms": {"value": null, "source": "not_measured"},
+                "cost_usd": {"value": null, "source": "not_measured"},
+            }),
+            expected_provenance: json!({
+                "kind": "mismatched",
+                "requested_provider": "openai",
+                "requested_model_id": "opaque/model-f6b",
+                "actual_provider": "openai",
+                "actual_model_id": "opaque/model-f6b-mismatch",
+            }),
+            expected_cost: json!({"value": null, "source": "not_measured"}),
+        },
+    ];
+
+    for case in cases {
+        assert_provenance_case(case).await;
+    }
+}
+
+/// An item runs one attempt through to a terminal state, then the *same*
+/// item is enqueued again with a fresh, never-used idempotency key, reusing
+/// the same runner and agent profile a retry through the Run-with-agent
+/// modal would. No invariant treats "this item already has a finished
+/// attempt" as a reason to refuse a new request — the second call must
+/// succeed exactly like the first.
+#[tokio::test]
+async fn create_execution_succeeds_for_item_with_a_finished_attempt() {
     let (app, _pool, item_id) = setup().await;
-    // Request `opaque/model-f6b`, but the harness actually runs
-    // `opaque/model-f6b-mismatch` (also declared by this runner's
-    // capabilities, so the claim itself is unaffected — a harness choosing a
-    // different concrete model than requested is exactly the scenario this
-    // field exists to surface, not a claim-time eligibility failure).
-    let live = claim_accept_start(
-        &app,
-        &item_id,
-        "f6b-mismatched",
-        "openai",
-        "opaque/model-f6b",
-    )
-    .await;
+    let live =
+        claim_accept_start(&app, &item_id, "repeat-first", "openai", "opaque/model-f6b").await;
     let runner_auth = headers_ref(&live.runner_auth);
 
     let (status, completed) = common::send(
@@ -742,116 +672,7 @@ async fn attempt_summary_reports_mismatched_provenance_with_both_sides_visible()
             &live.runner_id,
             &live.attempt_id,
             live.fencing_token,
-            "f6b-mismatched-completion",
-            "openai",
-            "opaque/model-f6b-mismatch",
-            json!({
-                "tokens_in": {"value": null, "source": "not_measured"},
-                "tokens_out": {"value": null, "source": "not_measured"},
-                "duration_ms": {"value": null, "source": "not_measured"},
-                "cost_usd": {"value": null, "source": "not_measured"},
-            }),
-        ),
-        &runner_auth,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{completed}");
-
-    let body = get_attempts(&app, &live.request_id).await;
-    let attempt = &body["data"].as_array().expect("data array")[0];
-
-    assert_eq!(
-        attempt["model_provenance"],
-        json!({
-            "kind": "mismatched",
-            "requested_provider": "openai",
-            "requested_model_id": "opaque/model-f6b",
-            "actual_provider": "openai",
-            "actual_model_id": "opaque/model-f6b-mismatch",
-        }),
-        "both the requested and actual model_id must be visible simultaneously, never silently reconciled"
-    );
-    assert_ne!(
-        attempt["model_provenance"]["requested_model_id"],
-        attempt["model_provenance"]["actual_model_id"]
-    );
-}
-
-/// An item runs one attempt through to a terminal state, then the *same*
-/// item is enqueued again with a fresh, never-used idempotency key, reusing
-/// the same runner and agent profile a retry through the Run-with-agent
-/// modal would. Guards against a regression that would make
-/// `execution_requests`/`execution_attempts` treat "this item already has a
-/// finished attempt" as a reason to refuse a new request — no such
-/// invariant exists, and the second call must succeed exactly like the
-/// first.
-#[tokio::test]
-async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
-    let (app, _pool, item_id) = setup().await;
-    let (runner_id, runner_auth_owned) = enroll_runner(&app, "C36 repeat-enqueue runner").await;
-    let runner_auth = headers_ref(&runner_auth_owned);
-    let agent_profile_id =
-        create_agent_profile(&app, "C36 repeat-enqueue profile", json!({})).await;
-
-    let (status, created) = common::send(
-        &app,
-        "POST",
-        "/api/executions",
-        execution_request_body(
-            &item_id,
-            "c36-first",
-            "exact_runner",
-            &runner_id,
-            &agent_profile_id,
-            Some("openai"),
-            Some("opaque/model-f6b"),
-        ),
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-
-    let (status, claimed) = common::send(
-        &app,
-        "POST",
-        "/api/runner/v1/claim",
-        json!({"protocol_version": 1, "runner_id": runner_id, "claim_request_id": "c36-claim", "available_capacity": 1, "wait_ms": 0}),
-        &runner_auth,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{claimed}");
-    let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
-    let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
-
-    let (status, accepted) = common::send(
-        &app,
-        "POST",
-        &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
-        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-c36", "base_revision": BASE_REVISION}),
-        &runner_auth,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{accepted}");
-
-    let (status, started) = common::send(
-        &app,
-        "POST",
-        &format!("/api/runner/v1/attempts/{attempt_id}/start"),
-        json!({"protocol_version": 1, "runner_id": runner_id, "attempt_id": attempt_id, "fencing_token": fencing_token, "workspace_id": "ws-c36", "base_revision": BASE_REVISION, "process_id": "pid-c36"}),
-        &runner_auth,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{started}");
-
-    let (status, completed) = common::send(
-        &app,
-        "POST",
-        &format!("/api/runner/v1/attempts/{attempt_id}/completion"),
-        completion_body(
-            &runner_id,
-            &attempt_id,
-            fencing_token,
-            "c36-completion",
+            "repeat-completion",
             "openai",
             "opaque/model-f6b",
             json!({
@@ -874,10 +695,10 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
         "/api/executions",
         execution_request_body(
             &item_id,
-            "c36-second",
+            "repeat-second",
             "exact_runner",
-            &runner_id,
-            &agent_profile_id,
+            &live.runner_id,
+            &live.agent_profile_id,
             Some("openai"),
             Some("opaque/model-f6b"),
         ),
