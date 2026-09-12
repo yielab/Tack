@@ -58,6 +58,11 @@ jobs:
         run: ./scripts/check-comments.sh
       - name: Tests take their temporary paths from a guard
         run: ./scripts/check-test-hygiene.sh
+      # Ratchets test and comment size against scripts/maintainability-baseline.json —
+      # a file may exceed a budget only if it already did and is not worse; a new
+      # file must meet every budget. See docs/plans/human-maintainability.md.
+      - name: Tests and comments stay inside their size budgets
+        run: python3 scripts/maintainability.py check
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Clippy

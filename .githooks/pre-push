@@ -5,6 +5,8 @@ echo "→ comments carry no board archaeology"
 ./scripts/check-comments.sh
 echo "→ tests take their temporary paths from a guard"
 ./scripts/check-test-hygiene.sh
+echo "→ tests and comments stay inside their size budgets"
+python3 scripts/maintainability.py check --changed
 echo "→ cargo fmt --all --check"
 cargo fmt --all --check
 # `--all` means the workspace, and tack-desktop is deliberately not in it, so this
