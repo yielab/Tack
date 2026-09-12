@@ -1,19 +1,66 @@
 //! Stale `orch_tasks`/`orch_approvals` reconciliation.
 //!
-//! Nothing updates `orch_tasks.remote_status`/`orch_approvals.state` once dispatched
-//! except a poll of a *reachable* control plane (`tack-api::dispatcher`'s initial
-//! write, `tack-orch::reconciler::persist_approvals`). A plane that goes
-//! `unreachable` and never recovers leaves any row that was "active" at that moment
-//! active forever — which, via `dispatcher::is_active_task_status`, also permanently
-//! blocks legacy redispatch for that item. `Repository::reconcile_stale_orch_tasks`/
-//! `reconcile_stale_orch_approvals` (in `repo/orch.rs`) are the
-//! fix: a local-only sweep (no HTTP call, so it cannot perturb
-//! `docket_tick_contract_test.rs`'s pinned per-tick request sequence).
+//! Nothing updates `orch_tasks.remote_status`/`orch_approvals.state` once
+//! dispatched except a poll of a *reachable* control plane. A plane that goes
+//! `unreachable` and never recovers leaves any "active" row active forever —
+//! which also permanently blocks legacy redispatch for that item (via
+//! `dispatcher::is_active_task_status`). `Repository::reconcile_stale_orch_tasks`/
+//! `reconcile_stale_orch_approvals` are the fix: a local-only sweep (no HTTP
+//! call, so it cannot perturb `docket_tick_contract_test.rs`'s pinned
+//! per-tick request sequence).
 
 use crate::common::{create_test_workspace, make_item, make_project, setup_test_db};
 use chrono::{Duration, Utc};
 use tack_db::repo::orch::{CreateControlPlane, UpsertOrchLink};
 use uuid::Uuid;
+
+/// Creates a control plane under `name` and links it to `project_id` (the
+/// `orch_tasks` sweep routes through a project's link); returns its id.
+async fn make_linked_control_plane(
+    repo: &tack_db::Repository,
+    project_id: Uuid,
+    name: &str,
+) -> Uuid {
+    let plane_id = repo
+        .create_control_plane(CreateControlPlane {
+            name: name.into(),
+            kind: None,
+            base_url: "http://127.0.0.1:1".into(),
+            token: None,
+        })
+        .await
+        .unwrap()
+        .id;
+    repo.upsert_orch_link(
+        project_id,
+        UpsertOrchLink {
+            control_plane_id: plane_id,
+            remote_project: "demo".into(),
+            pipeline_file: None,
+            blueprint: None,
+            auto_dispatch: false,
+            budget_usd: None,
+            status_map: serde_json::json!({}),
+        },
+    )
+    .await
+    .unwrap();
+    plane_id
+}
+
+/// Creates a bare control plane under `name`, unlinked — the `orch_approvals`
+/// sweep keys off `orch_approvals.control_plane_id` directly, no link needed.
+async fn make_control_plane(repo: &tack_db::Repository, name: &str) -> Uuid {
+    repo.create_control_plane(CreateControlPlane {
+        name: name.into(),
+        kind: None,
+        base_url: "http://127.0.0.1:1".into(),
+        token: None,
+    })
+    .await
+    .unwrap()
+    .id
+}
 
 async fn insert_orch_task(
     repo: &tack_db::Repository,
@@ -94,36 +141,12 @@ async fn stale_task_on_long_unreachable_plane_is_marked_stale() {
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
     let item = make_item(&repo, &project).await;
-
-    let cp = repo
-        .create_control_plane(CreateControlPlane {
-            name: "dead-plane".into(),
-            kind: None,
-            base_url: "http://127.0.0.1:1".into(),
-            token: None,
-        })
-        .await
-        .unwrap();
-    repo.upsert_orch_link(
-        project.id,
-        UpsertOrchLink {
-            control_plane_id: cp.id,
-            remote_project: "demo".into(),
-            pipeline_file: None,
-            blueprint: None,
-            auto_dispatch: false,
-            budget_usd: None,
-            status_map: serde_json::json!({}),
-        },
-    )
-    .await
-    .unwrap();
+    let plane_id = make_linked_control_plane(&repo, project.id, "dead-plane").await;
 
     let long_ago = Utc::now() - Duration::days(30);
-    repo.update_control_plane_health(cp.id, "unreachable", Some(long_ago), 50, None)
+    repo.update_control_plane_health(plane_id, "unreachable", Some(long_ago), 50, None)
         .await
         .unwrap();
-
     insert_orch_task(&repo, item.id, "task-stale", "running", long_ago).await;
 
     let cutoff = Utc::now() - Duration::days(7);
@@ -139,30 +162,7 @@ async fn task_on_healthy_plane_is_never_marked_stale() {
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
     let item = make_item(&repo, &project).await;
-
-    let cp = repo
-        .create_control_plane(CreateControlPlane {
-            name: "healthy-plane".into(),
-            kind: None,
-            base_url: "http://127.0.0.1:1".into(),
-            token: None,
-        })
-        .await
-        .unwrap();
-    repo.upsert_orch_link(
-        project.id,
-        UpsertOrchLink {
-            control_plane_id: cp.id,
-            remote_project: "demo".into(),
-            pipeline_file: None,
-            blueprint: None,
-            auto_dispatch: false,
-            budget_usd: None,
-            status_map: serde_json::json!({}),
-        },
-    )
-    .await
-    .unwrap();
+    let plane_id = make_linked_control_plane(&repo, project.id, "healthy-plane").await;
 
     let long_ago = Utc::now() - Duration::days(30);
     // Healthy, with an old `last_seen_at` — a synthetic combination the reconciler
@@ -173,11 +173,10 @@ async fn task_on_healthy_plane_is_never_marked_stale() {
     // healthy.
     sqlx::query("UPDATE control_planes SET health = 'healthy', last_seen_at = ? WHERE id = ?")
         .bind(long_ago.to_rfc3339())
-        .bind(cp.id.to_string())
+        .bind(plane_id.to_string())
         .execute(repo.pool())
         .await
         .unwrap();
-
     insert_orch_task(&repo, item.id, "task-healthy", "running", long_ago).await;
 
     let cutoff = Utc::now() - Duration::days(7);
@@ -201,34 +200,11 @@ async fn recently_unreachable_plane_does_not_yet_stale_its_tasks() {
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
     let item = make_item(&repo, &project).await;
-
-    let cp = repo
-        .create_control_plane(CreateControlPlane {
-            name: "recently-down".into(),
-            kind: None,
-            base_url: "http://127.0.0.1:1".into(),
-            token: None,
-        })
-        .await
-        .unwrap();
-    repo.upsert_orch_link(
-        project.id,
-        UpsertOrchLink {
-            control_plane_id: cp.id,
-            remote_project: "demo".into(),
-            pipeline_file: None,
-            blueprint: None,
-            auto_dispatch: false,
-            budget_usd: None,
-            status_map: serde_json::json!({}),
-        },
-    )
-    .await
-    .unwrap();
+    let plane_id = make_linked_control_plane(&repo, project.id, "recently-down").await;
 
     // last_seen_at is recent even though health is already "unreachable" — a plane
     // that just flipped state, not one down for a long time.
-    repo.update_control_plane_health(cp.id, "unreachable", Some(Utc::now()), 3, None)
+    repo.update_control_plane_health(plane_id, "unreachable", Some(Utc::now()), 3, None)
         .await
         .unwrap();
 
@@ -243,41 +219,17 @@ async fn recently_unreachable_plane_does_not_yet_stale_its_tasks() {
 }
 
 #[tokio::test]
-async fn terminal_task_status_is_never_touched_by_the_sweep() {
+async fn terminal_task_status_is_never_touched_by_sweep() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
     let item = make_item(&repo, &project).await;
-
-    let cp = repo
-        .create_control_plane(CreateControlPlane {
-            name: "dead-plane-2".into(),
-            kind: None,
-            base_url: "http://127.0.0.1:1".into(),
-            token: None,
-        })
-        .await
-        .unwrap();
-    repo.upsert_orch_link(
-        project.id,
-        UpsertOrchLink {
-            control_plane_id: cp.id,
-            remote_project: "demo".into(),
-            pipeline_file: None,
-            blueprint: None,
-            auto_dispatch: false,
-            budget_usd: None,
-            status_map: serde_json::json!({}),
-        },
-    )
-    .await
-    .unwrap();
+    let plane_id = make_linked_control_plane(&repo, project.id, "dead-plane-2").await;
 
     let long_ago = Utc::now() - Duration::days(30);
-    repo.update_control_plane_health(cp.id, "unreachable", Some(long_ago), 50, None)
+    repo.update_control_plane_health(plane_id, "unreachable", Some(long_ago), 50, None)
         .await
         .unwrap();
-
     insert_orch_task(&repo, item.id, "task-done", "succeeded", long_ago).await;
 
     let cutoff = Utc::now() - Duration::days(7);
@@ -299,23 +251,13 @@ async fn pending_approval_on_long_unreachable_plane_expires() {
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
     let item = make_item(&repo, &project).await;
-
-    let cp = repo
-        .create_control_plane(CreateControlPlane {
-            name: "dead-plane-3".into(),
-            kind: None,
-            base_url: "http://127.0.0.1:1".into(),
-            token: None,
-        })
-        .await
-        .unwrap();
+    let plane_id = make_control_plane(&repo, "dead-plane-3").await;
 
     let long_ago = Utc::now() - Duration::days(30);
-    repo.update_control_plane_health(cp.id, "unreachable", Some(long_ago), 50, None)
+    repo.update_control_plane_health(plane_id, "unreachable", Some(long_ago), 50, None)
         .await
         .unwrap();
-
-    insert_orch_approval(&repo, cp.id, item.id, "tok-stale", "pending", long_ago).await;
+    insert_orch_approval(&repo, plane_id, item.id, "tok-stale", "pending", long_ago).await;
 
     let cutoff = Utc::now() - Duration::days(7);
     let affected = repo.reconcile_stale_orch_approvals(cutoff).await.unwrap();
@@ -325,28 +267,18 @@ async fn pending_approval_on_long_unreachable_plane_expires() {
 }
 
 #[tokio::test]
-async fn decided_approval_is_never_touched_by_the_sweep() {
+async fn decided_approval_is_never_touched_by_sweep() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
     let item = make_item(&repo, &project).await;
-
-    let cp = repo
-        .create_control_plane(CreateControlPlane {
-            name: "dead-plane-4".into(),
-            kind: None,
-            base_url: "http://127.0.0.1:1".into(),
-            token: None,
-        })
-        .await
-        .unwrap();
+    let plane_id = make_control_plane(&repo, "dead-plane-4").await;
 
     let long_ago = Utc::now() - Duration::days(30);
-    repo.update_control_plane_health(cp.id, "unreachable", Some(long_ago), 50, None)
+    repo.update_control_plane_health(plane_id, "unreachable", Some(long_ago), 50, None)
         .await
         .unwrap();
-
-    insert_orch_approval(&repo, cp.id, item.id, "tok-granted", "granted", long_ago).await;
+    insert_orch_approval(&repo, plane_id, item.id, "tok-granted", "granted", long_ago).await;
 
     let cutoff = Utc::now() - Duration::days(7);
     let affected = repo.reconcile_stale_orch_approvals(cutoff).await.unwrap();
