@@ -1,24 +1,12 @@
-//! Tests for `handlers/decisions.rs` (operator-scoped decision resolution).
-//! Loaded via `#[path]`, the same technique `handlers/executions_runner_admin.rs`/
-//! `runner_protocol/lifecycle.rs` use on their own handler modules, even though
-//! `decisions` is also registered in `handlers.rs` and mounted into the
-//! production router (see that module's own doc comment) — loading it here
-//! gives this file its own directly-constructed router, isolated from that
-//! mounting.
-//!
-//! Every test builds its own tiny operator router directly from
-//! `decisions::routes(...)` — no production `router.rs`/`require_token`
-//! layering — so a defect in this module cannot hide behind the production
-//! router's own gates. The `require_token` gate itself is out of scope here
-//! (it belongs to whoever mounts this router); what this file proves is
-//! everything *this module* is responsible for: that it reads no runner
-//! credential, that it is fail-closed on expiry, that it is
-//! idempotent/replay-safe, and that it never touches item status.
+//! Tests for `handlers/decisions.rs` (operator-scoped decision resolution):
+//! that it reads no runner credential, is fail-closed on expiry, is
+//! idempotent/replay-safe, and never touches item status. Each test builds
+//! its own router directly from `decisions::routes(...)`, bypassing
+//! production `router.rs`/`require_token` layering.
 
-// The name collision with this file's own module path (`decisions::decisions`)
-// is coincidental — this test module and the product file it loads happen
-// to share a subject name — not a sign the product module is nested under
-// itself.
+// Loaded via `#[path]` for a directly-constructed router isolated from this
+// module's own production mounting. The name collision with this file's own
+// module path (`decisions::decisions`) is coincidental, not nesting.
 #[allow(clippy::module_inception)]
 #[path = "../../src/handlers/decisions.rs"]
 mod decisions;
@@ -86,6 +74,13 @@ impl ExecutionClock for FakeClock {
 async fn setup() -> (Repository, FakeClock, String) {
     ensure_global_log_capture_installed();
     let pool = init_pool("sqlite::memory:").await.expect("pool");
+    seed_workspace(pool).await
+}
+
+/// Same seeding as `setup`, against a caller-supplied pool — shared with the
+/// concurrency race test below, which needs a real file-backed database
+/// rather than this suite's usual `:memory:`.
+async fn seed_workspace(pool: sqlx::SqlitePool) -> (Repository, FakeClock, String) {
     migrations::run_all(&pool).await.expect("migrations");
     let repo = Repository::new(pool);
     let workspace = Uuid::new_v4();
@@ -355,7 +350,7 @@ const OPERATOR: &[(&str, &str)] = &[
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn resolve_a_pending_decision_succeeds_and_matches_operator_answer() {
+async fn resolve_pending_decision_matches_operator_answer() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "happy").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -387,7 +382,7 @@ async fn resolve_a_pending_decision_succeeds_and_matches_operator_answer() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn resolving_twice_with_the_same_answer_is_idempotent_and_does_not_rewrite() {
+async fn resolving_twice_with_same_answer_is_idempotent() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "replay").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -425,8 +420,7 @@ async fn resolving_twice_with_the_same_answer_is_idempotent_and_does_not_rewrite
 }
 
 #[tokio::test]
-async fn resolving_with_a_different_answer_after_resolution_is_idempotency_conflict_and_does_not_overwrite()
- {
+async fn resolving_with_different_answer_after_resolve_is_conflict() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "conflict").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -555,7 +549,7 @@ async fn missing_operator_principal_is_denied_and_writes_nothing() {
 /// mounted) is consulted, and it is absent here, so this is rejected exactly
 /// like any other unauthenticated request.
 #[tokio::test]
-async fn self_resolution_via_a_valid_runner_bearer_credential_is_denied_and_writes_nothing() {
+async fn valid_runner_credential_cannot_self_resolve_decision() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "self-resolve").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -591,8 +585,7 @@ async fn self_resolution_via_a_valid_runner_bearer_credential_is_denied_and_writ
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn expiry_denies_records_audit_and_never_marks_the_item_done_even_against_a_valid_allow_answer()
- {
+async fn expiry_denies_with_audit_and_never_marks_item_done() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "expiry").await;
     let expires_at = clock.now() - Duration::seconds(1); // already overdue
@@ -640,51 +633,29 @@ async fn expiry_denies_records_audit_and_never_marks_the_item_done_even_against_
 }
 
 #[tokio::test]
-async fn expire_overdue_decisions_bulk_sweep_denies_only_overdue_pending_rows() {
+async fn bulk_sweep_denies_only_overdue_pending_decisions() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "sweep").await;
     let overdue = clock.now() - Duration::seconds(5);
     let future = clock.now() + Duration::seconds(5);
-    seed_decision(
-        &repo,
-        &clock,
-        &attempt_id,
-        1,
-        "dec-overdue-1",
-        two_options(),
-        Some(overdue),
-    )
-    .await;
-    seed_decision(
-        &repo,
-        &clock,
-        &attempt_id,
-        1,
-        "dec-overdue-2",
-        two_options(),
-        Some(overdue),
-    )
-    .await;
-    seed_decision(
-        &repo,
-        &clock,
-        &attempt_id,
-        1,
-        "dec-future",
-        two_options(),
-        Some(future),
-    )
-    .await;
-    seed_decision(
-        &repo,
-        &clock,
-        &attempt_id,
-        1,
-        "dec-no-expiry",
-        two_options(),
-        None,
-    )
-    .await;
+    let rows = [
+        ("dec-overdue-1", Some(overdue), "expired"),
+        ("dec-overdue-2", Some(overdue), "expired"),
+        ("dec-future", Some(future), "pending"),
+        ("dec-no-expiry", None, "pending"),
+    ];
+    for (decision_id, expires_at, _) in rows {
+        seed_decision(
+            &repo,
+            &clock,
+            &attempt_id,
+            1,
+            decision_id,
+            two_options(),
+            expires_at,
+        )
+        .await;
+    }
     let status_before = item_status(&repo, &item_id).await;
 
     let affected = decisions::expire_overdue_decisions(repo.pool(), clock.now())
@@ -692,28 +663,13 @@ async fn expire_overdue_decisions_bulk_sweep_denies_only_overdue_pending_rows() 
         .expect("sweep");
     assert_eq!(affected, 2);
 
-    assert_eq!(
-        decision_row(&repo, &attempt_id, "dec-overdue-1")
-            .await
-            .state,
-        "expired"
-    );
-    assert_eq!(
-        decision_row(&repo, &attempt_id, "dec-overdue-2")
-            .await
-            .state,
-        "expired"
-    );
-    assert_eq!(
-        decision_row(&repo, &attempt_id, "dec-future").await.state,
-        "pending"
-    );
-    assert_eq!(
-        decision_row(&repo, &attempt_id, "dec-no-expiry")
-            .await
-            .state,
-        "pending"
-    );
+    for (decision_id, _, expected_state) in rows {
+        assert_eq!(
+            decision_row(&repo, &attempt_id, decision_id).await.state,
+            expected_state,
+            "{decision_id}"
+        );
+    }
     assert_eq!(item_status(&repo, &item_id).await, status_before);
 }
 
@@ -722,7 +678,7 @@ async fn expire_overdue_decisions_bulk_sweep_denies_only_overdue_pending_rows() 
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn restart_preserves_a_pending_decision_and_it_remains_resolvable() {
+async fn restart_preserves_pending_decision_still_resolvable() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "restart").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-a", two_options(), None).await;
@@ -791,7 +747,7 @@ async fn invalid_answer_shapes_are_rejected_and_write_nothing() {
 }
 
 #[tokio::test]
-async fn answer_option_id_must_match_one_of_the_decisions_declared_options() {
+async fn answer_option_id_must_match_declared_options() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "option-check").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -812,7 +768,7 @@ async fn answer_option_id_must_match_one_of_the_decisions_declared_options() {
 }
 
 #[tokio::test]
-async fn freeform_decision_with_no_declared_options_accepts_any_non_empty_option_id() {
+async fn freeform_decision_accepts_any_non_empty_option_id() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "freeform").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", json!([]), None).await;
@@ -830,7 +786,7 @@ async fn freeform_decision_with_no_declared_options_accepts_any_non_empty_option
 }
 
 #[tokio::test]
-async fn answer_exceeding_the_frozen_byte_limit_is_rejected_as_payload_too_large() {
+async fn answer_over_byte_limit_is_payload_too_large() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "oversize").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", json!([]), None).await;
@@ -899,7 +855,7 @@ async fn logs_never_contain_the_raw_answer_text_or_prompt_only_ids() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn an_unconfigured_decision_token_rejects_every_resolve_and_writes_nothing() {
+async fn unconfigured_decision_token_rejects_every_resolve() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "no-token-configured").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -932,7 +888,7 @@ async fn an_unconfigured_decision_token_rejects_every_resolve_and_writes_nothing
 }
 
 #[tokio::test]
-async fn a_wrong_decision_token_rejects_the_resolve_and_writes_nothing() {
+async fn wrong_decision_token_rejects_the_resolve() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "wrong-token").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -968,7 +924,7 @@ async fn a_wrong_decision_token_rejects_the_resolve_and_writes_nothing() {
 }
 
 #[tokio::test]
-async fn the_correct_decision_token_alongside_a_valid_principal_resolves() {
+async fn correct_decision_token_with_valid_principal_resolves() {
     let (repo, clock, item_id) = setup().await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "correct-token").await;
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
@@ -1012,81 +968,13 @@ async fn the_correct_decision_token_alongside_a_valid_principal_resolves() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn concurrent_conflicting_resolves_serialize_to_exactly_one_winner() {
+async fn concurrent_resolves_serialize_to_exactly_one_winner() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let db_path = dir.path().join("resolve-race.db");
     let pool = init_pool(&format!("sqlite://{}?mode=rwc", db_path.display()))
         .await
         .expect("file-backed pool");
-    migrations::run_all(&pool).await.expect("migrations");
-    let repo = Repository::new(pool);
-    let workspace = Uuid::new_v4();
-    sqlx::query("INSERT INTO workspaces (id,name,default_vocabulary) VALUES (?, 'F1Race', '{}')")
-        .bind(workspace.to_string())
-        .execute(repo.pool())
-        .await
-        .unwrap();
-    let project = repo
-        .create_project(
-            workspace,
-            CreateProject {
-                name: "F1Race".into(),
-                description: None,
-                project_type: ProjectType::Software,
-                template: None,
-            },
-        )
-        .await
-        .unwrap();
-    let item = repo
-        .create_item(
-            project.id,
-            "To Do",
-            CreateItem {
-                title: "I".into(),
-                description: None,
-                item_type: None,
-                parent_id: None,
-                priority: None,
-                estimate: None,
-                estimate_unit: None,
-                tags: None,
-                due_date: None,
-                sprint_id: None,
-                assignee: None,
-            },
-        )
-        .await
-        .unwrap();
-    let clock = FakeClock::new(Utc.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap());
-    repo.register_runner(
-        NewRunner {
-            id: RUNNER_ID,
-            name: "F1 Runner",
-            credential_hash: "hash",
-            labels: "{}",
-            total_capacity: 1,
-            available_capacity: 1,
-            capability_snapshot: "{}",
-            protocol_version: 1,
-        },
-        &clock,
-    )
-    .await
-    .unwrap();
-    repo.create_agent_profile(
-        NewAgentProfile {
-            id: PROFILE_ID,
-            name: "F1 Profile",
-            instructions: "work",
-            tool_policy: r#"{"mode":"safe"}"#,
-            limits: "{}",
-        },
-        &clock,
-    )
-    .await
-    .unwrap();
-    let item_id = item.id.to_string();
+    let (repo, clock, item_id) = seed_workspace(pool).await;
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "race").await;
     seed_decision(
         &repo,
@@ -1131,7 +1019,9 @@ async fn concurrent_conflicting_resolves_serialize_to_exactly_one_winner() {
         now,
     );
     let delayed_release = async {
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        for _ in 0..512 {
+            tokio::task::yield_now().await;
+        }
         manual_tx.commit().await.unwrap();
     };
 

@@ -1,30 +1,17 @@
 //! HTTP tests: artifact content upload/download and the redaction guarantee
-//! over event/artifact payloads.
-//!
-//! Loads `handlers/runner_protocol.rs` (and, through it, its own
-//! `artifact_storage`/`retention`/`artifact_download` submodules) the same
-//! way `lifecycle.rs` does — via `#[path]`, independently of that file's
-//! own copy (see the `#[allow(clippy::duplicate_mod)]` below).
-//! `artifact_download::routes(...)` is proven here as its own,
-//! separately-constructed local router (never merged with the runner-only
-//! `runner_protocol::routes(...)` router), isolating this file's
-//! fencing/immutability/path-safety/redaction claims from the production
-//! router's own auth and mounting. That route is also mounted in the real
-//! production router (`router.rs#operator_execution_routes`) and proven end
-//! to end by `artifact.rs` (the `wiring` binary).
-//!
-//! Repository-level atomicity/retention proofs (forced insert failure,
-//! bounded-batch purge) live in
-//! `crates/tack-db/tests/repository/event_artifact_retention.rs`; the deep
-//! bounded-memory / "compression bomb" proof lives in
-//! `artifact_storage.rs`'s own colocated unit tests. This file proves the
-//! HTTP wiring: the real route, the real per-route body-limit override, the
-//! real fencing/immutability/path-safety behavior end to end, and log
-//! redaction over a real captured `tracing` subscriber.
+//! over event/artifact payloads. Repository-level atomicity/retention
+//! proofs live in `tack-db`'s `repository/event_artifact_retention.rs`;
+//! the storage primitive's own unit tests live beside it in
+//! `artifact_storage.rs`. This file proves the HTTP wiring end to end.
 
 // `lifecycle`'s own copy of this same `#[path]` load is a second,
 // independent module tree over the identical file — allowed deliberately,
-// see that module's own comment on its copy.
+// see that module's own comment on its copy. `artifact_download::routes(...)`
+// below is proven as its own, separately-constructed local router (never
+// merged with the runner-only `runner_protocol::routes(...)` router),
+// isolating this file's claims from the production router's own auth and
+// mounting — that route is also mounted in the real production router and
+// proven end to end by the `wiring` binary's `artifact.rs`.
 #[allow(clippy::duplicate_mod)]
 #[path = "../../src/handlers/runner_protocol.rs"]
 mod runner_protocol;
@@ -598,98 +585,78 @@ async fn artifact_content_round_trips_through_upload_and_download() {
 // 2. Acceptance: checksum mismatch stages nothing.
 // ---------------------------------------------------------------------
 
-/// Load-bearing proof performed by hand (not left in the tree): temporarily
-/// changed `put_artifact_content` to call
-/// `set_execution_artifact_content_reference` unconditionally (skipping the
-/// `match stored { Err(ChecksumMismatch) => ... }` early return) before the
-/// checksum was actually verified. Re-ran this test: it failed (a
-/// `content_reference` was committed despite the mismatch). Reverted the
-/// change and confirmed the test passes again.
+/// Load-bearing (proven by hand, not left in the tree): temporarily made
+/// `put_artifact_content` call `set_execution_artifact_content_reference`
+/// unconditionally, skipping the checksum-mismatch early return — this test
+/// failed (a `content_reference` was committed despite the mismatch).
+/// Reverted, and it passes again. Two cases isolate the checksum check from
+/// the size check: mismatched length, and same length with wrong bytes.
 #[tokio::test]
 async fn checksum_mismatch_stages_nothing() {
-    let (app, repo, clock, item_id, storage_root_dir) = setup().await;
-    let storage_root = storage_root_dir.path();
-    let attempt = ready_running_attempt(&app, &repo, &clock, &item_id, "checksum").await;
-    let declared_content = b"the real bytes".to_vec();
-    manifest_artifact(&app, &attempt, "art-mismatch", &declared_content, None).await;
+    // `same_length`: true isolates the checksum check from the size check
+    // (a mismatched-length wrong body could conflict on either).
+    for (label, artifact_id, declared, wrong, same_length) in [
+        (
+            "checksum",
+            "art-mismatch",
+            b"the real bytes".to_vec(),
+            b"the WRONG bytes!!".to_vec(),
+            false,
+        ),
+        (
+            "checksum-samesize",
+            "art-samesize",
+            b"AAAAAAAAAA".to_vec(),
+            b"BBBBBBBBBB".to_vec(),
+            true,
+        ),
+    ] {
+        let (app, repo, clock, item_id, storage_root_dir) = setup().await;
+        let storage_root = storage_root_dir.path();
+        let attempt = ready_running_attempt(&app, &repo, &clock, &item_id, label).await;
+        manifest_artifact(&app, &attempt, artifact_id, &declared, None).await;
 
-    let auth = auth_header(&attempt);
-    let fence = fencing_header(&attempt);
-    let wrong_content = b"the WRONG bytes!!".to_vec(); // different length too
-    let (status, response) = put_content(
-        &app,
-        &content_uri(&attempt, "art-mismatch"),
-        wrong_content,
-        &[
-            (auth.0.as_str(), auth.1.as_str()),
-            (fence.0.as_str(), fence.1.as_str()),
-        ],
-    )
-    .await;
-    assert!(
-        status == StatusCode::CONFLICT || status == StatusCode::PAYLOAD_TOO_LARGE,
-        "{status}: {response}"
-    );
+        let auth = auth_header(&attempt);
+        let fence = fencing_header(&attempt);
+        let (status, response) = put_content(
+            &app,
+            &content_uri(&attempt, artifact_id),
+            wrong,
+            &[
+                (auth.0.as_str(), auth.1.as_str()),
+                (fence.0.as_str(), fence.1.as_str()),
+            ],
+        )
+        .await;
+        assert!(
+            status == StatusCode::CONFLICT || status == StatusCode::PAYLOAD_TOO_LARGE,
+            "{status}: {response}"
+        );
+        if same_length {
+            assert_eq!(status, StatusCode::CONFLICT, "{response}");
+            assert_eq!(response["error"]["code"], "artifact_checksum_mismatch");
+            assert_eq!(response["error"]["retryable"], true);
+        }
 
-    let stored_reference: Option<String> = sqlx::query_scalar(
-        "SELECT content_reference FROM execution_artifacts WHERE attempt_id=? AND artifact_id='art-mismatch'",
-    )
-    .bind(&attempt.attempt_id)
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(
-        stored_reference, None,
-        "no content_reference may be committed"
-    );
-
-    let attempt_dir = storage_root.join(hex_encode(&attempt.attempt_id));
-    assert!(
-        dir_is_empty_or_absent(&attempt_dir).await,
-        "no blob may be left on disk after a checksum mismatch"
-    );
-    let _ = tokio::fs::remove_dir_all(&storage_root).await;
-}
-
-/// Same-length wrong content — isolates the checksum check from the size
-/// check, which the mismatched-length case above cannot.
-#[tokio::test]
-async fn same_size_wrong_bytes_is_a_pure_checksum_mismatch_and_stages_nothing() {
-    let (app, repo, clock, item_id, storage_root_dir) = setup().await;
-    let storage_root = storage_root_dir.path();
-    let attempt = ready_running_attempt(&app, &repo, &clock, &item_id, "checksum-samesize").await;
-    let declared_content = b"AAAAAAAAAA".to_vec();
-    manifest_artifact(&app, &attempt, "art-samesize", &declared_content, None).await;
-
-    let auth = auth_header(&attempt);
-    let fence = fencing_header(&attempt);
-    let wrong_but_same_length = b"BBBBBBBBBB".to_vec();
-    assert_eq!(wrong_but_same_length.len(), declared_content.len());
-    let (status, response) = put_content(
-        &app,
-        &content_uri(&attempt, "art-samesize"),
-        wrong_but_same_length,
-        &[
-            (auth.0.as_str(), auth.1.as_str()),
-            (fence.0.as_str(), fence.1.as_str()),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{response}");
-    assert_eq!(response["error"]["code"], "artifact_checksum_mismatch");
-    assert_eq!(response["error"]["retryable"], true);
-
-    let stored_reference: Option<String> = sqlx::query_scalar(
-        "SELECT content_reference FROM execution_artifacts WHERE attempt_id=? AND artifact_id='art-samesize'",
-    )
-    .bind(&attempt.attempt_id)
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(stored_reference, None);
-    let attempt_dir = storage_root.join(hex_encode(&attempt.attempt_id));
-    assert!(dir_is_empty_or_absent(&attempt_dir).await);
-    let _ = tokio::fs::remove_dir_all(&storage_root).await;
+        let stored_reference: Option<String> = sqlx::query_scalar(
+            "SELECT content_reference FROM execution_artifacts WHERE attempt_id=? AND artifact_id=?",
+        )
+        .bind(&attempt.attempt_id)
+        .bind(artifact_id)
+        .fetch_one(repo.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            stored_reference, None,
+            "no content_reference may be committed"
+        );
+        let attempt_dir = storage_root.join(hex_encode(&attempt.attempt_id));
+        assert!(
+            dir_is_empty_or_absent(&attempt_dir).await,
+            "no blob may be left on disk after a checksum mismatch"
+        );
+        let _ = tokio::fs::remove_dir_all(&storage_root).await;
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -743,7 +710,7 @@ async fn oversize_upload_is_rejected_and_stages_nothing() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn crafted_traversal_artifact_id_lands_safely_inside_the_storage_root() {
+async fn crafted_traversal_artifact_id_stays_inside_storage_root() {
     let (app, repo, clock, item_id, storage_root_dir) = setup().await;
     let storage_root = storage_root_dir.path();
     let attempt = ready_running_attempt(&app, &repo, &clock, &item_id, "traversal").await;
@@ -925,7 +892,7 @@ async fn content_type_mismatch_with_declared_media_type_is_rejected() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn download_of_an_unverified_manifest_is_a_named_conflict_not_a_404() {
+async fn unverified_manifest_download_is_named_conflict_not_404() {
     let (app, repo, clock, item_id, storage_root_dir) = setup().await;
     let storage_root = storage_root_dir.path();
     let attempt = ready_running_attempt(&app, &repo, &clock, &item_id, "download-unverified").await;
@@ -1026,7 +993,7 @@ async fn download_of_an_unknown_artifact_is_not_found() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn an_upload_larger_than_the_default_json_body_ceiling_still_succeeds() {
+async fn upload_over_default_json_body_ceiling_still_succeeds() {
     let (app, repo, clock, item_id, storage_root_dir) = setup().await;
     let storage_root = storage_root_dir.path();
     let attempt = ready_running_attempt(&app, &repo, &clock, &item_id, "large").await;
