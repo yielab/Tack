@@ -16,21 +16,28 @@ use tack_orch::scheduler::{SchedulingPolicy, choose_request_for_runner as choose
 
 use crate::support::{FixedClock, codex_capability_snapshot, setup_repo};
 
-async fn register_active_runner(
+const ALPHA_MODEL: &str = "opaque/model-alpha";
+
+/// Registers a runner and sets its heartbeat `heartbeat_offset_secs` away
+/// from `now` (negative for stale), or leaves it `NULL` (`None`) to mirror a
+/// runner that enrolled/refreshed but has never yet been granted a lease.
+async fn setup_runner(
     repo: &Repository,
-    runner_id: &str,
-    capacity: i64,
+    id: &str,
+    total_capacity: i64,
+    available_capacity: i64,
     capability_snapshot: &str,
+    heartbeat_offset_secs: Option<i64>,
     now: chrono::DateTime<Utc>,
 ) {
     repo.register_runner(
         NewRunner {
-            id: runner_id,
-            name: runner_id,
+            id,
+            name: id,
             credential_hash: "test-hash",
             labels: "{}",
-            total_capacity: capacity,
-            available_capacity: capacity,
+            total_capacity,
+            available_capacity,
             capability_snapshot,
             protocol_version: 1,
         },
@@ -38,15 +45,72 @@ async fn register_active_runner(
     )
     .await
     .expect("register runner");
-    // `register_runner` inserts with the schema default `state='active'`
-    // already (migration 040), so no extra activation step is needed here
-    // — this mirrors real enrollment's end state, not the pending step.
-    sqlx::query("UPDATE agent_runners SET last_heartbeat_at = ? WHERE id = ?")
-        .bind(now.to_rfc3339())
-        .bind(runner_id)
-        .execute(repo.pool())
-        .await
-        .expect("set heartbeat");
+    if let Some(offset) = heartbeat_offset_secs {
+        sqlx::query("UPDATE agent_runners SET last_heartbeat_at = ? WHERE id = ?")
+            .bind((now + chrono::Duration::seconds(offset)).to_rfc3339())
+            .bind(id)
+            .execute(repo.pool())
+            .await
+            .expect("set heartbeat");
+    }
+}
+
+/// `setup_runner` with the standard `codex` + `openai/opaque/model-alpha` snapshot.
+async fn setup_codex_runner(
+    repo: &Repository,
+    id: &str,
+    total_capacity: i64,
+    available_capacity: i64,
+    heartbeat_offset_secs: Option<i64>,
+    now: chrono::DateTime<Utc>,
+) {
+    setup_runner(
+        repo,
+        id,
+        total_capacity,
+        available_capacity,
+        &codex_capability_snapshot(now),
+        heartbeat_offset_secs,
+        now,
+    )
+    .await;
+}
+
+async fn setup_fleet(
+    repo: &Repository,
+    id: &str,
+    concurrency_limit: i64,
+    now: chrono::DateTime<Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO agent_fleets (id, name, concurrency_limit, default_policy, created_at, updated_at) \
+         VALUES (?, ?, ?, '{}', ?, ?)",
+    )
+    .bind(id)
+    .bind(id)
+    .bind(concurrency_limit)
+    .bind(now.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(repo.pool())
+    .await
+    .expect("insert fleet");
+}
+
+async fn join_fleet(
+    repo: &Repository,
+    fleet_id: &str,
+    runner_id: &str,
+    now: chrono::DateTime<Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO agent_fleet_members (fleet_id, runner_id, created_at) VALUES (?, ?, ?)",
+    )
+    .bind(fleet_id)
+    .bind(runner_id)
+    .bind(now.to_rfc3339())
+    .execute(repo.pool())
+    .await
+    .expect("fleet membership");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -122,181 +186,150 @@ async fn enqueue(
     .expect("enqueue");
 }
 
-#[tokio::test]
-async fn healthy_runner_with_a_matching_declared_combination_is_chosen() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-    register_active_runner(&repo, "runner-a", 1, &codex_capability_snapshot(now), now).await;
+/// `enqueue` with the standard `codex`/`openai` harness, targeting one runner directly.
+async fn enqueue_for_runner(
+    repo: &Repository,
+    item_id: &str,
+    request_id: &str,
+    runner_id: &str,
+    model_id: &str,
+    metadata: &str,
+    created_at: chrono::DateTime<Utc>,
+) {
+    let key = format!("{request_id}-key");
     enqueue(
-        &repo,
-        &item_id,
-        "req-a",
-        "key-a",
+        repo,
+        item_id,
+        request_id,
+        &key,
         "exact_runner",
-        "runner-a",
+        runner_id,
         "codex",
         Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
+        Some(model_id),
+        metadata,
+        created_at,
+    )
+    .await;
+}
+
+/// `enqueue` with the standard `codex`/`openai` harness, targeting a fleet selector.
+async fn enqueue_for_fleet(
+    repo: &Repository,
+    item_id: &str,
+    request_id: &str,
+    fleet_id: &str,
+    model_id: &str,
+    metadata: &str,
+    created_at: chrono::DateTime<Utc>,
+) {
+    let key = format!("{request_id}-key");
+    enqueue(
+        repo,
+        item_id,
+        request_id,
+        &key,
+        "fleet",
+        fleet_id,
+        "codex",
+        Some("openai"),
+        Some(model_id),
+        metadata,
+        created_at,
+    )
+    .await;
+}
+
+/// One row of the eligibility table below: registers a runner with the given
+/// capacity/capability/heartbeat, enqueues one request for `model_id`, and
+/// asserts whether it gets chosen.
+#[allow(clippy::too_many_arguments)]
+async fn assert_eligibility(
+    case: &str,
+    total: i64,
+    available: i64,
+    capability: &str,
+    heartbeat_offset_secs: i64,
+    model_id: &str,
+    expect_chosen: bool,
+) {
+    let (repo, item_id) = setup_repo().await;
+    let now = Utc::now();
+    setup_runner(
+        &repo,
+        "runner",
+        total,
+        available,
+        capability,
+        Some(heartbeat_offset_secs),
         now,
     )
     .await;
+    enqueue_for_runner(&repo, &item_id, "req", "runner", model_id, "{}", now).await;
 
-    let chosen = choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
+    let chosen = choose_request_for_runner(&repo, "runner", now, &SchedulingPolicy::default())
         .await
         .expect("no db error");
-    assert_eq!(chosen.as_deref(), Some("req-a"));
-
-    // Re-exported entry point (`tack_orch::scheduler::choose_request_for_runner`)
-    // must be the exact same function, not a second, drifting copy.
-    let chosen_via_reexport = choose(&repo, "runner-a", now, &SchedulingPolicy::default())
-        .await
-        .expect("no db error");
-    assert_eq!(chosen_via_reexport.as_deref(), Some("req-a"));
+    assert_eq!(chosen.is_some(), expect_chosen, "case: {case}");
 }
 
 #[tokio::test]
-async fn a_declared_but_mismatched_model_is_never_chosen() {
+async fn eligibility_needs_capability_capacity_and_fresh_heartbeat() {
+    let codex = codex_capability_snapshot(Utc::now());
+    let bad_model = "opaque/model-that-does-not-exist";
+
+    assert_eligibility("match", 1, 1, &codex, 0, ALPHA_MODEL, true).await;
+    assert_eligibility("model_mismatch", 1, 1, &codex, 0, bad_model, false).await;
+    assert_eligibility("no_harness", 1, 1, "{}", 0, ALPHA_MODEL, false).await;
+    assert_eligibility("zero_capacity", 1, 0, &codex, 0, ALPHA_MODEL, false).await;
+    assert_eligibility("stale_heartbeat", 1, 1, &codex, -600, ALPHA_MODEL, false).await;
+}
+
+#[tokio::test]
+async fn reexported_choose_matches_the_primary_function() {
     let (repo, item_id) = setup_repo().await;
     let now = Utc::now();
-    register_active_runner(&repo, "runner-a", 1, &codex_capability_snapshot(now), now).await;
-    enqueue(
-        &repo,
-        &item_id,
-        "req-bad-model",
-        "key-bad",
-        "exact_runner",
-        "runner-a",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-that-does-not-exist"),
-        "{}",
-        now,
-    )
-    .await;
+    setup_codex_runner(&repo, "runner-a", 1, 1, Some(0), now).await;
+    enqueue_for_runner(&repo, &item_id, "req-a", "runner-a", ALPHA_MODEL, "{}", now).await;
 
-    let chosen = choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
+    let via_module =
+        choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
+            .await
+            .expect("no db error");
+    let via_reexport = choose(&repo, "runner-a", now, &SchedulingPolicy::default())
         .await
         .expect("no db error");
     assert_eq!(
-        chosen, None,
-        "an undeclared model combination must never be handed to the claim transaction"
+        via_module, via_reexport,
+        "tack_orch::scheduler::choose_request_for_runner must not drift from the wiring module's own copy"
     );
 }
 
-#[tokio::test]
-async fn a_runner_with_no_declared_harnesses_never_claims_anything() {
+/// One row of the priority table below: enqueues an older normal-priority
+/// request and a newer one carrying `second_metadata`, then checks which id
+/// gets chosen.
+async fn assert_priority(case: &str, second_metadata: &str, expect_chosen: &str) {
     let (repo, item_id) = setup_repo().await;
     let now = Utc::now();
-    // `{}` is the schema default for a runner that never enrolled/refreshed
-    // — deliberately does not parse as `EmbeddedCapabilitySnapshot`.
-    register_active_runner(&repo, "runner-bare", 1, "{}", now).await;
-    enqueue(
-        &repo,
-        &item_id,
-        "req-bare",
-        "key-bare",
-        "exact_runner",
-        "runner-bare",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
-        now,
-    )
-    .await;
-
-    let chosen = choose_request_for_runner(&repo, "runner-bare", now, &SchedulingPolicy::default())
-        .await
-        .expect("no db error");
-    assert_eq!(
-        chosen, None,
-        "no declared harness means no eligible pick, not a crash"
-    );
-}
-
-#[tokio::test]
-async fn per_runner_capacity_saturation_leaves_the_request_unchosen() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-    // Zero available capacity from the start (total=1, available=0) —
-    // simulates a runner that already has its one slot in use.
-    repo.register_runner(
-        NewRunner {
-            id: "runner-full",
-            name: "runner-full",
-            credential_hash: "test-hash",
-            labels: "{}",
-            total_capacity: 1,
-            available_capacity: 0,
-            capability_snapshot: &codex_capability_snapshot(now),
-            protocol_version: 1,
-        },
-        &FixedClock(now),
-    )
-    .await
-    .expect("register runner");
-    sqlx::query("UPDATE agent_runners SET last_heartbeat_at = ? WHERE id = ?")
-        .bind(now.to_rfc3339())
-        .bind("runner-full")
-        .execute(repo.pool())
-        .await
-        .expect("heartbeat");
-    enqueue(
-        &repo,
-        &item_id,
-        "req-saturated",
-        "key-sat",
-        "exact_runner",
-        "runner-full",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
-        now,
-    )
-    .await;
-
-    let chosen = choose_request_for_runner(&repo, "runner-full", now, &SchedulingPolicy::default())
-        .await
-        .expect("no db error");
-    assert_eq!(
-        chosen, None,
-        "a runner with zero available capacity has no eligible pick"
-    );
-}
-
-#[tokio::test]
-async fn high_priority_metadata_wins_over_an_older_normal_priority_request() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-    register_active_runner(&repo, "runner-a", 1, &codex_capability_snapshot(now), now).await;
     let earlier = now - chrono::Duration::seconds(60);
-    enqueue(
+    setup_codex_runner(&repo, "runner-a", 1, 1, Some(0), now).await;
+    enqueue_for_runner(
         &repo,
         &item_id,
-        "req-old-normal",
-        "key-old",
-        "exact_runner",
+        "req-first",
         "runner-a",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
+        ALPHA_MODEL,
         "{}",
         earlier,
     )
     .await;
-    enqueue(
+    enqueue_for_runner(
         &repo,
         &item_id,
-        "req-new-high",
-        "key-new",
-        "exact_runner",
+        "req-second",
         "runner-a",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        r#"{"priority":"high"}"#,
+        ALPHA_MODEL,
+        second_metadata,
         now,
     )
     .await;
@@ -304,120 +337,40 @@ async fn high_priority_metadata_wins_over_an_older_normal_priority_request() {
     let chosen = choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
         .await
         .expect("no db error");
-    assert_eq!(
-        chosen.as_deref(),
-        Some("req-new-high"),
-        "a request whose metadata declares priority:high must be chosen over an older \
-         normal-priority peer"
-    );
+    assert_eq!(chosen.as_deref(), Some(expect_chosen), "case: {case}");
 }
 
 #[tokio::test]
-async fn fifo_within_the_same_priority_picks_the_older_request() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-    register_active_runner(&repo, "runner-a", 1, &codex_capability_snapshot(now), now).await;
-    let earlier = now - chrono::Duration::seconds(60);
-    enqueue(
-        &repo,
-        &item_id,
-        "req-older",
-        "key-older",
-        "exact_runner",
-        "runner-a",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
-        earlier,
-    )
-    .await;
-    enqueue(
-        &repo,
-        &item_id,
-        "req-newer",
-        "key-newer",
-        "exact_runner",
-        "runner-a",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
-        now,
-    )
-    .await;
-
-    let chosen = choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
-        .await
-        .expect("no db error");
-    assert_eq!(chosen.as_deref(), Some("req-older"));
+async fn priority_and_recency_break_ties_in_the_expected_order() {
+    assert_priority("high_priority_wins", r#"{"priority":"high"}"#, "req-second").await;
+    assert_priority("fifo_within_same_priority", "{}", "req-first").await;
 }
 
-#[tokio::test]
-async fn a_saturated_fleet_concurrency_limit_blocks_a_fleet_selector_request() {
+/// One row of the fleet table below: an already-joined `runner-member` polls
+/// while the fleet is at `concurrency_limit`, optionally saturated by a
+/// second member, and checks whether it can still claim.
+async fn assert_fleet_concurrency(
+    case: &str,
+    concurrency_limit: i64,
+    saturate: bool,
+    expect_chosen: bool,
+) {
     let (repo, item_id) = setup_repo().await;
     let now = Utc::now();
-    // Fleet capped at 1 concurrent execution; already "in use" by a second
-    // member runner whose capacity is fully reserved.
-    let fleet_id = "fleet-capped";
-    sqlx::query(
-        "INSERT INTO agent_fleets (id, name, concurrency_limit, default_policy, created_at, updated_at) \
-         VALUES (?, 'Capped Fleet', 1, '{}', ?, ?)",
-    )
-    .bind(fleet_id)
-    .bind(now.to_rfc3339())
-    .bind(now.to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .expect("insert fleet");
-
-    register_active_runner(
-        &repo,
-        "runner-member",
-        1,
-        &codex_capability_snapshot(now),
-        now,
-    )
-    .await;
-    // A second fleet member whose one slot is already fully consumed —
-    // this is what makes the fleet's aggregate in-use capacity hit its cap.
-    repo.register_runner(
-        NewRunner {
-            id: "runner-other-member",
-            name: "runner-other-member",
-            credential_hash: "test-hash",
-            labels: "{}",
-            total_capacity: 1,
-            available_capacity: 0,
-            capability_snapshot: &codex_capability_snapshot(now),
-            protocol_version: 1,
-        },
-        &FixedClock(now),
-    )
-    .await
-    .expect("register second runner");
-    for runner_id in ["runner-member", "runner-other-member"] {
-        sqlx::query(
-            "INSERT INTO agent_fleet_members (fleet_id, runner_id, created_at) VALUES (?, ?, ?)",
-        )
-        .bind(fleet_id)
-        .bind(runner_id)
-        .bind(now.to_rfc3339())
-        .execute(repo.pool())
-        .await
-        .expect("fleet membership");
+    let fleet_id = "fleet-under-test";
+    setup_fleet(&repo, fleet_id, concurrency_limit, now).await;
+    setup_codex_runner(&repo, "runner-member", 1, 1, Some(0), now).await;
+    join_fleet(&repo, fleet_id, "runner-member", now).await;
+    if saturate {
+        setup_codex_runner(&repo, "runner-other-member", 1, 0, Some(0), now).await;
+        join_fleet(&repo, fleet_id, "runner-other-member", now).await;
     }
-
-    enqueue(
+    enqueue_for_fleet(
         &repo,
         &item_id,
-        "req-fleet-capped",
-        "key-fleet",
-        "fleet",
+        "req-fleet",
         fleet_id,
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
+        ALPHA_MODEL,
         "{}",
         now,
     )
@@ -427,138 +380,34 @@ async fn a_saturated_fleet_concurrency_limit_blocks_a_fleet_selector_request() {
         choose_request_for_runner(&repo, "runner-member", now, &SchedulingPolicy::default())
             .await
             .expect("no db error");
-    assert_eq!(
-        chosen, None,
-        "a fleet already at its concurrency_limit must reject every fleet-selector request, \
-         even though the polling runner itself has a free slot"
-    );
+    assert_eq!(chosen.is_some(), expect_chosen, "case: {case}");
 }
 
 #[tokio::test]
-async fn an_unsaturated_fleet_still_allows_a_member_to_claim() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-    let fleet_id = "fleet-open";
-    sqlx::query(
-        "INSERT INTO agent_fleets (id, name, concurrency_limit, default_policy, created_at, updated_at) \
-         VALUES (?, 'Open Fleet', 5, '{}', ?, ?)",
-    )
-    .bind(fleet_id)
-    .bind(now.to_rfc3339())
-    .bind(now.to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .expect("insert fleet");
-    register_active_runner(
-        &repo,
-        "runner-member",
-        1,
-        &codex_capability_snapshot(now),
-        now,
-    )
-    .await;
-    sqlx::query(
-        "INSERT INTO agent_fleet_members (fleet_id, runner_id, created_at) VALUES (?, ?, ?)",
-    )
-    .bind(fleet_id)
-    .bind("runner-member")
-    .bind(now.to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .expect("fleet membership");
-
-    enqueue(
-        &repo,
-        &item_id,
-        "req-fleet-open",
-        "key-fleet-open",
-        "fleet",
-        fleet_id,
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
-        now,
-    )
-    .await;
-
-    let chosen =
-        choose_request_for_runner(&repo, "runner-member", now, &SchedulingPolicy::default())
-            .await
-            .expect("no db error");
-    assert_eq!(chosen.as_deref(), Some("req-fleet-open"));
+async fn fleet_concurrency_limit_gates_every_member() {
+    assert_fleet_concurrency("at_limit_blocks", 1, true, false).await;
+    assert_fleet_concurrency("under_limit_allows", 5, false, true).await;
 }
 
-#[tokio::test]
-async fn a_stale_heartbeat_disqualifies_a_runner_that_would_otherwise_match() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-    register_active_runner(
-        &repo,
-        "runner-stale",
-        1,
-        &codex_capability_snapshot(now),
-        now,
-    )
-    .await;
-    // Overwrite the heartbeat this test's own helper just set to something
-    // far outside `SchedulingPolicy::default()`'s 60-second window.
-    sqlx::query("UPDATE agent_runners SET last_heartbeat_at = ? WHERE id = ?")
-        .bind((now - chrono::Duration::seconds(600)).to_rfc3339())
-        .bind("runner-stale")
-        .execute(repo.pool())
-        .await
-        .expect("stale heartbeat");
-    enqueue(
-        &repo,
-        &item_id,
-        "req-stale",
-        "key-stale",
-        "exact_runner",
-        "runner-stale",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
-        "{}",
-        now,
-    )
-    .await;
-
-    let chosen =
-        choose_request_for_runner(&repo, "runner-stale", now, &SchedulingPolicy::default())
-            .await
-            .expect("no db error");
-    assert_eq!(chosen, None);
-}
-
-#[tokio::test]
-async fn no_queued_work_at_all_is_a_clean_none_not_an_error() {
+/// One row of the absence table below: with or without an idle runner
+/// registered, no queued work ever produces an error — only a clean `None`.
+async fn assert_absence(case: &str, register_idle_runner: bool) {
     let (repo, _item_id) = setup_repo().await;
     let now = Utc::now();
-    register_active_runner(
-        &repo,
-        "runner-idle",
-        1,
-        &codex_capability_snapshot(now),
-        now,
-    )
-    .await;
-
-    let chosen = choose_request_for_runner(&repo, "runner-idle", now, &SchedulingPolicy::default())
+    let runner_id = "runner-idle";
+    if register_idle_runner {
+        setup_codex_runner(&repo, runner_id, 1, 1, Some(0), now).await;
+    }
+    let chosen = choose_request_for_runner(&repo, runner_id, now, &SchedulingPolicy::default())
         .await
         .expect("no db error");
-    assert_eq!(chosen, None);
+    assert_eq!(chosen, None, "case: {case}");
 }
 
 #[tokio::test]
-async fn an_unknown_runner_id_is_a_clean_none_not_an_error() {
-    let (repo, _item_id) = setup_repo().await;
-    let now = Utc::now();
-    let chosen =
-        choose_request_for_runner(&repo, "does-not-exist", now, &SchedulingPolicy::default())
-            .await
-            .expect("no db error");
-    assert_eq!(chosen, None);
+async fn absence_of_eligible_work_resolves_to_none_not_an_error() {
+    assert_absence("no_queued_work", true).await;
+    assert_absence("unknown_runner_id", false).await;
 }
 
 /// A freshly enrolled runner polling for its very first claim has never
@@ -566,29 +415,12 @@ async fn an_unknown_runner_id_is_a_clean_none_not_an_error() {
 /// renewals — `agent_runners.last_heartbeat_at` stays `NULL` until a runner
 /// has already been granted at least one lease). Without the capability
 /// snapshot's own `reported_at` fallback in `wiring.rs`, this would be a
-/// deadlock: no runner could ever get its first piece of work. This is the
-/// load-bearing proof that the fallback closes that gap.
+/// deadlock: no runner could ever get its first piece of work.
 #[tokio::test]
-async fn a_freshly_enrolled_runner_with_no_heartbeat_yet_can_still_claim_its_first_request() {
+async fn fresh_runner_with_no_heartbeat_can_claim_its_first_request() {
     let (repo, item_id) = setup_repo().await;
     let now = Utc::now();
-    repo.register_runner(
-        NewRunner {
-            id: "runner-fresh",
-            name: "runner-fresh",
-            credential_hash: "test-hash",
-            labels: "{}",
-            total_capacity: 1,
-            available_capacity: 1,
-            capability_snapshot: &codex_capability_snapshot(now),
-            protocol_version: 1,
-        },
-        &FixedClock(now),
-    )
-    .await
-    .expect("register runner");
-    // Deliberately never sets `last_heartbeat_at` — this is the exact state
-    // `redeem_enrollment_token`/the `/refresh` handler leave a runner in.
+    setup_codex_runner(&repo, "runner-fresh", 1, 1, None, now).await;
     let heartbeat: Option<String> =
         sqlx::query_scalar("SELECT last_heartbeat_at FROM agent_runners WHERE id = 'runner-fresh'")
             .fetch_one(repo.pool())
@@ -599,16 +431,12 @@ async fn a_freshly_enrolled_runner_with_no_heartbeat_yet_can_still_claim_its_fir
         "fixture must start with no heartbeat, matching real enrollment"
     );
 
-    enqueue(
+    enqueue_for_runner(
         &repo,
         &item_id,
         "req-first-claim",
-        "key-first",
-        "exact_runner",
         "runner-fresh",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
+        ALPHA_MODEL,
         "{}",
         now,
     )
@@ -626,41 +454,31 @@ async fn a_freshly_enrolled_runner_with_no_heartbeat_yet_can_still_claim_its_fir
     );
 }
 
-/// The fallback in the test above is not "no heartbeat ever means eligible"
-/// — a runner that enrolled/refreshed long ago and never heartbeated since
-/// still goes stale once its *capability report* itself ages past the
-/// policy window.
+/// The fallback proven above is not "no heartbeat ever means eligible" — a
+/// runner that enrolled/refreshed long ago and never heartbeated since still
+/// goes stale once its *capability report* itself ages past the policy window.
 #[tokio::test]
-async fn a_never_heartbeated_runner_with_a_stale_capability_report_is_still_rejected() {
+async fn stale_capability_report_rejects_despite_no_heartbeat() {
     let (repo, item_id) = setup_repo().await;
     let now = Utc::now();
     let stale_report_time = now - chrono::Duration::seconds(600);
-    repo.register_runner(
-        NewRunner {
-            id: "runner-stale-report",
-            name: "runner-stale-report",
-            credential_hash: "test-hash",
-            labels: "{}",
-            total_capacity: 1,
-            available_capacity: 1,
-            capability_snapshot: &codex_capability_snapshot(stale_report_time),
-            protocol_version: 1,
-        },
-        &FixedClock(now),
+    setup_runner(
+        &repo,
+        "runner-stale-report",
+        1,
+        1,
+        &codex_capability_snapshot(stale_report_time),
+        None,
+        now,
     )
-    .await
-    .expect("register runner");
+    .await;
 
-    enqueue(
+    enqueue_for_runner(
         &repo,
         &item_id,
         "req-stale-report",
-        "key-stale-report",
-        "exact_runner",
         "runner-stale-report",
-        "codex",
-        Some("openai"),
-        Some("opaque/model-alpha"),
+        ALPHA_MODEL,
         "{}",
         now,
     )
