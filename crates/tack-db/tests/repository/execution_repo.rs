@@ -33,7 +33,7 @@ impl FakeClock {
 }
 
 #[tokio::test]
-async fn enrollment_token_is_single_use_expiry_and_revocation_fail_closed() {
+async fn enrollment_token_is_single_use_and_revocation_fails_closed() {
     let (repo, _, clock) = ready_repo().await;
     sqlx::query("UPDATE agent_runners SET state = 'pending_enrollment' WHERE id = 'runner-a'")
         .execute(repo.pool())
@@ -123,7 +123,7 @@ async fn enrollment_token_is_single_use_expiry_and_revocation_fail_closed() {
 }
 
 #[tokio::test]
-async fn concurrent_enrollment_redemption_has_one_authoritative_winner() {
+async fn concurrent_enrollment_redemption_has_one_winner() {
     let (repo, _, clock) = ready_repo().await;
     repo.create_pending_runner_and_issue_token(
         NewRunner {
@@ -442,7 +442,7 @@ async fn event_replay_canonicalizes_equivalent_json_payloads() {
 // test against the genuinely benign out-of-order case (stale
 // previous_checkpoint), which must remain `Conflict`.
 #[tokio::test]
-async fn event_replay_changed_payload_is_idempotency_conflict_and_does_not_write() {
+async fn event_replay_changed_payload_is_idempotency_conflict() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(
         request("request-conflict", &item_id, "key-conflict", "same"),
@@ -709,7 +709,7 @@ async fn token_guards_and_operator_requeue_are_idempotent() {
 }
 
 #[tokio::test]
-async fn operator_requeue_rejects_needs_operator_without_authoritative_recovery() {
+async fn operator_requeue_rejects_without_authoritative_recovery() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(request("request-r", &item_id, "key-r", "same"), &clock)
         .await
@@ -839,7 +839,7 @@ fn request<'a>(
 }
 
 #[tokio::test]
-async fn enqueue_rejects_incomplete_malformed_and_contradictory_snapshots_without_rows() {
+async fn enqueue_rejects_malformed_and_contradictory_snapshots() {
     let (repo, item_id, clock) = ready_repo().await;
     let mut missing = request("snapshot-missing", &item_id, "snapshot-missing", "same");
     missing.request_snapshot = Box::leak(
@@ -1188,7 +1188,7 @@ fn recovery_input<'a>(
 }
 
 #[tokio::test]
-async fn recovery_stopped_without_start_requeues_current_fence_and_replays() {
+async fn recovery_stopped_without_start_requeues_fence_and_replays() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1457,7 +1457,7 @@ async fn recovery_capacity_release_is_capped_and_replay_safe() {
 }
 
 #[tokio::test]
-async fn recovery_replay_insert_failure_rolls_back_lifecycle_and_capacity() {
+async fn recovery_replay_insert_failure_rolls_back_lifecycle() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1507,7 +1507,7 @@ async fn recovery_replay_insert_failure_rolls_back_lifecycle_and_capacity() {
 }
 
 #[tokio::test]
-async fn cancellation_response_loss_replays_authoritative_response_after_time_advance() {
+async fn cancellation_response_loss_replays_after_time_advance() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1662,7 +1662,7 @@ async fn cancellation_corrupt_replay_response_fails_closed() {
 }
 
 #[tokio::test]
-async fn cancellation_requires_exact_process_stopped_observation_without_write() {
+async fn cancellation_requires_exact_process_stopped_observation() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1740,7 +1740,7 @@ async fn cancellation_capacity_restore_is_capped_and_replay_safe() {
 }
 
 #[tokio::test]
-async fn cancellation_replay_insert_failure_rolls_back_terminal_transition() {
+async fn cancellation_replay_insert_failure_rolls_back_terminal() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1793,7 +1793,7 @@ async fn cancellation_replay_insert_failure_rolls_back_terminal_transition() {
 }
 
 #[tokio::test]
-async fn cancellation_terminal_and_missing_request_are_not_cancelled_success() {
+async fn cancellation_on_terminal_or_missing_request_is_not_success() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1846,7 +1846,7 @@ async fn cancellation_terminal_and_missing_request_are_not_cancelled_success() {
 }
 
 #[tokio::test]
-async fn heartbeat_rejects_false_free_capacity_while_a_lease_is_active() {
+async fn heartbeat_rejects_false_free_capacity_during_active_lease() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -1961,7 +1961,7 @@ async fn heartbeat_multi_lease_replay_is_canonical_and_authoritative() {
 }
 
 #[tokio::test]
-async fn heartbeat_exact_replay_after_clock_advance_returns_original_fields() {
+async fn heartbeat_exact_replay_after_clock_advance_returns_fields() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -2137,7 +2137,7 @@ async fn heartbeat_stale_lease_returns_typed_stale_result() {
 }
 
 #[tokio::test]
-async fn expired_unrecovered_attempt_cannot_restore_capacity_or_admit_a_claim() {
+async fn expired_unrecovered_attempt_blocks_capacity_and_claims() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -2382,7 +2382,7 @@ async fn completion_replay_canonicalizes_structured_terminal_reason() {
 // exists). Collapsing these into one variant is exactly how a runner ends up
 // told to retry a request that can never succeed.
 #[tokio::test]
-async fn completion_conflict_and_idempotency_conflict_distinguish_causes_without_write() {
+async fn completion_and_idempotency_conflicts_are_distinguished() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -2555,7 +2555,7 @@ async fn completion_replay_restores_capacity_once_and_never_above_cap() {
 }
 
 #[tokio::test]
-async fn completion_replay_insert_failure_rolls_back_terminal_transition() {
+async fn completion_replay_insert_failure_rolls_back_terminal() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -2665,7 +2665,7 @@ async fn enqueue_is_idempotent_and_conflicting_reuse_is_rejected() {
 }
 
 #[tokio::test]
-async fn enqueue_replay_compares_the_frozen_snapshot_before_current_time() {
+async fn enqueue_replay_compares_frozen_snapshot_before_current_time() {
     let (repo, item_id, clock) = ready_repo().await;
     assert_eq!(
         repo.enqueue_execution(request("request-a", &item_id, "key-a", "same"), &clock)
@@ -3034,7 +3034,7 @@ async fn foreign_keys_and_expiry_recovery_fail_closed() {
 }
 
 #[tokio::test]
-async fn artifact_and_decision_reject_lease_expiry_equality_without_writes() {
+async fn artifact_and_decision_reject_lease_expiry_equality() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(
         request("request-boundary", &item_id, "key-boundary", "same"),
@@ -3117,44 +3117,21 @@ async fn artifact_and_decision_reject_lease_expiry_equality_without_writes() {
 
 // Defect 2 regression: `record_execution_artifact` and
 // `create_execution_decision` must not run their eligibility SELECT and
-// their INSERT as two separate un-transacted statements — that would leave
-// a window where a concurrent completion/cancellation/recovery transition
-// could commit between them and let the write land against an attempt that
-// had already gone terminal. This test proves the fix deterministically
-// rather than probabilistically.
+// their INSERT as two separate un-transacted statements — a concurrent
+// terminal transition could commit between them and let the write land
+// against an attempt that had already gone terminal.
 //
-// It deliberately does not use this suite's shared in-memory `ready_repo()`
-// harness. That harness pools several connections against one `:memory:`
-// database, which SQLite can only do via shared-cache mode — and
-// shared-cache mode imposes its own table-level read/write locking where a
-// plain SELECT blocks behind *any* pending (even uncommitted) write to the
-// same table. That accidentally serializes the SELECT-then-INSERT gap this
-// test needs to expose, on both the fixed and the unfixed code, making the
-// race unreproducible there (confirmed empirically: a first version of this
-// test built on `ready_repo()` passed 20/20 on both). A genuine file-backed
-// database — the same `sqlite:...?mode=rwc` + WAL setup production actually
-// uses — does not use shared-cache locking: a reader is never blocked by an
-// uncommitted writer, which is exactly the (correct, production-accurate)
-// locking model this defect lives under.
-//
-// Racing three futures with `tokio::join!` from the start is also not
-// enough: `join!`'s poll order controls only which future is polled first,
-// not which one's SQL reaches the SQLite engine first, since sqlx dispatches
-// each connection's work to its own worker thread. Instead, this test
-// *fully awaits* opening `BEGIN IMMEDIATE` and running the terminal UPDATE —
-// so the hold is unconditionally in place, confirmed, before either writer
-// is even constructed — and only then races the two writers against a
-// delayed commit of that held transaction. If the writers are still two
-// separate un-transacted statements, each writer's SELECT observes the
-// still-`running` state (a plain read against a file-backed WAL database is
-// never blocked by another connection's uncommitted write) but nothing
-// stops its later INSERT — which does need the write lock — from running
-// unconditionally once our commit releases it; with the fix, each writer's
-// own `BEGIN IMMEDIATE` cannot even begin until our transaction releases the
-// lock, so its SELECT observes the now-terminal state and it correctly
-// declines to write.
+// Uses a file-backed database, not this suite's shared in-memory
+// `ready_repo()` harness: SQLite's shared-cache mode (what a pooled
+// `:memory:` database uses) imposes table-level locking that blocks a
+// plain SELECT behind any pending write, which accidentally serializes
+// the SELECT-then-INSERT gap this test needs to expose on both fixed and
+// unfixed code. Fully awaits opening `BEGIN IMMEDIATE` and the terminal
+// UPDATE before either writer is even constructed, so the hold is
+// unconditionally in place before the race starts; `tokio::join!` alone
+// would only control poll order, not which SQL reaches SQLite first.
 #[tokio::test]
-async fn artifact_and_decision_cannot_land_against_concurrently_terminal_attempt() {
+async fn artifact_and_decision_reject_concurrently_terminal_attempt() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let db_path = dir.path().join("terminal-attempt-race.db");
     let pool = init_pool(&format!("sqlite://{}?mode=rwc", db_path.display()))
@@ -3254,11 +3231,19 @@ async fn artifact_and_decision_cannot_land_against_concurrently_terminal_attempt
         },
         &clock,
     );
-    // Give both writers time to actually issue their SELECT (pre-fix) or
-    // their own BEGIN IMMEDIATE (post-fix) against the still-held lock
-    // before we release it.
+    // Poll (bounded, not a fixed wait) until both writers have checked a
+    // connection out of the pool — each has begun its own `BEGIN IMMEDIATE`
+    // and is blocked on this lock — before releasing it.
+    let idle_before_writers = repo.pool().num_idle();
     let delayed_release = async {
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while repo.pool().num_idle() > idle_before_writers.saturating_sub(2) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "writers never both blocked on the lock"
+            );
+            tokio::task::yield_now().await;
+        }
         manual_tx.commit().await.unwrap();
     };
 
@@ -3357,7 +3342,7 @@ async fn queue_and_history_indexes_are_used() {
 }
 
 #[tokio::test]
-async fn attempt_start_transitions_are_naturally_idempotent_and_freeze_facts() {
+async fn attempt_start_transitions_are_idempotent_and_freeze_facts() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(
         request("request-start", &item_id, "key-start", "same"),
@@ -3489,7 +3474,7 @@ async fn attempt_start_transitions_are_naturally_idempotent_and_freeze_facts() {
 }
 
 #[tokio::test]
-async fn attempt_start_transition_rejects_wrong_order_and_stale_authority_without_writes() {
+async fn attempt_start_rejects_wrong_order_and_stale_authority() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(
         request("request-order", &item_id, "key-order", "same"),
@@ -3576,7 +3561,7 @@ async fn attempt_start_transition_rejects_wrong_order_and_stale_authority_withou
 // failure) and that exactly one is authoritative.
 
 #[tokio::test]
-async fn concurrent_duplicate_completion_reports_have_one_committed_writer() {
+async fn concurrent_duplicate_completions_have_one_committed_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -3629,7 +3614,7 @@ async fn concurrent_duplicate_completion_reports_have_one_committed_writer() {
 }
 
 #[tokio::test]
-async fn concurrent_duplicate_operator_requeues_have_one_authoritative_writer() {
+async fn concurrent_duplicate_requeues_have_one_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(
         request(
@@ -3722,7 +3707,7 @@ async fn concurrent_duplicate_operator_requeues_have_one_authoritative_writer() 
 }
 
 #[tokio::test]
-async fn concurrent_duplicate_transition_reports_have_one_applied_writer() {
+async fn concurrent_duplicate_transitions_have_one_applied_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     repo.enqueue_execution(
         request(
@@ -3803,7 +3788,7 @@ async fn concurrent_duplicate_transition_reports_have_one_applied_writer() {
 }
 
 #[tokio::test]
-async fn concurrent_duplicate_heartbeats_have_one_authoritative_writer() {
+async fn concurrent_duplicate_heartbeats_have_one_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -3895,7 +3880,7 @@ async fn concurrent_duplicate_heartbeats_have_one_authoritative_writer() {
 }
 
 #[tokio::test]
-async fn concurrent_duplicate_recovery_observations_have_one_authoritative_writer() {
+async fn concurrent_duplicate_recoveries_have_one_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -3981,7 +3966,7 @@ async fn concurrent_duplicate_recovery_observations_have_one_authoritative_write
 }
 
 #[tokio::test]
-async fn concurrent_duplicate_cancellation_observations_have_one_authoritative_writer() {
+async fn concurrent_duplicate_cancellations_have_one_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
@@ -4133,7 +4118,7 @@ async fn concurrent_duplicate_enqueues_have_one_authoritative_writer() {
 }
 
 #[tokio::test]
-async fn concurrent_duplicate_event_batches_have_one_authoritative_writer() {
+async fn concurrent_duplicate_event_batches_have_one_writer() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_completion_attempt(
         &repo,
