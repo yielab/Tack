@@ -1,14 +1,9 @@
-//! Integration tests for the `orch` repository module —
-//! CRUD for `control_planes` and `orch_links`, plus batch upsert helpers for
-//! `orch_tasks`, `orch_runs`, `orch_events`, `orch_approvals`.
-//!
-//! Covers:
-//!   - every function has at least one passing test against in-memory SQLite;
-//!   - the control-plane read DTO never carries the stored token, including in a
-//!     serialized (JSON) response body;
-//!   - batch upserts of N rows are idempotent — re-upserting the same batch produces
-//!     no duplicate rows and no error;
-//! - unrecognised remote-state strings are stored and returned as-is.
+//! Integration tests for the `orch` repository module: CRUD for
+//! `control_planes` and `orch_links`, plus batch upsert helpers for
+//! `orch_tasks`, `orch_runs`, `orch_events`, `orch_approvals`. Covers: the
+//! control-plane read DTO never carries the stored token, including
+//! serialized; batch upserts of N rows are idempotent; unrecognised
+//! remote-state strings are stored and returned as-is.
 
 use crate::common::{create_test_workspace, make_item, make_project, setup_test_db};
 use chrono::Utc;
@@ -23,7 +18,7 @@ use uuid::Uuid;
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_create_get_list_control_plane() {
+async fn create_get_list_control_plane() {
     let repo = setup_test_db().await;
 
     let created = repo
@@ -56,7 +51,7 @@ async fn test_create_get_list_control_plane() {
 }
 
 #[tokio::test]
-async fn test_control_plane_without_token_reports_token_set_false() {
+async fn control_plane_without_token_reports_token_set_false() {
     let repo = setup_test_db().await;
 
     let created = repo
@@ -80,7 +75,7 @@ async fn test_control_plane_without_token_reports_token_set_false() {
 
 /// Non-negotiable #2: the read DTO must never carry the token, in Rust or on the wire.
 #[tokio::test]
-async fn test_control_plane_read_dto_never_exposes_token() {
+async fn control_plane_read_dto_never_exposes_token() {
     let repo = setup_test_db().await;
 
     let created = repo
@@ -124,7 +119,7 @@ async fn test_control_plane_read_dto_never_exposes_token() {
 }
 
 #[tokio::test]
-async fn test_update_control_plane_name_and_base_url() {
+async fn update_control_plane_name_and_base_url() {
     let repo = setup_test_db().await;
     let created = repo
         .create_control_plane(CreateControlPlane {
@@ -154,7 +149,7 @@ async fn test_update_control_plane_name_and_base_url() {
 }
 
 #[tokio::test]
-async fn test_update_control_plane_token_set_then_clear() {
+async fn update_control_plane_token_set_then_clear() {
     let repo = setup_test_db().await;
     let created = repo
         .create_control_plane(CreateControlPlane {
@@ -210,7 +205,7 @@ async fn test_update_control_plane_token_set_then_clear() {
 }
 
 #[tokio::test]
-async fn test_update_control_plane_health_state_machine_persists() {
+async fn update_control_plane_health_state_machine_persists() {
     let repo = setup_test_db().await;
     let created = repo
         .create_control_plane(CreateControlPlane {
@@ -245,7 +240,7 @@ async fn test_update_control_plane_health_state_machine_persists() {
 }
 
 #[tokio::test]
-async fn test_delete_control_plane() {
+async fn delete_control_plane() {
     let repo = setup_test_db().await;
     let created = repo
         .create_control_plane(CreateControlPlane {
@@ -284,7 +279,7 @@ async fn make_control_plane(repo: &tack_db::Repository) -> Uuid {
 }
 
 #[tokio::test]
-async fn test_upsert_get_delete_orch_link() {
+async fn upsert_get_delete_orch_link() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -344,7 +339,7 @@ async fn test_upsert_get_delete_orch_link() {
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_upsert_orch_tasks_batch_is_idempotent() {
+async fn upsert_orch_tasks_batch_is_idempotent() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -425,7 +420,7 @@ async fn test_upsert_orch_tasks_batch_is_idempotent() {
 }
 
 #[tokio::test]
-async fn test_get_and_find_orch_task() {
+async fn get_and_find_orch_task() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -476,7 +471,7 @@ async fn test_get_and_find_orch_task() {
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_upsert_orch_runs_batch_is_idempotent_and_supports_unattributed_runs() {
+async fn orch_runs_upsert_idempotent_keeps_unattributed_runs() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -533,7 +528,7 @@ async fn test_upsert_orch_runs_batch_is_idempotent_and_supports_unattributed_run
 }
 
 #[tokio::test]
-async fn test_orch_run_attribution_is_never_unlearned() {
+async fn orch_run_attribution_is_never_unlearned() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -609,7 +604,7 @@ async fn test_orch_run_attribution_is_never_unlearned() {
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_upsert_orch_events_batch_is_idempotent() {
+async fn upsert_orch_events_batch_is_idempotent() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -653,7 +648,7 @@ async fn test_upsert_orch_events_batch_is_idempotent() {
 }
 
 #[tokio::test]
-async fn test_list_orch_events_for_item_respects_limit_and_order() {
+async fn list_orch_events_for_item_respects_limit_and_order() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -691,7 +686,7 @@ async fn test_list_orch_events_for_item_respects_limit_and_order() {
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_upsert_orch_approvals_batch_is_idempotent() {
+async fn upsert_orch_approvals_batch_is_idempotent() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -728,7 +723,7 @@ async fn test_upsert_orch_approvals_batch_is_idempotent() {
 }
 
 #[tokio::test]
-async fn test_uncorrelated_approvals_still_appear_in_pending_inbox() {
+async fn uncorrelated_approvals_still_appear_in_pending_inbox() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -807,7 +802,7 @@ async fn test_uncorrelated_approvals_still_appear_in_pending_inbox() {
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_set_and_list_trace_cursors_scoped_per_plane() {
+async fn set_and_list_trace_cursors_scoped_per_plane() {
     let repo = setup_test_db().await;
     let plane_a = make_control_plane(&repo).await;
     let plane_b = make_control_plane(&repo).await;
@@ -838,7 +833,7 @@ async fn test_set_and_list_trace_cursors_scoped_per_plane() {
 }
 
 #[tokio::test]
-async fn test_set_trace_cursor_upserts_in_place() {
+async fn set_trace_cursor_upserts_in_place() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -859,7 +854,7 @@ async fn test_set_trace_cursor_upserts_in_place() {
 }
 
 #[tokio::test]
-async fn test_orch_trace_cursor_is_deleted_when_its_control_plane_is_deleted() {
+async fn orch_trace_cursor_cascades_on_control_plane_delete() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
     repo.set_trace_cursor(plane_id, "demo", "2026-08-04T19:52:27Z:1")
@@ -878,7 +873,7 @@ async fn test_orch_trace_cursor_is_deleted_when_its_control_plane_is_deleted() {
 // ════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_pending_approvals_with_context_enriches_correlated_and_still_surfaces_uncorrelated() {
+async fn pending_approvals_with_context_include_uncorrelated_rows() {
     let repo = setup_test_db().await;
     let workspace_id = create_test_workspace(&repo).await;
     let project = make_project(&repo, workspace_id).await;
@@ -950,7 +945,7 @@ async fn test_pending_approvals_with_context_enriches_correlated_and_still_surfa
 }
 
 #[tokio::test]
-async fn test_mark_orch_approval_decided_removes_it_from_the_pending_inbox() {
+async fn mark_orch_approval_decided_removes_from_pending_inbox() {
     let repo = setup_test_db().await;
     let plane_id = make_control_plane(&repo).await;
 
@@ -1001,7 +996,7 @@ async fn test_mark_orch_approval_decided_removes_it_from_the_pending_inbox() {
 }
 
 #[tokio::test]
-async fn test_mark_orch_approval_decided_on_an_unknown_token_is_a_no_op() {
+async fn mark_orch_approval_decided_on_unknown_token_is_a_no_op() {
     let repo = setup_test_db().await;
     // No row exists for this token at all — must not error (defensive path,
     // see the function's own doc comment).

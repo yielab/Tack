@@ -1,16 +1,10 @@
-//! Real-database proof for the retention/observability repository
-//! methods (`Repository::purge_stale_execution_replays`,
-//! `purge_stale_terminal_execution_events`, `execution_fleet_snapshot`).
-//!
-//! Deliberately does not reuse `execution_repo.rs`'s `ready_repo()`
-//! harness for the concurrency test below — see that file's own
-//! `artifact_and_decision_cannot_land_against_concurrently_terminal_attempt`
-//! test for why a shared in-memory pool's shared-cache locking accidentally
-//! serializes exactly the race this suite needs to expose. This file builds
-//! its own minimal fixtures with plain SQL against every table it needs,
-//! rather than the enqueue/claim protocol flow, because the six
-//! bookkeeping/replay tables and `execution_events` only need valid FK
-//! targets, not a fully-formed, snapshot-validated request.
+//! Real-database proof for `Repository::purge_stale_execution_replays`,
+//! `purge_stale_terminal_execution_events` and `execution_fleet_snapshot`.
+//! Fixtures use plain SQL rather than the enqueue/claim protocol flow,
+//! since these tables only need valid FK targets, not a fully-formed
+//! request. The concurrency tests below use a file-backed pool, not the
+//! shared in-memory harness: a shared in-memory pool's cache locking
+//! accidentally serializes the exact race being proved.
 
 use crate::common;
 
@@ -272,7 +266,7 @@ fn now_fixed() -> DateTime<Utc> {
 }
 
 #[tokio::test]
-async fn purge_stale_execution_replays_deletes_only_rows_older_than_cutoff_across_all_six_tables() {
+async fn purge_replays_deletes_only_rows_older_than_cutoff() {
     let repo = common::setup_test_db().await;
     let now = now_fixed();
     let (_item_id, _request_id, attempt_id) = seed(&repo, now).await;
@@ -318,7 +312,7 @@ async fn purge_stale_execution_replays_deletes_only_rows_older_than_cutoff_acros
 }
 
 #[tokio::test]
-async fn purge_stale_execution_replays_respects_the_batch_bound() {
+async fn purge_replays_respects_batch_bound() {
     let repo = common::setup_test_db().await;
     let now = now_fixed();
     let (_item_id, _request_id, attempt_id) = seed(&repo, now).await;
@@ -345,7 +339,7 @@ async fn purge_stale_execution_replays_respects_the_batch_bound() {
 }
 
 #[tokio::test]
-async fn purge_stale_terminal_execution_events_only_touches_terminal_attempts() {
+async fn purge_terminal_events_only_touches_terminal_attempts() {
     let repo = common::setup_test_db().await;
     let now = now_fixed();
     let (_item_id, request_id, terminal_attempt) = seed(&repo, now).await;
@@ -402,14 +396,15 @@ async fn purge_stale_terminal_execution_events_only_touches_terminal_attempts() 
     );
 }
 
+/// A second, pending-enrollment runner and a revoked one, so
+/// `runner_state_counts` exercises all three states beyond `seed`'s one
+/// active runner.
 #[tokio::test]
-async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
+async fn runner_state_counts_report_all_three_states() {
     let repo = common::setup_test_db().await;
     let now = now_fixed();
-    let (item_id, request_id, running_attempt) = seed(&repo, now).await;
+    let (_item_id, _request_id, _running_attempt) = seed(&repo, now).await;
 
-    // A second, pending-enrollment runner and a revoked one, so
-    // runner_state_counts exercises all three states.
     sqlx::query(
         "INSERT INTO agent_runners (id, name, credential_hash, state, labels, total_capacity, \
          available_capacity, capability_snapshot, protocol_version, created_at, updated_at) \
@@ -432,8 +427,39 @@ async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
     .await
     .unwrap();
 
-    // Two more requests: one needs_operator (ambiguous — 2 hours old), one
-    // queued.
+    let snapshot = repo
+        .execution_fleet_snapshot(now, Duration::hours(1))
+        .await
+        .unwrap();
+
+    assert_eq!(snapshot.runner_state_counts.get("active").copied(), Some(1));
+    assert_eq!(
+        snapshot
+            .runner_state_counts
+            .get("pending_enrollment")
+            .copied(),
+        Some(1)
+    );
+    assert_eq!(
+        snapshot.runner_state_counts.get("revoked").copied(),
+        Some(1)
+    );
+    assert_eq!(
+        snapshot.runner_state_counts.len(),
+        3,
+        "bounded to the known state vocabulary"
+    );
+}
+
+/// Two more requests beyond `seed`'s one `running` request: one
+/// `needs_operator` (ambiguous, 2 hours old) and one `queued`. Both the
+/// state counts and the needs-operator age come from the same real rows.
+#[tokio::test]
+async fn request_state_counts_include_needs_operator_and_queued() {
+    let repo = common::setup_test_db().await;
+    let now = now_fixed();
+    let (item_id, _request_id, _running_attempt) = seed(&repo, now).await;
+
     insert_request(
         &repo,
         "request-needs-operator",
@@ -444,8 +470,36 @@ async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
     .await;
     insert_request(&repo, "request-queued", &item_id, "queued", now).await;
 
-    // A stale lease: expired 5 minutes ago, still `running` (recovery
-    // service hasn't caught up yet).
+    let snapshot = repo
+        .execution_fleet_snapshot(now, Duration::hours(1))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        snapshot.request_state_counts.get("needs_operator").copied(),
+        Some(1)
+    );
+    assert_eq!(
+        snapshot.request_state_counts.get("queued").copied(),
+        Some(1)
+    );
+    assert_eq!(
+        snapshot.request_state_counts.get("running").copied(),
+        Some(1)
+    );
+    assert_eq!(snapshot.needs_operator_count, 1);
+    assert_eq!(snapshot.oldest_needs_operator_age_secs, Some(2 * 3600));
+}
+
+/// A stale lease (expired 5 minutes ago, still `running` — the recovery
+/// service hasn't caught up) counts; a second attempt on the same request
+/// whose lease is also expired but whose state is already terminal must not.
+#[tokio::test]
+async fn stale_lease_count_excludes_terminal_attempts() {
+    let repo = common::setup_test_db().await;
+    let now = now_fixed();
+    let (_item_id, request_id, running_attempt) = seed(&repo, now).await;
+
     sqlx::query("UPDATE execution_attempts SET lease_expires_at = ? WHERE id = ?")
         .bind(rfc(now - Duration::minutes(5)))
         .bind(&running_attempt)
@@ -453,12 +507,9 @@ async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
         .await
         .unwrap();
 
-    // A second attempt on the same request whose lease is ALSO expired but
-    // whose state is already terminal — must never count as a stale lease.
-    let terminal_attempt = "attempt-terminal-expired-lease".to_string();
     insert_attempt(
         &repo,
-        &terminal_attempt,
+        "attempt-terminal-expired-lease",
         &request_id,
         2,
         2,
@@ -468,7 +519,25 @@ async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
     )
     .await;
 
-    // Events: two inside a 1-hour trailing window, one outside it.
+    let snapshot = repo
+        .execution_fleet_snapshot(now, Duration::hours(1))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        snapshot.stale_lease_count, 1,
+        "only the non-terminal expired lease counts"
+    );
+    assert_eq!(snapshot.oldest_stale_lease_age_secs, Some(300));
+}
+
+/// Two events inside a 1-hour trailing window, one outside it.
+#[tokio::test]
+async fn events_ingested_in_window_counts_only_recent_events() {
+    let repo = common::setup_test_db().await;
+    let now = now_fixed();
+    let (_item_id, _request_id, running_attempt) = seed(&repo, now).await;
+
     insert_event(
         &repo,
         "ev-in-window-1",
@@ -499,46 +568,6 @@ async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
         .await
         .unwrap();
 
-    assert_eq!(snapshot.runner_state_counts.get("active").copied(), Some(1));
-    assert_eq!(
-        snapshot
-            .runner_state_counts
-            .get("pending_enrollment")
-            .copied(),
-        Some(1)
-    );
-    assert_eq!(
-        snapshot.runner_state_counts.get("revoked").copied(),
-        Some(1)
-    );
-    assert_eq!(
-        snapshot.runner_state_counts.len(),
-        3,
-        "bounded to the known state vocabulary"
-    );
-
-    assert_eq!(
-        snapshot.request_state_counts.get("needs_operator").copied(),
-        Some(1)
-    );
-    assert_eq!(
-        snapshot.request_state_counts.get("queued").copied(),
-        Some(1)
-    );
-    assert_eq!(
-        snapshot.request_state_counts.get("running").copied(),
-        Some(1)
-    );
-
-    assert_eq!(
-        snapshot.stale_lease_count, 1,
-        "only the non-terminal expired lease counts"
-    );
-    assert_eq!(snapshot.oldest_stale_lease_age_secs, Some(300));
-
-    assert_eq!(snapshot.needs_operator_count, 1);
-    assert_eq!(snapshot.oldest_needs_operator_age_secs, Some(2 * 3600));
-
     assert_eq!(snapshot.events_ingested_in_window, 2);
 }
 
@@ -559,7 +588,7 @@ async fn execution_fleet_snapshot_reports_bounded_id_free_counts() {
 /// the first handful of iterations; restoring `BEGIN IMMEDIATE` made it pass
 /// consistently again.
 #[tokio::test]
-async fn concurrent_purges_never_deadlock_against_a_file_backed_database() {
+async fn concurrent_purges_never_deadlock_on_file_backed_db() {
     for i in 0..8 {
         let dir = tempfile::tempdir().expect("temporary directory");
         let db_path = dir.path().join("retention-race.db");
@@ -605,7 +634,7 @@ async fn concurrent_purges_never_deadlock_against_a_file_backed_database() {
 /// `database is locked` under this exact race; restoring it passes
 /// consistently.
 #[tokio::test]
-async fn concurrent_event_purges_never_deadlock_against_a_file_backed_database() {
+async fn concurrent_event_purges_never_deadlock_on_file_backed_db() {
     for i in 0..8 {
         let dir = tempfile::tempdir().expect("temporary directory");
         let db_path = dir.path().join("event-race.db");

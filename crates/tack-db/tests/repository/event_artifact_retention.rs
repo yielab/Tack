@@ -80,12 +80,9 @@ async fn ready_repo_on(repo: Repository) -> (Repository, String, FakeClock) {
     (repo, item.id.to_string(), clock)
 }
 
-/// File-backed pool (WAL, `mode=rwc` — the same setup production uses),
-/// matching `execution_retention.rs`'s own
-/// `concurrent_purges_never_deadlock_against_a_file_backed_database` /
-/// `execution_repo.rs`'s `defect2`-style race tests. A shared in-memory
-/// pool can mask a race that only shows up against real file I/O and
-/// locking — CLAUDE.md's own warning about this exact class of test.
+/// File-backed pool (WAL, `mode=rwc` — the same setup production uses).
+/// A shared in-memory pool can mask a race that only shows up against real
+/// file I/O and locking — CLAUDE.md's own warning about this class of test.
 ///
 /// The returned `TempDir` owns the database file and every sidecar SQLite or
 /// the migration runner writes beside it; hold it for as long as the repo and
@@ -204,190 +201,231 @@ fn event<'a>(
     }
 }
 
+/// A `kind: "patch"` artifact with the boilerplate fields this file never
+/// asserts on (`name`, `media_type`, `size_bytes`, `content_disposition`)
+/// pinned to one value; only what each test actually checks is a parameter.
+fn patch_artifact<'a>(
+    row_id: &'a str,
+    artifact_id: &'a str,
+    sha256: &'a str,
+    content_reference: Option<&'a str>,
+) -> NewArtifact<'a> {
+    NewArtifact {
+        id: row_id,
+        artifact_id,
+        kind: "patch",
+        name: "changes.patch",
+        media_type: Some("text/x-diff"),
+        size_bytes: 4,
+        sha256,
+        content_disposition: Some("inline_upload"),
+        content_reference,
+        metadata: "{}",
+    }
+}
+
+async fn backdate_artifact(
+    repo: &Repository,
+    attempt_id: &str,
+    artifact_id: &str,
+    ts: DateTime<Utc>,
+) {
+    sqlx::query(
+        "UPDATE execution_artifacts SET created_at = ? WHERE attempt_id = ? AND artifact_id = ?",
+    )
+    .bind(ts.to_rfc3339())
+    .bind(attempt_id)
+    .bind(artifact_id)
+    .execute(repo.pool())
+    .await
+    .unwrap();
+}
+
+async fn checkpoint_for(repo: &Repository, attempt_id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT event_checkpoint FROM execution_attempts WHERE id = ?")
+        .bind(attempt_id)
+        .fetch_one(repo.pool())
+        .await
+        .unwrap()
+}
+
+async fn event_count_for(repo: &Repository, attempt_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE attempt_id = ?")
+        .bind(attempt_id)
+        .fetch_one(repo.pool())
+        .await
+        .unwrap()
+}
+
 // ---------------------------------------------------------------------
 // Acceptance: "checkpoint never advances after failed insert."
 // ---------------------------------------------------------------------
 
-/// Forces the *second* event's INSERT to fail via a `BEFORE INSERT` trigger
-/// (the same deterministic technique `completion_replay_insert_failure_rolls_back_terminal_transition`
-/// already uses in `execution_repo.rs` for an analogous claim), inside a
-/// batch whose first event would otherwise succeed. Proves the whole batch —
-/// not just the failing row — rolls back: zero event rows land, and the
-/// attempt's `event_checkpoint` stays exactly at its last successfully
-/// committed value, never advancing to the failed batch's checkpoint and
-/// never regressing to `NULL` either.
-///
-/// Load-bearing proof performed by hand (not left in the tree): temporarily
-/// changed `append_execution_events_result`'s per-event INSERT to execute
-/// against `self.pool()` instead of `&mut *tx` (i.e. outside the shared
-/// transaction). Re-running this test did not merely fail an assertion — the
-/// test process **hung indefinitely**: the outer `BEGIN IMMEDIATE`
-/// transaction was still holding the pool's one connection/write lock
-/// (in-memory SQLite here), and the detached insert's own attempt to check
-/// out a connection from the same pool deadlocked against it, exactly the
-/// class of self-deadlock CLAUDE.md's "`BEGIN IMMEDIATE` is mandatory for
-/// read-then-write transactions" warning describes. Killed the hung process,
-/// reverted the change, and confirmed the test passes again (and completes
-/// promptly) with the real code. This is a stronger confirmation than a
-/// clean assertion failure would have been: the transaction-scoped insert is
-/// load-bearing for both atomicity *and* avoiding a real deadlock.
-#[tokio::test]
-async fn event_batch_insert_failure_leaves_checkpoint_and_rows_untouched() {
-    let (repo, item_id, clock) = ready_repo().await;
-    let fence = ready_running_attempt(
-        &repo,
-        &item_id,
-        &clock,
-        "request-event-atomic",
-        "attempt-event-atomic",
-    )
-    .await;
+struct CheckpointFailureCase {
+    label: &'static str,
+    attempt_id: &'static str,
+    request_id: &'static str,
+    /// `Some` seeds one successful batch (establishing `checkpoint-0001`)
+    /// before the failing one; `None` means a fresh attempt with no prior
+    /// checkpoint.
+    seed_first_batch: bool,
+    /// `Some(n)` fails only sequence `n`'s insert; `None` fails every insert
+    /// in the batch.
+    fail_sequence: Option<i64>,
+    expected_checkpoint: Option<&'static str>,
+}
 
-    // First batch: commits cleanly, establishing a known-good checkpoint.
-    let first = repo
-        .append_execution_events_result(
-            EventBatch {
-                runner_id: "runner-f2",
-                attempt_id: "attempt-event-atomic",
-                fencing_token: fence,
-                previous_checkpoint: None,
-                checkpoint: "checkpoint-0001",
-            },
-            &[event("evt-row-1", "evt-1", 1, clock.now())],
-            &clock,
-        )
+struct CheckpointFailureOutcome {
+    checkpoint: Option<String>,
+    event_count: i64,
+    replay_rows_for_failed_checkpoint: i64,
+}
+
+/// Runs one [`CheckpointFailureCase`] against a fresh repository: seeds the
+/// prior batch if the case calls for one, installs the forced-failure
+/// trigger, then submits the batch that must fail.
+async fn run_checkpoint_failure_case(case: &CheckpointFailureCase) -> CheckpointFailureOutcome {
+    let (repo, item_id, clock) = ready_repo().await;
+    let fence =
+        ready_running_attempt(&repo, &item_id, &clock, case.request_id, case.attempt_id).await;
+
+    if case.seed_first_batch {
+        let seeded = repo
+            .append_execution_events_result(
+                EventBatch {
+                    runner_id: "runner-f2",
+                    attempt_id: case.attempt_id,
+                    fencing_token: fence,
+                    previous_checkpoint: None,
+                    checkpoint: "checkpoint-0001",
+                },
+                &[event("evt-row-1", "evt-1", 1, clock.now())],
+                &clock,
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(seeded, EventApplyResult::Applied(_)),
+            "{}: seed batch must apply",
+            case.label
+        );
+    }
+
+    let trigger_sql = match case.fail_sequence {
+        Some(seq) => format!(
+            "CREATE TRIGGER f2_fail_{} BEFORE INSERT ON execution_events \
+             WHEN NEW.sequence = {seq} BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
+            case.label
+        ),
+        None => format!(
+            "CREATE TRIGGER f2_fail_{} BEFORE INSERT ON execution_events \
+             BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
+            case.label
+        ),
+    };
+    sqlx::query(sqlx::AssertSqlSafe(trigger_sql))
+        .execute(repo.pool())
         .await
         .unwrap();
-    assert!(matches!(first, EventApplyResult::Applied(_)));
-    let checkpoint_before: Option<String> = sqlx::query_scalar(
-        "SELECT event_checkpoint FROM execution_attempts WHERE id = 'attempt-event-atomic'",
-    )
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(checkpoint_before.as_deref(), Some("checkpoint-0001"));
 
-    // Force the *second* event's insert to fail deterministically.
-    sqlx::query(
-        "CREATE TRIGGER f2_fail_second_event BEFORE INSERT ON execution_events \
-         WHEN NEW.sequence = 2 \
-         BEGIN SELECT RAISE(ABORT, 'forced second-event insert failure'); END",
-    )
-    .execute(repo.pool())
-    .await
-    .unwrap();
-
-    let second = repo
-        .append_execution_events_result(
-            EventBatch {
-                runner_id: "runner-f2",
-                attempt_id: "attempt-event-atomic",
-                fencing_token: fence,
-                previous_checkpoint: Some("checkpoint-0001"),
-                checkpoint: "checkpoint-0002",
-            },
-            &[
+    let (events, previous_checkpoint) = if case.seed_first_batch {
+        (
+            vec![
                 event("evt-row-2", "evt-2", 2, clock.now()),
                 event("evt-row-3", "evt-3", 3, clock.now()),
             ],
-            &clock,
+            Some("checkpoint-0001"),
         )
-        .await;
-    assert!(
-        second.is_err(),
-        "the forced trigger must surface as a real error, not be silently absorbed"
-    );
-
-    let checkpoint_after: Option<String> = sqlx::query_scalar(
-        "SELECT event_checkpoint FROM execution_attempts WHERE id = 'attempt-event-atomic'",
-    )
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(
-        checkpoint_after.as_deref(),
-        Some("checkpoint-0001"),
-        "checkpoint must remain at its last successfully committed value, not advance"
-    );
-
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM execution_events WHERE attempt_id = 'attempt-event-atomic'",
-    )
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(
-        event_count, 1,
-        "only the first batch's one row may exist; the second batch's rows (including \
-         evt-2, whose own insert did not trigger the abort) must not survive"
-    );
-
-    let replay_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM execution_event_batch_replays WHERE attempt_id = 'attempt-event-atomic' AND checkpoint = 'checkpoint-0002'",
-    )
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(
-        replay_rows, 0,
-        "no replay bookkeeping for the failed batch may be committed either"
-    );
-}
-
-/// Same forced-failure technique, but asserts the absence in the simplest
-/// case: a *fresh* attempt (no prior
-/// successful batch) whose very first batch fails must leave
-/// `event_checkpoint` at `NULL`, not some other value, and zero rows.
-#[tokio::test]
-async fn event_batch_insert_failure_on_a_fresh_attempt_leaves_checkpoint_null() {
-    let (repo, item_id, clock) = ready_repo().await;
-    let fence = ready_running_attempt(
-        &repo,
-        &item_id,
-        &clock,
-        "request-event-fresh-fail",
-        "attempt-event-fresh-fail",
-    )
-    .await;
-
-    sqlx::query(
-        "CREATE TRIGGER f2_fail_all_events BEFORE INSERT ON execution_events \
-         BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END",
-    )
-    .execute(repo.pool())
-    .await
-    .unwrap();
-
+    } else {
+        (vec![event("evt-row-x", "evt-x", 1, clock.now())], None)
+    };
+    let failing_checkpoint = "checkpoint-0002";
     let result = repo
         .append_execution_events_result(
             EventBatch {
                 runner_id: "runner-f2",
-                attempt_id: "attempt-event-fresh-fail",
+                attempt_id: case.attempt_id,
                 fencing_token: fence,
-                previous_checkpoint: None,
-                checkpoint: "checkpoint-0001",
+                previous_checkpoint,
+                checkpoint: failing_checkpoint,
             },
-            &[event("evt-row-x", "evt-x", 1, clock.now())],
+            &events,
             &clock,
         )
         .await;
-    assert!(result.is_err());
+    assert!(
+        result.is_err(),
+        "{}: forced trigger must surface as a real error",
+        case.label
+    );
 
-    let checkpoint: Option<String> = sqlx::query_scalar(
-        "SELECT event_checkpoint FROM execution_attempts WHERE id = 'attempt-event-fresh-fail'",
+    let replay_rows_for_failed_checkpoint: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM execution_event_batch_replays WHERE attempt_id = ? AND checkpoint = ?",
     )
+    .bind(case.attempt_id)
+    .bind(failing_checkpoint)
     .fetch_one(repo.pool())
     .await
     .unwrap();
-    assert_eq!(checkpoint, None);
+    CheckpointFailureOutcome {
+        checkpoint: checkpoint_for(&repo, case.attempt_id).await,
+        event_count: event_count_for(&repo, case.attempt_id).await,
+        replay_rows_for_failed_checkpoint,
+    }
+}
 
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM execution_events WHERE attempt_id = 'attempt-event-fresh-fail'",
-    )
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(event_count, 0);
+/// Forces an event's INSERT to fail via a `BEFORE INSERT` trigger inside a
+/// batch that would otherwise succeed. Proves the whole batch rolls back —
+/// zero of its rows land, and `event_checkpoint` stays at its last
+/// committed value, never advancing to the failed batch's checkpoint and
+/// never regressing — whether that prior value is a real checkpoint or
+/// still `NULL` on a fresh attempt.
+///
+/// Load-bearing: moving the per-event INSERT outside the shared
+/// `BEGIN IMMEDIATE` transaction reproduces both a failed assertion here
+/// and a genuine self-deadlock (the detached insert blocks on the same
+/// connection the outer transaction still holds) — the hazard CLAUDE.md's
+/// "`BEGIN IMMEDIATE` is mandatory" rule warns about.
+#[tokio::test]
+async fn failed_event_batch_leaves_checkpoint_and_rows_untouched() {
+    let cases = [
+        CheckpointFailureCase {
+            label: "prior_checkpoint_holds",
+            attempt_id: "attempt-event-atomic",
+            request_id: "request-event-atomic",
+            seed_first_batch: true,
+            fail_sequence: Some(2),
+            expected_checkpoint: Some("checkpoint-0001"),
+        },
+        CheckpointFailureCase {
+            label: "fresh_attempt_stays_null",
+            attempt_id: "attempt-event-fresh-fail",
+            request_id: "request-event-fresh-fail",
+            seed_first_batch: false,
+            fail_sequence: None,
+            expected_checkpoint: None,
+        },
+    ];
+    for case in cases {
+        let outcome = run_checkpoint_failure_case(&case).await;
+        assert_eq!(
+            outcome.checkpoint.as_deref(),
+            case.expected_checkpoint,
+            "{}: checkpoint",
+            case.label
+        );
+        let expected_events = if case.seed_first_batch { 1 } else { 0 };
+        assert_eq!(
+            outcome.event_count, expected_events,
+            "{}: only rows from a successfully committed batch may exist",
+            case.label
+        );
+        assert_eq!(
+            outcome.replay_rows_for_failed_checkpoint, 0,
+            "{}: no replay bookkeeping for the failed batch may be committed",
+            case.label
+        );
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -405,23 +443,13 @@ async fn content_reference_is_committed_once_and_never_overwritten() {
         "attempt-content-ref",
     )
     .await;
+    let sha = "0".repeat(64);
     let written = repo
         .record_execution_artifact(
             "runner-f2",
             "attempt-content-ref",
             fence,
-            NewArtifact {
-                id: "art-row-1",
-                artifact_id: "art-1",
-                kind: "patch",
-                name: "changes.patch",
-                media_type: Some("text/x-diff"),
-                size_bytes: 4,
-                sha256: &"0".repeat(64),
-                content_disposition: Some("inline_upload"),
-                content_reference: None,
-                metadata: "{}",
-            },
+            patch_artifact("art-row-1", "art-1", &sha, None),
             &clock,
         )
         .await
@@ -466,7 +494,7 @@ async fn content_reference_is_committed_once_and_never_overwritten() {
 }
 
 #[tokio::test]
-async fn content_reference_write_with_a_stale_fence_is_rejected() {
+async fn content_reference_write_with_stale_fence_is_rejected() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_running_attempt(
         &repo,
@@ -525,7 +553,7 @@ async fn content_reference_write_with_a_stale_fence_is_rejected() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn event_retention_purges_only_rows_older_than_cutoff_in_bounded_batches() {
+async fn event_retention_purges_rows_older_than_cutoff_in_batches() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_running_attempt(
         &repo,
@@ -572,9 +600,8 @@ async fn event_retention_purges_only_rows_older_than_cutoff_in_bounded_batches()
 
     // Backdate the first batch's rows directly rather than advancing the
     // shared clock 40 days (which would also expire the lease this test's
-    // *second* insert still needs to succeed through the normal eligibility
-    // check — retention age and lease liveness are deliberately independent
-    // concerns, and this test only means to exercise the former).
+    // *second* insert still needs to succeed through — retention age and
+    // lease liveness are deliberately independent concerns).
     sqlx::query(
         "UPDATE execution_events SET created_at = ? WHERE attempt_id = 'attempt-retention-events' AND sequence IN (1,2,3)",
     )
@@ -584,25 +611,16 @@ async fn event_retention_purges_only_rows_older_than_cutoff_in_bounded_batches()
     .unwrap();
 
     // Cutoff: 30 days before "now", so the first batch (backdated to 40 days
-    // ago) is expired and the second (created just now) is not.
+    // ago) is expired and the second (created just now) is not. Bounded
+    // batches of 2: 2 + 1 + 0 across three passes, converging to "caught up."
     let cutoff = clock.now() - Duration::days(30);
-
-    // Bounded batch of 2: first pass purges 2 of the 3 expired rows.
-    let first_pass = repo
-        .purge_execution_events_older_than(cutoff, 2)
-        .await
-        .unwrap();
-    assert_eq!(first_pass, 2);
-    let second_pass = repo
-        .purge_execution_events_older_than(cutoff, 2)
-        .await
-        .unwrap();
-    assert_eq!(second_pass, 1);
-    let third_pass = repo
-        .purge_execution_events_older_than(cutoff, 2)
-        .await
-        .unwrap();
-    assert_eq!(third_pass, 0, "caught up: nothing left older than cutoff");
+    for (pass, expected) in [2, 1, 0].into_iter().enumerate() {
+        let purged = repo
+            .purge_execution_events_older_than(cutoff, 2)
+            .await
+            .unwrap();
+        assert_eq!(purged, expected, "pass {pass}");
+    }
 
     let remaining: Vec<String> = sqlx::query_scalar(
         "SELECT event_id FROM execution_events WHERE attempt_id='attempt-retention-events' ORDER BY sequence",
@@ -614,7 +632,7 @@ async fn event_retention_purges_only_rows_older_than_cutoff_in_bounded_batches()
 }
 
 #[tokio::test]
-async fn artifact_retention_lists_expired_rows_and_deletes_exactly_those_ids() {
+async fn artifact_retention_lists_and_deletes_expired_rows() {
     let (repo, item_id, clock) = ready_repo().await;
     let fence = ready_running_attempt(
         &repo,
@@ -624,58 +642,46 @@ async fn artifact_retention_lists_expired_rows_and_deletes_exactly_those_ids() {
         "attempt-retention-artifacts",
     )
     .await;
+    let sha_old = "2".repeat(64);
+    let sha_fresh = "3".repeat(64);
     repo.record_execution_artifact(
         "runner-f2",
         "attempt-retention-artifacts",
         fence,
-        NewArtifact {
-            id: "art-row-old",
-            artifact_id: "art-old",
-            kind: "patch",
-            name: "old.patch",
-            media_type: Some("text/x-diff"),
-            size_bytes: 4,
-            sha256: &"2".repeat(64),
-            content_disposition: Some("inline_upload"),
-            content_reference: Some("attempt-retention-artifacts-hex/old.blob"),
-            metadata: "{}",
-        },
+        patch_artifact(
+            "art-row-old",
+            "art-old",
+            &sha_old,
+            Some("attempt-retention-artifacts-hex/old.blob"),
+        ),
+        &clock,
+    )
+    .await
+    .unwrap();
+    repo.record_execution_artifact(
+        "runner-f2",
+        "attempt-retention-artifacts",
+        fence,
+        patch_artifact(
+            "art-row-fresh",
+            "art-fresh",
+            &sha_fresh,
+            Some("attempt-retention-artifacts-hex/fresh.blob"),
+        ),
         &clock,
     )
     .await
     .unwrap();
 
-    repo.record_execution_artifact(
-        "runner-f2",
+    // Backdate only the first artifact's row (advancing the shared clock
+    // instead would also expire the still-needed lease).
+    backdate_artifact(
+        &repo,
         "attempt-retention-artifacts",
-        fence,
-        NewArtifact {
-            id: "art-row-fresh",
-            artifact_id: "art-fresh",
-            kind: "patch",
-            name: "fresh.patch",
-            media_type: Some("text/x-diff"),
-            size_bytes: 4,
-            sha256: &"3".repeat(64),
-            content_disposition: Some("inline_upload"),
-            content_reference: Some("attempt-retention-artifacts-hex/fresh.blob"),
-            metadata: "{}",
-        },
-        &clock,
+        "art-old",
+        clock.now() - Duration::days(2),
     )
-    .await
-    .unwrap();
-
-    // Backdate only the first artifact's row (see the sibling event-retention
-    // test's own comment on why this is a raw `UPDATE` rather than advancing
-    // the shared clock, which would also expire the still-needed lease).
-    sqlx::query(
-        "UPDATE execution_artifacts SET created_at = ? WHERE attempt_id = 'attempt-retention-artifacts' AND artifact_id = 'art-old'",
-    )
-    .bind((clock.now() - Duration::days(2)).to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .unwrap();
+    .await;
     let cutoff = clock.now() - Duration::days(1);
 
     let expired = repo
@@ -702,294 +708,204 @@ async fn artifact_retention_lists_expired_rows_and_deletes_exactly_those_ids() {
 }
 
 #[tokio::test]
-async fn delete_execution_artifacts_by_row_ids_is_a_no_op_on_an_empty_list() {
+async fn delete_by_row_ids_is_a_no_op_on_empty_list() {
     let repo = common::setup_test_db().await;
-    let deleted = repo
-        .delete_execution_artifacts_by_row_ids(&[])
-        .await
-        .unwrap();
-    assert_eq!(deleted, 0);
+    assert_eq!(
+        repo.delete_execution_artifacts_by_row_ids(&[])
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        repo.delete_unresolved_execution_artifacts_by_row_ids(&[])
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 // ---------------------------------------------------------------------
-// The concurrent-upload race
-// `delete_unresolved_execution_artifacts_by_row_ids` closes.
-//
-// `sweep_artifacts` (`crates/tack-api/src/handlers/runner_protocol/retention.rs`)
-// lists expired manifest rows, then deletes them. A row observed with
-// `content_reference: None` at list-time cannot safely be deleted by the
-// plain by-id method afterward: a real artifact-content upload
-// (`put_artifact_content` -> `store_streaming` then
-// `set_execution_artifact_content_reference`) can land between the read and
-// the delete, writing a real blob to disk and setting the reference — an
-// unconditional delete would still remove the row, permanently orphaning
-// that just-written blob (nothing will ever reference it again once the row
-// is gone). These tests exercise the two repository primitives directly, in
-// the exact interleaved order that race requires: list, then the concurrent
-// update (simulated by a direct call — the property under test is "does the
-// delete re-check state," not "who wins a thread-scheduling race," so a
-// deterministic call sequence is a faithful, non-flaky reproduction), then
-// delete. Run against a *file-backed* database per CLAUDE.md's own
-// instruction for concurrency-adjacent tests.
+// The concurrent-upload race `delete_unresolved_execution_artifacts_by_row_ids`
+// closes.
 // ---------------------------------------------------------------------
 
-#[tokio::test]
-async fn delete_unresolved_execution_artifacts_by_row_ids_skips_a_row_resolved_concurrently() {
-    let (file_repo, _db_dir) = file_backed_repo("guard-skips").await;
-    let (repo, item_id, clock) = ready_repo_on(file_repo).await;
-    let fence = ready_running_attempt(
-        &repo,
-        &item_id,
-        &clock,
-        "request-race-guard",
-        "attempt-race-guard",
-    )
-    .await;
-
-    repo.record_execution_artifact(
-        "runner-f2",
-        "attempt-race-guard",
-        fence,
-        NewArtifact {
-            id: "art-row-race-guard",
-            artifact_id: "art-race-guard",
-            kind: "patch",
-            name: "race.patch",
-            media_type: Some("text/x-diff"),
-            size_bytes: 4,
-            sha256: &"4".repeat(64),
-            content_disposition: Some("inline_upload"),
-            // No content yet — exactly the "manifest created, upload not
-            // finished" state `sweep_artifacts` must treat as racy.
-            content_reference: None,
-            metadata: "{}",
-        },
-        &clock,
-    )
-    .await
-    .unwrap();
-    // Backdate so it is what the sweep's `list_execution_artifacts_older_than`
-    // would pick up.
-    sqlx::query(
-        "UPDATE execution_artifacts SET created_at = ? WHERE attempt_id = 'attempt-race-guard' AND artifact_id = 'art-race-guard'",
-    )
-    .bind((clock.now() - Duration::days(2)).to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .unwrap();
-    let cutoff = clock.now() - Duration::days(1);
-
-    // Step 1: the sweep's read.
-    let expired = repo
-        .list_execution_artifacts_older_than(cutoff, 100)
-        .await
-        .unwrap();
-    assert_eq!(expired.len(), 1);
-    assert_eq!(expired[0].content_reference, None);
-    let ids: Vec<String> = expired.iter().map(|row| row.id.clone()).collect();
-
-    // Step 2: the race — a real content upload lands, exactly as
-    // `put_artifact_content` would call it, between the read above and the
-    // delete below.
-    let result = repo
-        .set_execution_artifact_content_reference(
-            "runner-f2",
-            "attempt-race-guard",
-            "art-race-guard",
-            fence,
-            "attempt-race-guard-hex/real-upload.blob",
-            &clock,
-        )
-        .await
-        .unwrap();
-    assert_eq!(result, ArtifactContentCommitResult::Committed);
-
-    // Step 3: the sweep's guarded delete — must skip this row now that its
-    // content_reference is no longer NULL.
-    let deleted = repo
-        .delete_unresolved_execution_artifacts_by_row_ids(&ids)
-        .await
-        .unwrap();
-    assert_eq!(
-        deleted, 0,
-        "a row whose content_reference was set concurrently must survive this pass"
-    );
-
-    let stored_reference: Option<String> = sqlx::query_scalar(
-        "SELECT content_reference FROM execution_artifacts WHERE attempt_id='attempt-race-guard' AND artifact_id='art-race-guard'",
-    )
-    .fetch_one(repo.pool())
-    .await
-    .unwrap();
-    assert_eq!(
-        stored_reference,
-        Some("attempt-race-guard-hex/real-upload.blob".to_string()),
-        "the row — and the fresh reference the race just wrote — must still be there"
-    );
+struct GuardCase {
+    label: &'static str,
+    db_label: &'static str,
+    artifact_id: &'static str,
+    /// A real content upload lands between the sweep's list and its delete.
+    race_happens: bool,
+    /// `true` exercises the guarded method; `false` the plain, unconditional
+    /// one `sweep_artifacts` uses only for already-resolved rows.
+    use_guarded_delete: bool,
+    expected_deleted: u64,
 }
 
-/// Load-bearing counter-proof: the *old*, unconditional
-/// `delete_execution_artifacts_by_row_ids` — still present and still
-/// correctly used for the "blob already resolved and removed" branch of
-/// `sweep_artifacts` — applied to the identical racing setup *would* have
-/// deleted the row despite its freshly-set `content_reference`, permanently
-/// orphaning the blob the concurrent upload just wrote. This is the exact
-/// defect `delete_unresolved_execution_artifacts_by_row_ids`'s guard exists
-/// to close; this test pins the pre-guard behavior so a future edit cannot
-/// silently widen the unconditional method's use back onto this branch.
-#[tokio::test]
-async fn unconditional_delete_would_have_orphaned_the_racily_resolved_row() {
-    let (file_repo, _db_dir) = file_backed_repo("guard-counterexample").await;
-    let (repo, item_id, clock) = ready_repo_on(file_repo).await;
-    let fence = ready_running_attempt(
-        &repo,
-        &item_id,
-        &clock,
-        "request-race-counterexample",
-        "attempt-race-counterexample",
-    )
-    .await;
-
-    repo.record_execution_artifact(
-        "runner-f2",
-        "attempt-race-counterexample",
-        fence,
-        NewArtifact {
-            id: "art-row-race-counterexample",
-            artifact_id: "art-race-counterexample",
-            kind: "patch",
-            name: "race.patch",
-            media_type: Some("text/x-diff"),
-            size_bytes: 4,
-            sha256: &"5".repeat(64),
-            content_disposition: Some("inline_upload"),
-            content_reference: None,
-            metadata: "{}",
-        },
-        &clock,
-    )
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE execution_artifacts SET created_at = ? WHERE attempt_id = 'attempt-race-counterexample' AND artifact_id = 'art-race-counterexample'",
-    )
-    .bind((clock.now() - Duration::days(2)).to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .unwrap();
-    let cutoff = clock.now() - Duration::days(1);
-
-    let expired = repo
-        .list_execution_artifacts_older_than(cutoff, 100)
-        .await
-        .unwrap();
-    let ids: Vec<String> = expired.iter().map(|row| row.id.clone()).collect();
-
-    let result = repo
-        .set_execution_artifact_content_reference(
-            "runner-f2",
-            "attempt-race-counterexample",
-            "art-race-counterexample",
-            fence,
-            "attempt-race-counterexample-hex/real-upload.blob",
-            &clock,
-        )
-        .await
-        .unwrap();
-    assert_eq!(result, ArtifactContentCommitResult::Committed);
-
-    // The *unconditional* method — used unmodified today for the
-    // already-resolved branch — applied here instead of the guarded one.
-    let deleted = repo
-        .delete_execution_artifacts_by_row_ids(&ids)
-        .await
-        .unwrap();
-    assert_eq!(
-        deleted, 1,
-        "demonstrates the defect: the unconditional delete removes the row \
-         even though a real upload just set its content_reference — exactly \
-         why sweep_artifacts must not use this method for rows observed \
-         with content_reference: None at list-time"
-    );
+struct GuardOutcome {
+    deleted: u64,
+    remaining: i64,
+    /// `content_reference` after the delete, only meaningful when the row
+    /// survived.
+    stored_reference: Option<String>,
 }
 
-/// Control: with no race, the guarded method still deletes an unresolved row
-/// exactly as the unconditional one would — the guard narrows *when* a
-/// delete happens, it does not make deletion of a genuinely-still-`NULL` row
-/// impossible.
-#[tokio::test]
-async fn delete_unresolved_execution_artifacts_by_row_ids_deletes_when_nothing_raced() {
-    let (file_repo, _db_dir) = file_backed_repo("guard-no-race").await;
+/// Runs one [`GuardCase`] against a fresh file-backed database: seeds one
+/// unresolved artifact, backdates it past the cutoff, lists it, optionally
+/// races a real content-reference write against it, then runs the case's
+/// chosen delete primitive.
+async fn run_guard_case(case: &GuardCase) -> GuardOutcome {
+    let (file_repo, _db_dir) = file_backed_repo(case.db_label).await;
     let (repo, item_id, clock) = ready_repo_on(file_repo).await;
-    let fence = ready_running_attempt(
-        &repo,
-        &item_id,
-        &clock,
-        "request-race-none",
-        "attempt-race-none",
-    )
-    .await;
+    let request_id = format!("request-{}", case.db_label);
+    let attempt_id = format!("attempt-{}", case.db_label);
+    let fence = ready_running_attempt(&repo, &item_id, &clock, &request_id, &attempt_id).await;
 
+    let sha = "4".repeat(64);
     repo.record_execution_artifact(
         "runner-f2",
-        "attempt-race-none",
+        &attempt_id,
         fence,
-        NewArtifact {
-            id: "art-row-race-none",
-            artifact_id: "art-race-none",
-            kind: "patch",
-            name: "none.patch",
-            media_type: Some("text/x-diff"),
-            size_bytes: 4,
-            sha256: &"6".repeat(64),
-            content_disposition: Some("inline_upload"),
-            content_reference: None,
-            metadata: "{}",
-        },
+        // No content yet — exactly the "manifest created, upload not
+        // finished" state `sweep_artifacts` must treat as racy.
+        patch_artifact(
+            &format!("art-row-{}", case.db_label),
+            case.artifact_id,
+            &sha,
+            None,
+        ),
         &clock,
     )
     .await
     .unwrap();
-    sqlx::query(
-        "UPDATE execution_artifacts SET created_at = ? WHERE attempt_id = 'attempt-race-none' AND artifact_id = 'art-race-none'",
+    backdate_artifact(
+        &repo,
+        &attempt_id,
+        case.artifact_id,
+        clock.now() - Duration::days(2),
     )
-    .bind((clock.now() - Duration::days(2)).to_rfc3339())
-    .execute(repo.pool())
-    .await
-    .unwrap();
+    .await;
     let cutoff = clock.now() - Duration::days(1);
 
     let expired = repo
         .list_execution_artifacts_older_than(cutoff, 100)
         .await
         .unwrap();
+    assert_eq!(expired.len(), 1, "{}: backdated row is listed", case.label);
     let ids: Vec<String> = expired.iter().map(|row| row.id.clone()).collect();
 
-    // No concurrent upload this time.
-    let deleted = repo
-        .delete_unresolved_execution_artifacts_by_row_ids(&ids)
-        .await
-        .unwrap();
-    assert_eq!(
-        deleted, 1,
-        "an unresolved row with no race must still be purged"
-    );
+    if case.race_happens {
+        let result = repo
+            .set_execution_artifact_content_reference(
+                "runner-f2",
+                &attempt_id,
+                case.artifact_id,
+                fence,
+                &format!("{}-hex/real-upload.blob", case.artifact_id),
+                &clock,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            ArtifactContentCommitResult::Committed,
+            "{}: race write must land",
+            case.label
+        );
+    }
+
+    let deleted = if case.use_guarded_delete {
+        repo.delete_unresolved_execution_artifacts_by_row_ids(&ids)
+            .await
+            .unwrap()
+    } else {
+        repo.delete_execution_artifacts_by_row_ids(&ids)
+            .await
+            .unwrap()
+    };
 
     let remaining: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM execution_artifacts WHERE attempt_id='attempt-race-none'",
+        "SELECT COUNT(*) FROM execution_artifacts WHERE attempt_id = ? AND artifact_id = ?",
     )
+    .bind(&attempt_id)
+    .bind(case.artifact_id)
     .fetch_one(repo.pool())
     .await
     .unwrap();
-    assert_eq!(remaining, 0);
+    let stored_reference: Option<String> = sqlx::query_scalar(
+        "SELECT content_reference FROM execution_artifacts WHERE attempt_id = ? AND artifact_id = ?",
+    )
+    .bind(&attempt_id)
+    .bind(case.artifact_id)
+    .fetch_optional(repo.pool())
+    .await
+    .unwrap()
+    .flatten();
+    GuardOutcome {
+        deleted,
+        remaining,
+        stored_reference,
+    }
 }
 
+/// `delete_unresolved_execution_artifacts_by_row_ids` closes a race in
+/// `sweep_artifacts` (`handlers/runner_protocol/retention.rs`): a row listed
+/// with `content_reference: None` can have a real upload land between the
+/// list and the delete, and an unconditional delete would permanently
+/// orphan that blob. Exercises the two repository primitives directly, in
+/// the exact interleaved order the race requires — list, then a simulated
+/// concurrent update, then delete — since the property under test is "does
+/// the delete re-check state," not "who wins a scheduling race." Runs
+/// against a file-backed database per CLAUDE.md's rule for
+/// concurrency-adjacent tests.
 #[tokio::test]
-async fn delete_unresolved_execution_artifacts_by_row_ids_is_a_no_op_on_an_empty_list() {
-    let repo = common::setup_test_db().await;
-    let deleted = repo
-        .delete_unresolved_execution_artifacts_by_row_ids(&[])
-        .await
-        .unwrap();
-    assert_eq!(deleted, 0);
+async fn artifact_delete_guard_skips_only_racily_resolved_row() {
+    let cases = [
+        GuardCase {
+            label: "guard_skips_raced_row",
+            db_label: "guard-skips",
+            artifact_id: "art-race-guard",
+            race_happens: true,
+            use_guarded_delete: true,
+            expected_deleted: 0,
+        },
+        GuardCase {
+            label: "unconditional_delete_orphans_raced_row",
+            db_label: "guard-counterexample",
+            artifact_id: "art-race-counterexample",
+            race_happens: true,
+            use_guarded_delete: false,
+            expected_deleted: 1,
+        },
+        GuardCase {
+            label: "guard_still_deletes_when_nothing_raced",
+            db_label: "guard-no-race",
+            artifact_id: "art-race-none",
+            race_happens: false,
+            use_guarded_delete: true,
+            expected_deleted: 1,
+        },
+    ];
+
+    for case in cases {
+        let outcome = run_guard_case(&case).await;
+        assert_eq!(
+            outcome.deleted, case.expected_deleted,
+            "{}: rows deleted",
+            case.label
+        );
+        assert_eq!(
+            outcome.remaining,
+            1 - case.expected_deleted as i64,
+            "{}: row survives iff it was not deleted",
+            case.label
+        );
+        if case.race_happens && case.expected_deleted == 0 {
+            assert_eq!(
+                outcome.stored_reference,
+                Some(format!("{}-hex/real-upload.blob", case.artifact_id)),
+                "{}: the raced reference survives",
+                case.label
+            );
+        }
+    }
 }
