@@ -1,15 +1,12 @@
 //! Tests for `GET /api/approvals` and `POST /api/approvals/{token}`.
 //!
-//! Covers: 404 with `TACK_ORCH_ENABLE` unset (both routes); the fleet-wide
-//! inbox is oldest-first and includes uncorrelated (`item_id: null`)
-//! approvals, enriched with control-plane/item/project context;
-//! `grant_available` reflects whether `TACK_ORCH_APPROVAL_TOKEN` is
-//! configured; the decision endpoint 403s when the approval token is unset
-//! (the safe default) or wrong, regardless of the ordinary Bearer token;
-//! `channel: "tack"` really reaches docket on the wire; a successful
-//! grant/deny removes the row from the pending inbox; an already-decided
-//! token (docket 409) surfaces as 409, not 500; and an unknown token 404s
-//! without ever calling docket.
+//! Covers: the off/token-gate guards; the fleet-wide inbox is oldest-first
+//! and includes uncorrelated (`item_id: null`) approvals, enriched with
+//! control-plane/item/project context; `grant_available` reflects whether
+//! `TACK_ORCH_APPROVAL_TOKEN` is configured; `channel: "tack"` reaching
+//! docket on the wire for both grant and deny, removing the row from the
+//! pending inbox; an already-decided token (docket 409) surfacing as 409,
+//! not 500; and an unknown token 404ing without ever calling docket.
 
 use crate::common;
 
@@ -156,6 +153,26 @@ async fn decide(
     .await
 }
 
+async fn seed_pending_approval(state: &AppState, control_plane_id: Uuid, token: &str) {
+    state
+        .repo
+        .upsert_orch_approvals(
+            control_plane_id,
+            &[NewOrchApproval {
+                token: token.into(),
+                item_id: None,
+                remote_task_id: None,
+                agent: Some("builder".into()),
+                action: Some("git push".into()),
+                state: "pending".into(),
+                requested_at: Utc::now(),
+                decided_at: None,
+            }],
+        )
+        .await
+        .expect("seed pending approval");
+}
+
 // ─── Off by default / actionable refusal ───────────────────────────────────
 
 #[tokio::test]
@@ -179,7 +196,7 @@ async fn decide_approval_409s_when_orch_disabled() {
 // ─── GET /api/approvals — inbox contents ───────────────────────────────────
 
 #[tokio::test]
-async fn inbox_is_oldest_first_and_includes_uncorrelated_approvals_with_context() {
+async fn inbox_is_oldest_first_includes_uncorrelated_with_context() {
     let (app, state) = app_with_state(orch_config()).await;
     let control_plane_id = create_control_plane(&app, "http://docket.local:9999").await;
     let project_id = common::create_project(&app, "Approvals Test Project", "software").await;
@@ -253,50 +270,57 @@ async fn inbox_grant_available_is_true_when_approval_token_configured() {
 
 // ─── POST /api/approvals/{token} — the approval-token gate ────────────────
 
+/// Every way the approval-token gate fails closed: with the token unset in
+/// config at all (the safe default — no client-supplied header value can
+/// ever satisfy an unset secret), and with a token configured but the
+/// header missing or wrong.
 #[tokio::test]
-async fn decide_approval_403s_when_no_approval_token_is_configured_even_with_a_header() {
-    let (app, state) = app_with_state(orch_config()).await; // orch_approval_token: None
-    let cp = create_control_plane(&app, "http://docket.local:9999").await;
-    state
-        .repo
-        .upsert_orch_approvals(
-            cp,
-            &[NewOrchApproval {
-                token: "apr-1".into(),
-                item_id: None,
-                remote_task_id: None,
-                agent: None,
-                action: Some("deploy".into()),
-                state: "pending".into(),
-                requested_at: Utc::now(),
-                decided_at: None,
-            }],
-        )
-        .await
-        .unwrap();
+async fn decide_approval_403s_when_token_unset_missing_or_wrong() {
+    struct Case {
+        config_token: Option<&'static str>,
+        request_token: Option<&'static str>,
+    }
+    let cases = [
+        Case {
+            config_token: None,
+            request_token: Some("anything-at-all"),
+        },
+        Case {
+            config_token: None,
+            request_token: None,
+        },
+        Case {
+            config_token: Some("correct-secret"),
+            request_token: None,
+        },
+        Case {
+            config_token: Some("correct-secret"),
+            request_token: Some("wrong-secret"),
+        },
+    ];
 
-    // Even presenting *some* header value must not succeed: an unset secret
-    // can never be satisfied by any client-supplied value (the safe default).
-    let res = decide(&app, "apr-1", "grant", Some("anything-at-all")).await;
-    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    for case in cases {
+        let config = match case.config_token {
+            Some(t) => orch_config_with_approval_token(t),
+            None => orch_config(),
+        };
+        let (app, state) = app_with_state(config).await;
+        let cp = create_control_plane(&app, "http://docket.local:9999").await;
+        seed_pending_approval(&state, cp, "apr-1").await;
 
-    let res_no_header = decide(&app, "apr-1", "grant", None).await;
-    assert_eq!(res_no_header.status(), StatusCode::FORBIDDEN);
+        let res = decide(&app, "apr-1", "grant", case.request_token).await;
+        assert_eq!(
+            res.status(),
+            StatusCode::FORBIDDEN,
+            "config_token={:?} request_token={:?}",
+            case.config_token,
+            case.request_token
+        );
+    }
 }
 
 #[tokio::test]
-async fn decide_approval_403s_with_a_missing_or_wrong_header_when_token_is_configured() {
-    let (app, _) = app_with_state(orch_config_with_approval_token("correct-secret")).await;
-
-    let res_missing = decide(&app, "apr-1", "grant", None).await;
-    assert_eq!(res_missing.status(), StatusCode::FORBIDDEN);
-
-    let res_wrong = decide(&app, "apr-1", "grant", Some("wrong-secret")).await;
-    assert_eq!(res_wrong.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn decide_approval_404s_for_a_token_unknown_to_tacks_own_mirror_before_calling_docket() {
+async fn decide_unknown_token_404s_before_calling_docket() {
     let server = MockServer::start().await;
     // No mocks registered — if the handler called docket before checking its
     // own mirror, this test would fail on the unmatched request.
@@ -309,100 +333,66 @@ async fn decide_approval_404s_for_a_token_unknown_to_tacks_own_mirror_before_cal
 
 // ─── POST /api/approvals/{token} — the real decision, proxied to docket ───
 
+/// Both grant and deny send `channel: "tack"` on the wire alongside the
+/// chosen action, and both remove the decided row from the pending inbox.
 #[tokio::test]
-async fn decide_approval_grant_sends_channel_tack_and_removes_it_from_the_pending_inbox() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/approvals/apr-grant"))
-        .and(body_partial_json(
-            json!({"action": "grant", "channel": "tack"}),
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "ok": true, "token": "apr-grant", "state": "granted"
-        })))
-        .mount(&server)
-        .await;
+async fn decide_approval_sends_action_and_channel_removes_from_inbox() {
+    struct Case {
+        token: &'static str,
+        action: &'static str,
+        expect_state: &'static str,
+    }
+    let cases = [
+        Case {
+            token: "apr-grant",
+            action: "grant",
+            expect_state: "granted",
+        },
+        Case {
+            token: "apr-deny",
+            action: "deny",
+            expect_state: "denied",
+        },
+    ];
 
-    let (app, state) = app_with_state(orch_config_with_approval_token("secret")).await;
-    let cp = create_control_plane(&app, &server.uri()).await;
-    state
-        .repo
-        .upsert_orch_approvals(
-            cp,
-            &[NewOrchApproval {
-                token: "apr-grant".into(),
-                item_id: None,
-                remote_task_id: None,
-                agent: Some("builder".into()),
-                action: Some("git push".into()),
-                state: "pending".into(),
-                requested_at: Utc::now(),
-                decided_at: None,
-            }],
-        )
-        .await
-        .unwrap();
+    for case in cases {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("/approvals/{}", case.token)))
+            .and(body_partial_json(
+                json!({"action": case.action, "channel": "tack"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true, "token": case.token, "state": case.expect_state
+            })))
+            .mount(&server)
+            .await;
 
-    let res = decide(&app, "apr-grant", "grant", Some("secret")).await;
-    assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
-    // (status already asserted above; re-fetch the row for the state assertion)
-    let row = state
-        .repo
-        .get_orch_approval("apr-grant")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.state, "granted");
-    assert!(row.decided_at.is_some());
+        let (app, state) = app_with_state(orch_config_with_approval_token("secret")).await;
+        let cp = create_control_plane(&app, &server.uri()).await;
+        seed_pending_approval(&state, cp, case.token).await;
 
-    // No longer in the pending inbox.
-    let list_res = list_approvals(&app).await;
-    let v = body_json(list_res).await;
-    assert_eq!(v["rows"].as_array().unwrap().len(), 0);
+        let res = decide(&app, case.token, case.action, Some("secret")).await;
+        assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
+
+        let row = state
+            .repo
+            .get_orch_approval(case.token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, case.expect_state);
+        assert!(row.decided_at.is_some());
+
+        // No longer in the pending inbox.
+        let list_res = list_approvals(&app).await;
+        let v = body_json(list_res).await;
+        assert_eq!(v["rows"].as_array().unwrap().len(), 0);
+    }
 }
 
 #[tokio::test]
-async fn decide_approval_deny_sends_action_deny_on_the_wire() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/approvals/apr-deny"))
-        .and(body_partial_json(
-            json!({"action": "deny", "channel": "tack"}),
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "ok": true, "token": "apr-deny", "state": "denied"
-        })))
-        .mount(&server)
-        .await;
-
-    let (app, state) = app_with_state(orch_config_with_approval_token("secret")).await;
-    let cp = create_control_plane(&app, &server.uri()).await;
-    state
-        .repo
-        .upsert_orch_approvals(
-            cp,
-            &[NewOrchApproval {
-                token: "apr-deny".into(),
-                item_id: None,
-                remote_task_id: None,
-                agent: None,
-                action: Some("rm -rf /".into()),
-                state: "pending".into(),
-                requested_at: Utc::now(),
-                decided_at: None,
-            }],
-        )
-        .await
-        .unwrap();
-
-    let res = decide(&app, "apr-deny", "deny", Some("secret")).await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    assert_eq!(v["state"], "denied");
-}
-
-#[tokio::test]
-async fn decide_approval_already_decided_elsewhere_surfaces_as_409_not_500() {
+async fn decide_approval_already_decided_surfaces_as_409() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/approvals/apr-stale"))
@@ -414,23 +404,7 @@ async fn decide_approval_already_decided_elsewhere_surfaces_as_409_not_500() {
 
     let (app, state) = app_with_state(orch_config_with_approval_token("secret")).await;
     let cp = create_control_plane(&app, &server.uri()).await;
-    state
-        .repo
-        .upsert_orch_approvals(
-            cp,
-            &[NewOrchApproval {
-                token: "apr-stale".into(),
-                item_id: None,
-                remote_task_id: None,
-                agent: None,
-                action: Some("deploy".into()),
-                state: "pending".into(),
-                requested_at: Utc::now(),
-                decided_at: None,
-            }],
-        )
-        .await
-        .unwrap();
+    seed_pending_approval(&state, cp, "apr-stale").await;
 
     let res = decide(&app, "apr-stale", "grant", Some("secret")).await;
     assert_eq!(res.status(), StatusCode::CONFLICT);
@@ -455,23 +429,7 @@ async fn decide_approval_unknown_token_on_docket_side_surfaces_as_404() {
     // Tack's own mirror has the row (otherwise the handler 404s before ever
     // calling docket, per the test above) — this covers docket itself
     // reporting the token unknown on its side.
-    state
-        .repo
-        .upsert_orch_approvals(
-            cp,
-            &[NewOrchApproval {
-                token: "apr-ghost".into(),
-                item_id: None,
-                remote_task_id: None,
-                agent: None,
-                action: Some("deploy".into()),
-                state: "pending".into(),
-                requested_at: Utc::now(),
-                decided_at: None,
-            }],
-        )
-        .await
-        .unwrap();
+    seed_pending_approval(&state, cp, "apr-ghost").await;
 
     let res = decide(&app, "apr-ghost", "grant", Some("secret")).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);

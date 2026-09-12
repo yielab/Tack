@@ -189,7 +189,7 @@ fn execution_request_body(
 // =======================================================================
 
 #[tokio::test]
-async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_member() {
+async fn fleet_targeted_request_schedules_onto_member_not_outsider() {
     let (pool, workspace_id) = fresh_database().await;
     let app = router_for(pool.clone(), workspace_id).await;
     let op = operator_headers();
@@ -408,7 +408,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
 // =======================================================================
 
 #[tokio::test]
-async fn adding_a_member_to_a_nonexistent_fleet_or_runner_is_rejected_and_writes_nothing() {
+async fn adding_member_to_nonexistent_fleet_or_runner_writes_nothing() {
     let (pool, workspace_id) = fresh_database().await;
     let app = router_for(pool.clone(), workspace_id).await;
     let op = operator_headers();

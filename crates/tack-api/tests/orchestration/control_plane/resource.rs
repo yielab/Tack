@@ -211,69 +211,60 @@ async fn token_never_appears_in_list_or_get_response() {
     assert_eq!(got["token_set"], true);
 }
 
+/// The tri-state PATCH semantics for `token`: omitting the field preserves
+/// the stored token; an explicit `null` clears it; a string value replaces
+/// it without ever leaking the old or new value in the response.
 #[tokio::test]
-async fn patch_with_absent_token_field_preserves_stored_token() {
-    let (app, _) = common::test_app_with_config(orch_config()).await;
-    let created = create_control_plane(&app, Some("preserve-me")).await;
-    let id = created["id"].as_str().unwrap();
+async fn patch_token_field_is_tri_state() {
+    struct Case {
+        initial_token: &'static str,
+        patch_body: Value,
+        expect_token_set: bool,
+        also_check: fn(&Value),
+        note: &'static str,
+    }
+    let cases = [
+        Case {
+            initial_token: "preserve-me",
+            patch_body: json!({"name": "docket-renamed"}),
+            expect_token_set: true,
+            also_check: |v| assert_eq!(v["name"], "docket-renamed"),
+            note: "token must survive a patch that never mentions it",
+        },
+        Case {
+            initial_token: "clear-me",
+            patch_body: json!({"token": null}),
+            expect_token_set: false,
+            also_check: |_| {},
+            note: "an explicit null must clear the stored token",
+        },
+        Case {
+            initial_token: "old-token",
+            patch_body: json!({"token": "new-token"}),
+            expect_token_set: true,
+            also_check: |v| assert_no_token_leak(v, "new-token"),
+            note: "a string value must replace the stored token without leaking it",
+        },
+    ];
 
-    // Patch only the name — no `token` key in the body at all.
-    let res = req(
-        &app,
-        Method::PATCH,
-        &format!("/api/control-planes/{id}"),
-        Some(json!({"name": "docket-renamed"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let updated = body_json(res).await;
-    assert_eq!(updated["name"], "docket-renamed");
-    assert_eq!(
-        updated["token_set"], true,
-        "token must survive a patch that never mentions it"
-    );
-    assert_no_token_leak(&updated, "preserve-me");
-}
+    for case in cases {
+        let (app, _) = common::test_app_with_config(orch_config()).await;
+        let created = create_control_plane(&app, Some(case.initial_token)).await;
+        let id = created["id"].as_str().unwrap();
 
-#[tokio::test]
-async fn patch_with_explicit_null_token_clears_it() {
-    let (app, _) = common::test_app_with_config(orch_config()).await;
-    let created = create_control_plane(&app, Some("clear-me")).await;
-    let id = created["id"].as_str().unwrap();
-
-    let res = req(
-        &app,
-        Method::PATCH,
-        &format!("/api/control-planes/{id}"),
-        Some(json!({"token": null})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let updated = body_json(res).await;
-    assert_eq!(
-        updated["token_set"], false,
-        "an explicit null must clear the stored token"
-    );
-}
-
-#[tokio::test]
-async fn patch_with_token_value_replaces_it() {
-    let (app, _) = common::test_app_with_config(orch_config()).await;
-    let created = create_control_plane(&app, Some("old-token")).await;
-    let id = created["id"].as_str().unwrap();
-
-    let res = req(
-        &app,
-        Method::PATCH,
-        &format!("/api/control-planes/{id}"),
-        Some(json!({"token": "new-token"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let updated = body_json(res).await;
-    assert_eq!(updated["token_set"], true);
-    assert_no_token_leak(&updated, "old-token");
-    assert_no_token_leak(&updated, "new-token");
+        let res = req(
+            &app,
+            Method::PATCH,
+            &format!("/api/control-planes/{id}"),
+            Some(case.patch_body),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let updated = body_json(res).await;
+        assert_eq!(updated["token_set"], case.expect_token_set, "{}", case.note);
+        assert_no_token_leak(&updated, case.initial_token);
+        (case.also_check)(&updated);
+    }
 }
 
 #[tokio::test]

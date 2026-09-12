@@ -1,16 +1,11 @@
 //! Tests for the template `orchestration` block: `POST /api/templates`'s
 //! save-time validation.
 //!
-//! Covers two hard requirements: `orchestration.status_map` is rejected
-//! with a 400 naming the bad key when it references a status the
-//! template's *own* workflow doesn't have (reusing
-//! `handlers::orch::validate_status_map` — the same function `PUT
-//! /orch-link` uses); and `orchestration.pipeline_yaml`, when supplied
-//! inline, is rejected when it isn't even parseable YAML. Also covers
-//! backward compatibility: a template with no `orchestration` key at all
-//! behaves exactly as before, with no `TACK_ORCH_ENABLE` dependency
-//! anywhere in this path — nothing here is gated, because nothing here does
-//! anything beyond storing a JSON blob.
+//! Covers: `orchestration.status_map` rejected with a 400 naming the bad
+//! key when it references a status the template's own workflow doesn't
+//! have; `orchestration.pipeline_yaml` rejected when it isn't parseable
+//! YAML; and backward compatibility — an absent/null `orchestration` key
+//! behaves exactly as before, with no `TACK_ORCH_ENABLE` dependency.
 
 use crate::common;
 
@@ -41,47 +36,26 @@ async fn body_json(res: axum::response::Response) -> Value {
 }
 
 /// A template with no `orchestration` key at all — the shape every template
-/// had before `orchestration` was added, and the shape every built-in still
-/// has — must keep working unchanged. This is TACK_ORCH_ENABLE-independent: the
-/// default test app has orchestration disabled entirely, and this must
-/// still succeed.
+/// had before `orchestration` was added — and one with an explicit
+/// `"orchestration": null` are the same absent-means-nothing case: both must
+/// keep working unchanged. This is TACK_ORCH_ENABLE-independent: the default
+/// test app has orchestration disabled entirely, and both must still
+/// succeed.
 #[tokio::test]
-async fn create_template_without_orchestration_key_still_works() {
-    let (app, _workspace_id) = common::test_app().await;
+async fn create_template_without_or_with_null_orchestration_works() {
+    let cases = [None, Some(Value::Null)];
+    for orchestration in cases {
+        let (app, _workspace_id) = common::test_app().await;
+        let mut body = json!({"name": "Plain Template", "project_type": "software"});
+        if let Some(v) = orchestration {
+            body["orchestration"] = v;
+        }
 
-    let res = req(
-        &app,
-        Method::POST,
-        "/api/templates",
-        json!({
-            "name": "Plain Template",
-            "project_type": "software",
-        }),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = body_json(res).await;
-    assert!(body.get("orchestration").is_none_or(|v| v.is_null()));
-}
-
-/// An explicit `"orchestration": null` is the same as omitting the key —
-/// both are the absent-means-nothing case.
-#[tokio::test]
-async fn create_template_with_null_orchestration_still_works() {
-    let (app, _workspace_id) = common::test_app().await;
-
-    let res = req(
-        &app,
-        Method::POST,
-        "/api/templates",
-        json!({
-            "name": "Explicit Null Orchestration",
-            "project_type": "software",
-            "orchestration": null,
-        }),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
+        let res = req(&app, Method::POST, "/api/templates", body).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let created = body_json(res).await;
+        assert!(created.get("orchestration").is_none_or(|v| v.is_null()));
+    }
 }
 
 /// The main requirement: an unknown status name in
@@ -124,7 +98,7 @@ async fn create_template_rejects_unknown_status_map_name() {
 /// `simple_workflow()` name that isn't in *this* template's workflow) must
 /// fail.
 #[tokio::test]
-async fn create_template_validates_status_map_against_its_own_workflow() {
+async fn create_template_validates_status_map_against_own_workflow() {
     let (app, _workspace_id) = common::test_app().await;
 
     let custom_workflow = json!({

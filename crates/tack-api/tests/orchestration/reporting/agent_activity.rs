@@ -2,15 +2,12 @@
 //! `GET /api/items/{id}/agent-activity` and
 //! `GET /api/projects/{id}/agent-activity`.
 //!
-//! Covers: both routes 404 with `TACK_ORCH_ENABLE` unset;
-//! an unknown item 404s on the detail endpoint; the bulk endpoint is an inner
-//! join (items with no `orch_tasks` row are absent, never a null-status row);
-//! the "latest attempt" tie-break (highest `attempt`, then `dispatched_at`
-//! desc); attempts are newest-first; a task's `remote_run_id` correlates the
-//! right `orch_runs` row and `orch_events`; `run.error` is `""` not `null`
-//! when absent; `pricing_snapshot_at` is always `null`; approvals include
-//! both pending and decided, newest-requested-first; and `events_truncated`
-//! reflects whether any attempt predates the retention cutoff.
+//! Covers: the off/unknown-item guards; the bulk endpoint's inner join and
+//! "latest attempt" tie-break; attempts newest-first; `remote_run_id`
+//! correlating the right `orch_runs`/`orch_events` rows; honesty fields
+//! (`run.error` is `""` not `null`, `pricing_snapshot_at` is always `null`);
+//! approvals (pending and decided, newest-first); and `events_truncated`
+//! reflecting the retention cutoff.
 
 use crate::common;
 
@@ -191,136 +188,128 @@ async fn item_agent_activity_empty_for_item_with_no_dispatches() {
 
 // ─── Bulk badge endpoint: inner join + latest-attempt tie-break ───────────
 
+/// The bulk endpoint is an inner join on `orch_tasks`: with nothing
+/// dispatched anywhere, `rows` is empty; with one of two items dispatched,
+/// `rows` has exactly that one item — the untouched item never appears as
+/// a null-status row.
 #[tokio::test]
-async fn project_agent_activity_is_inner_join_excludes_items_with_no_tasks() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
-    let dispatched_item = create_item(&app, project_id, "Dispatched").await;
-    let _untouched_item = create_item(&app, project_id, "Never dispatched").await;
+async fn project_agent_activity_is_inner_join_on_orch_tasks() {
+    struct Case {
+        seed_dispatched_task: bool,
+    }
+    let cases = [
+        Case {
+            seed_dispatched_task: false,
+        },
+        Case {
+            seed_dispatched_task: true,
+        },
+    ];
 
-    state
-        .repo
-        .upsert_orch_tasks(&[new_task(dispatched_item, "task-1", 1, Utc::now())])
-        .await
-        .expect("seed task");
+    for case in cases {
+        let (app, state) = app_with_state(orch_config()).await;
+        let project_id =
+            common::create_project(&app, "Agent Activity Test Project", "software").await;
+        let dispatched_item = create_item(&app, project_id, "Dispatched").await;
+        let _untouched_item = create_item(&app, project_id, "Never dispatched").await;
+        if case.seed_dispatched_task {
+            state
+                .repo
+                .upsert_orch_tasks(&[new_task(dispatched_item, "task-1", 1, Utc::now())])
+                .await
+                .expect("seed task");
+        }
 
-    let res = req(
-        &app,
-        Method::GET,
-        &format!("/api/projects/{project_id}/agent-activity"),
-        None,
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    let rows = v["rows"].as_array().unwrap();
-    assert_eq!(
-        rows.len(),
-        1,
-        "an item with zero orch_tasks rows must not appear at all (inner join, not a null-status row): {rows:?}"
-    );
-    assert_eq!(rows[0]["item_id"], dispatched_item.to_string());
+        let res = req(
+            &app,
+            Method::GET,
+            &format!("/api/projects/{project_id}/agent-activity"),
+            None,
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(res).await;
+        let rows = v["rows"].as_array().unwrap();
+        if case.seed_dispatched_task {
+            assert_eq!(
+                rows.len(),
+                1,
+                "an item with zero orch_tasks rows must not appear at all (inner join, not a null-status row): {rows:?}"
+            );
+            assert_eq!(rows[0]["item_id"], dispatched_item.to_string());
+        } else {
+            assert_eq!(
+                rows,
+                &Vec::<Value>::new(),
+                "no activity anywhere: rows must be empty"
+            );
+        }
+    }
 }
 
+/// The "latest attempt" tie-break: the highest `attempt` number wins
+/// regardless of `dispatched_at` ordering; on an attempt-number tie, the
+/// row with the later `dispatched_at` wins.
 #[tokio::test]
-async fn project_agent_activity_returns_empty_rows_for_project_with_no_activity() {
-    let (app, _) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
-    create_item(&app, project_id, "No activity").await;
+async fn project_agent_activity_latest_attempt_wins_tie_break() {
+    struct Case {
+        a: (i64, Duration, &'static str),
+        b: (i64, Duration, &'static str),
+        expect_attempt: i64,
+        expect_status: &'static str,
+        note: &'static str,
+    }
+    let cases = [
+        Case {
+            a: (1, Duration::hours(2), "failed"),
+            b: (2, Duration::hours(1), "running"),
+            expect_attempt: 2,
+            expect_status: "running",
+            note: "the higher attempt number must win regardless of dispatched_at ordering",
+        },
+        Case {
+            a: (1, Duration::hours(2), "failed"),
+            b: (1, Duration::minutes(1), "done"),
+            expect_attempt: 1,
+            expect_status: "done",
+            note: "on an attempt-number tie, the row with the later dispatched_at must win",
+        },
+    ];
 
-    let res = req(
-        &app,
-        Method::GET,
-        &format!("/api/projects/{project_id}/agent-activity"),
-        None,
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    assert_eq!(v["rows"], json!([]));
-}
+    for case in cases {
+        let (app, state) = app_with_state(orch_config()).await;
+        let project_id =
+            common::create_project(&app, "Agent Activity Test Project", "software").await;
+        let item_id = create_item(&app, project_id, "Redispatched item").await;
+        let now = Utc::now();
+        let task_for = |task_id: &str, (attempt, age, status): (i64, Duration, &str)| {
+            let mut t = new_task(item_id, task_id, attempt, now - age);
+            t.remote_status = status.to_string();
+            t
+        };
+        state
+            .repo
+            .upsert_orch_tasks(&[task_for("task-a", case.a), task_for("task-b", case.b)])
+            .await
+            .expect("seed tasks");
 
-#[tokio::test]
-async fn project_agent_activity_latest_attempt_wins_by_highest_attempt_number() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
-    let item_id = create_item(&app, project_id, "Redispatched item").await;
-
-    let now = Utc::now();
-    state
-        .repo
-        .upsert_orch_tasks(&[
-            {
-                let mut t = new_task(item_id, "task-attempt-1", 1, now - Duration::hours(2));
-                t.remote_status = "failed".to_string();
-                t
-            },
-            {
-                let mut t = new_task(item_id, "task-attempt-2", 2, now - Duration::hours(1));
-                t.remote_status = "running".to_string();
-                t
-            },
-        ])
-        .await
-        .expect("seed tasks");
-
-    let res = req(
-        &app,
-        Method::GET,
-        &format!("/api/projects/{project_id}/agent-activity"),
-        None,
-    )
-    .await;
-    let v = body_json(res).await;
-    let rows = v["rows"].as_array().unwrap();
-    assert_eq!(rows.len(), 1, "one row per item, not one per attempt");
-    assert_eq!(rows[0]["attempt"], 2);
-    assert_eq!(
-        rows[0]["remote_status"], "running",
-        "the higher attempt number must win regardless of dispatched_at ordering"
-    );
-}
-
-#[tokio::test]
-async fn project_agent_activity_ties_on_attempt_break_by_dispatched_at_desc() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
-    let item_id = create_item(&app, project_id, "Two same-attempt rows").await;
-
-    let now = Utc::now();
-    // Same attempt number, different remote_task_id (the PK requires that) and
-    // different dispatched_at — the later dispatched_at must win.
-    state
-        .repo
-        .upsert_orch_tasks(&[
-            {
-                let mut t = new_task(item_id, "task-older", 1, now - Duration::hours(2));
-                t.remote_status = "failed".to_string();
-                t
-            },
-            {
-                let mut t = new_task(item_id, "task-newer", 1, now - Duration::minutes(1));
-                t.remote_status = "done".to_string();
-                t
-            },
-        ])
-        .await
-        .expect("seed tasks");
-
-    let res = req(
-        &app,
-        Method::GET,
-        &format!("/api/projects/{project_id}/agent-activity"),
-        None,
-    )
-    .await;
-    let v = body_json(res).await;
-    let rows = v["rows"].as_array().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0]["remote_status"], "done",
-        "on an attempt-number tie, the row with the later dispatched_at must win"
-    );
+        let res = req(
+            &app,
+            Method::GET,
+            &format!("/api/projects/{project_id}/agent-activity"),
+            None,
+        )
+        .await;
+        let v = body_json(res).await;
+        let rows = v["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "one row per item, not one per attempt");
+        assert_eq!(rows[0]["attempt"], case.expect_attempt);
+        assert_eq!(
+            rows[0]["remote_status"], case.expect_status,
+            "{}",
+            case.note
+        );
+    }
 }
 
 // ─── Item detail endpoint: ordering, run/event correlation, honesty fields ─
@@ -369,7 +358,7 @@ async fn item_agent_activity_attempts_are_newest_first() {
 }
 
 #[tokio::test]
-async fn item_agent_activity_correlates_run_and_events_via_remote_run_id() {
+async fn item_agent_activity_correlates_run_and_events_by_run_id() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Correlated item").await;
@@ -449,7 +438,7 @@ async fn item_agent_activity_correlates_run_and_events_via_remote_run_id() {
 }
 
 #[tokio::test]
-async fn item_agent_activity_run_is_null_when_remote_run_id_unresolved() {
+async fn item_agent_activity_run_is_null_when_run_id_unresolved() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Queued item").await;
@@ -476,7 +465,7 @@ async fn item_agent_activity_run_is_null_when_remote_run_id_unresolved() {
 }
 
 #[tokio::test]
-async fn item_agent_activity_includes_pending_and_decided_approvals_newest_first() {
+async fn item_agent_activity_includes_pending_and_decided_approvals() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Approvals item").await;
@@ -539,66 +528,64 @@ async fn item_agent_activity_includes_pending_and_decided_approvals_newest_first
 
 // ─── events_truncated honesty signal ───────────────────────────────────────
 
+/// `events_truncated` flags whether any attempt predates the retention
+/// cutoff: false for a fresh dispatch under the default window, true once
+/// an attempt is older than a (here, shortened) retention window.
 #[tokio::test]
-async fn events_truncated_is_false_when_nothing_predates_the_retention_cutoff() {
-    let (app, state) = app_with_state(orch_config()).await;
-    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
-    let item_id = create_item(&app, project_id, "Fresh item").await;
+async fn events_truncated_reflects_retention_cutoff() {
+    struct Case {
+        retention_days: Option<u32>,
+        task_age: Duration,
+        expect_truncated: bool,
+    }
+    let cases = [
+        Case {
+            retention_days: None,
+            task_age: Duration::zero(),
+            expect_truncated: false,
+        },
+        Case {
+            retention_days: Some(1),
+            task_age: Duration::days(30),
+            expect_truncated: true,
+        },
+    ];
 
-    state
-        .repo
-        .upsert_orch_tasks(&[new_task(item_id, "task-fresh", 1, Utc::now())])
-        .await
-        .expect("seed task");
+    for case in cases {
+        let config = match case.retention_days {
+            Some(orch_event_retention_days) => AppConfig {
+                orch_event_retention_days,
+                ..orch_config()
+            },
+            None => orch_config(),
+        };
+        let (app, state) = app_with_state(config.clone()).await;
+        let project_id =
+            common::create_project(&app, "Agent Activity Test Project", "software").await;
+        let item_id = create_item(&app, project_id, "Retention item").await;
 
-    let res = req(
-        &app,
-        Method::GET,
-        &format!("/api/items/{item_id}/agent-activity"),
-        None,
-    )
-    .await;
-    let v = body_json(res).await;
-    assert_eq!(v["events_truncated"], false);
-    assert_eq!(
-        v["events_retention_days"],
-        json!(AppConfig::default().orch_event_retention_days)
-    );
-}
+        state
+            .repo
+            .upsert_orch_tasks(&[new_task(item_id, "task-1", 1, Utc::now() - case.task_age)])
+            .await
+            .expect("seed task");
 
-#[tokio::test]
-async fn events_truncated_is_true_when_an_attempt_predates_the_retention_cutoff() {
-    let config = AppConfig {
-        orch_event_retention_days: 1,
-        ..orch_config()
-    };
-    let (app, state) = app_with_state(config).await;
-    let project_id = common::create_project(&app, "Agent Activity Test Project", "software").await;
-    let item_id = create_item(&app, project_id, "Old item").await;
-
-    // Dispatched well before the 1-day retention cutoff.
-    state
-        .repo
-        .upsert_orch_tasks(&[new_task(
-            item_id,
-            "task-ancient",
-            1,
-            Utc::now() - Duration::days(30),
-        )])
-        .await
-        .expect("seed task");
-
-    let res = req(
-        &app,
-        Method::GET,
-        &format!("/api/items/{item_id}/agent-activity"),
-        None,
-    )
-    .await;
-    let v = body_json(res).await;
-    assert_eq!(
-        v["events_truncated"], true,
-        "an attempt older than the retention window must flag that its events may have been rolled up"
-    );
-    assert_eq!(v["events_retention_days"], json!(1));
+        let res = req(
+            &app,
+            Method::GET,
+            &format!("/api/items/{item_id}/agent-activity"),
+            None,
+        )
+        .await;
+        let v = body_json(res).await;
+        assert_eq!(
+            v["events_truncated"], case.expect_truncated,
+            "retention_days={:?} task_age={:?}",
+            case.retention_days, case.task_age
+        );
+        assert_eq!(
+            v["events_retention_days"],
+            json!(config.orch_event_retention_days)
+        );
+    }
 }

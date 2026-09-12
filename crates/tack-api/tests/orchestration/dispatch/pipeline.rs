@@ -1,16 +1,11 @@
 //! Tests for `POST /api/projects/{id}/orch-dispatch` (ADR 0065) — the
 //! project-level docket pipeline trigger. Distinct from the item/sprint
-//! dispatch routes covered by `item.rs`: this route claims no Tack item,
-//! so its tests assert directly that it never writes `orch_tasks` or
-//! `execution_requests`, never that a status code alone implies it.
+//! dispatch routes (`item.rs`): this route claims no Tack item, so tests
+//! assert directly that it never writes `orch_tasks`/`execution_requests`.
 //!
-//! Covers: `409 orchestration_disabled` with `TACK_ORCH_ENABLE` off;
-//! `403` with `TACK_ORCH_DISPATCH_TOKEN` unset (the safe default) or a
-//! wrong header value, regardless of the ordinary Bearer token; `404` for
-//! an unknown project and for a project with no docket link; the happy
-//! path (`run_id`/`remote_project` in the response, `variables` reaching
-//! docket verbatim, zero `orch_tasks`/`execution_requests` rows written);
-//! and that the `variables` body never reaches the logs.
+//! Covers: the off/token/not-found guards; the happy path (`run_id` in the
+//! response, `variables` reaching docket verbatim, zero item-scoped rows
+//! written); and that `variables` never reaches the logs.
 
 use crate::common;
 
@@ -209,41 +204,56 @@ async fn dispatch_409s_when_orch_disabled() {
 
 // ─── Fail-closed dispatch token — the acceptance-2 / acceptance-10 case ────
 
+/// Every way the dispatch-token gate can fail closed: the token unset in
+/// config at all (the safe default — and the one case whose message must
+/// name the missing gate, not just refuse silently), a wrong header value
+/// against a configured token, and a missing header against a configured
+/// token.
 #[tokio::test]
-async fn dispatch_403s_when_dispatch_token_unset() {
-    // orch_dispatch_token: None — the safe default this test pins.
-    let (app, _) = app_with_state(orch_config()).await;
-    let project_id =
-        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
+async fn dispatch_403s_when_token_unset_wrong_or_missing() {
+    struct Case {
+        config_token: Option<&'static str>,
+        request_token: Option<&'static str>,
+        check_names_missing_gate: bool,
+    }
+    let cases = [
+        Case {
+            config_token: None,
+            request_token: Some("anything"),
+            check_names_missing_gate: true,
+        },
+        Case {
+            config_token: Some("correct-token"),
+            request_token: Some("wrong-token"),
+            check_names_missing_gate: false,
+        },
+        Case {
+            config_token: Some("correct-token"),
+            request_token: None,
+            check_names_missing_gate: false,
+        },
+    ];
 
-    let res = dispatch_pipeline(&app, project_id, Some("anything"), None).await;
-    assert_eq!(res.status(), StatusCode::FORBIDDEN);
-    let body = body_json_val(res).await;
-    let message = body["error"]["message"].as_str().unwrap_or_default();
-    assert!(
-        message.contains("TACK_ORCH_DISPATCH_TOKEN"),
-        "must name the missing gate, not just refuse silently: {body}"
-    );
-}
+    for case in cases {
+        let config = match case.config_token {
+            Some(t) => orch_config_with_dispatch_token(t),
+            None => orch_config(),
+        };
+        let (app, _) = app_with_state(config).await;
+        let project_id =
+            common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
 
-#[tokio::test]
-async fn dispatch_403s_when_dispatch_token_wrong() {
-    let (app, _) = app_with_state(orch_config_with_dispatch_token("correct-token")).await;
-    let project_id =
-        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
-
-    let res = dispatch_pipeline(&app, project_id, Some("wrong-token"), None).await;
-    assert_eq!(res.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn dispatch_403s_when_dispatch_token_header_missing() {
-    let (app, _) = app_with_state(orch_config_with_dispatch_token("correct-token")).await;
-    let project_id =
-        common::create_project(&app, "Pipeline Dispatch Test Project", "software").await;
-
-    let res = dispatch_pipeline(&app, project_id, None, None).await;
-    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let res = dispatch_pipeline(&app, project_id, case.request_token, None).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        if case.check_names_missing_gate {
+            let body = body_json_val(res).await;
+            let message = body["error"]["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("TACK_ORCH_DISPATCH_TOKEN"),
+                "must name the missing gate, not just refuse silently: {body}"
+            );
+        }
+    }
 }
 
 // ─── Project resolution: no second way to name a docket project ───────────
@@ -268,7 +278,7 @@ async fn dispatch_404s_when_project_not_linked() {
 // ─── Happy path: run started, nothing item-scoped written ─────────────────
 
 #[tokio::test]
-async fn dispatch_success_returns_run_id_and_writes_no_item_scoped_row() {
+async fn dispatch_success_returns_run_id_writes_no_item_scoped_row() {
     let server = MockServer::start().await;
     mock_dispatch_allow(&server, "demo-pipeline", "run-happy-1").await;
 

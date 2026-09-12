@@ -2,13 +2,12 @@
 //! the runtime-toggleable replacement for the old `TACK_ORCH_ENABLE`-only
 //! design.
 //!
-//! Covers: the settings endpoint stays reachable while orchestration is
-//! disabled (the entire point — a UI on a server that has never turned this
-//! on must still be able to read and enable it); `source` distinguishes
-//! `"env_default"` from `"database"`; and — the part that actually proves
-//! "no restart required" — `PUT` starts and stops the live reconciler task
-//! for a registered control plane, observable via `reconciler_running` and
-//! `control_plane_count`, with repeated toggles never leaking a task.
+//! Covers: the endpoint stays reachable while orchestration is disabled (a
+//! UI on a server that never turned this on must still read/enable it);
+//! `source` distinguishes `"env_default"` from `"database"`; and — proving
+//! "no restart required" — `PUT` starts/stops the live reconciler task,
+//! observable via `reconciler_running`, with repeated toggles never
+//! leaking a task.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -101,23 +100,25 @@ async fn put_settings(app: &Router, enabled: bool) -> Value {
 }
 
 /// Poll `GET` until `reconciler_running` matches `want`, or panic after a
-/// generous timeout. Cooperative shutdown is fast (the stop signal races the
+/// generous bound. Cooperative shutdown is fast (the stop signal races the
 /// poll-interval sleep via `select!`, so it doesn't wait a full poll
 /// interval — see `orch_runtime.rs`'s module doc) but is not synchronous
 /// with the `PUT` response, so tests that just flipped the setting off poll
-/// briefly rather than asserting instantaneously.
+/// briefly rather than asserting instantaneously. `Interval::tick` (not a
+/// bare `yield_now` loop) forces this current-thread runtime to actually
+/// park between checks, the same reasoning `auto_dispatch/hook.rs`'s
+/// `wait_for_hits` documents for real background-task completion.
 async fn wait_for_reconciler_running(app: &Router, want: bool) -> Value {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    loop {
-        let body = get_settings(app).await;
-        if body["reconciler_running"] == want {
-            return body;
+    let mut ticker = tokio::time::interval(Duration::from_millis(30));
+    let mut last = get_settings(app).await;
+    for _ in 0..100 {
+        if last["reconciler_running"] == want {
+            return last;
         }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("reconciler_running never became {want}; last seen: {body}");
-        }
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        ticker.tick().await;
+        last = get_settings(app).await;
     }
+    panic!("reconciler_running never became {want}; last seen: {last}");
 }
 
 // ─── GET: reachable regardless, correct source attribution ────────────────
@@ -199,7 +200,7 @@ async fn put_false_after_put_true_stays_database_sourced() {
 // ─── Runtime start/stop, no restart ────────────────────────────────────────
 
 #[tokio::test]
-async fn put_true_starts_the_reconciler_for_an_already_registered_plane() {
+async fn put_true_starts_reconciler_for_already_registered_plane() {
     let (app, state, _) = app_with_state(AppConfig::default()).await;
 
     // Register a control plane directly via the repo — orchestration is
