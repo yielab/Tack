@@ -1,38 +1,56 @@
-//! End-to-end integration tests for trace ingestion: a real
-//! `tack_db::Repository` (in-memory SQLite, real migrations),
-//! a real `DocketAdapter` pointed at a `wiremock` stand-in for docket, and
-//! the real `reconciler::spawn_reconcilers` loop.
+//! Trace ingestion against a real `Repository`, a real `DocketAdapter`, and
+//! the real reconciler loop — proving two things the reconciler's own
+//! fake-store unit tests cannot: idempotent re-polling through the real
+//! `orch_events` table, and that a re-ingested, already-purged event is
+//! never resurrected or double-counted by a later rollup.
 //!
-//! This file focuses on exactly the two things `reconciler.rs`'s own
-//! `#[cfg(test)]` unit tests (against a `FakeStore`) cannot prove, because
-//! that fake is a plain in-memory `Vec` with no `ON CONFLICT` semantics:
-//!
-//!   1. **Row-count idempotency through the real `orch_events` table** —
-//!      re-polling an overlapping cursor window, including a deliberately
-//!      rewound cursor, must produce **zero** new rows, which only a real
-//!      `ON CONFLICT(id) DO UPDATE` table can actually demonstrate.
-//!   2. **Retention composition** — an event re-ingested after its row was
-//!      already rolled up into `orch_events_daily` and purged must not
-//!      resurrect a raw row that then gets double-counted by a later
-//!      rollup. This needs the real repo-layer rollup function
-//!      (`Repository::rollup_and_purge_orch_events`) alongside real
-//!      ingestion — exercising both together is the whole point.
-//!
-//! `TestRepoStore` lives in `support.rs`, shared with `runs.rs`. The pool and
-//! workspace/project/item seed come from `crate::common`.
-
-use std::sync::Arc;
-use std::time::Duration;
+//! `TestRepoStore` and the polling helpers live in `support.rs`, shared
+//! with `runs.rs`.
 
 use chrono::Utc;
+use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use tack_db::repo::orch::NewOrchTask;
-use tack_orch::reconciler::{ControlPlaneStore, ReconcilerConfig, spawn_reconcilers};
+use tack_db::Repository;
+use tack_db::repo::orch::{OrchEventDailyAggregate, RollupStats};
+use tack_orch::reconciler::DEFAULT_RETENTION_DAYS;
 
-use crate::common::{create_test_workspace, make_item, make_project, setup_test_db};
-use crate::support::{TestRepoStore, mount_health_and_status, seed_control_plane_and_link};
+use crate::common::setup_test_db;
+use crate::support::{
+    fast_poll_config, last_seen_at, mount_health_and_status, orch_event_count, plane_health,
+    poll_until, run_one_more_tick, seed_control_plane_and_link, seed_project_with_pending_task,
+    spawn_reconciler, stop_reconciler, wait_and_stop,
+};
+
+async fn rollup_and_purge(repo: &Repository) -> RollupStats {
+    repo.rollup_and_purge_orch_events(Utc::now(), 500)
+        .await
+        .expect("rollup and purge")
+}
+
+async fn daily_events(repo: &Repository, control_plane_id: Uuid) -> Vec<OrchEventDailyAggregate> {
+    repo.list_orch_events_daily(control_plane_id)
+        .await
+        .expect("list daily aggregate")
+}
+
+/// Fetches the events attributed to `item_id`, asserting there's exactly
+/// one, and returns its `event_type` — every caller here goes on to check
+/// that type, and this is the only test asserting correlation narrows to a
+/// single event rather than mirroring every fetched event onto the item.
+async fn expect_one_event_type(repo: &Repository, item_id: Uuid) -> String {
+    let events = repo
+        .list_orch_events_for_item(item_id, None)
+        .await
+        .expect("list events for item");
+    assert_eq!(
+        events.len(),
+        1,
+        "only the correlated event attributes to the item"
+    );
+    events[0].event_type.clone()
+}
 
 const EMPTY_RUNS_BODY: &str = r#"{"runs":[]}"#;
 const EMPTY_APPROVALS_BODY: &str = r#"{"pending":[]}"#;
@@ -54,13 +72,11 @@ async fn mount_common(server: &MockServer) {
         .await;
 }
 
-/// Builds docket's *real* wire shape for `GET /traces/{project}` — verified
-/// against `serve.py`'s `_traces_page`/`do_GET` (see
+/// Builds docket's real wire shape for `GET /traces/{project}` (see
 /// `adapters/docket.rs`'s module doc): `events` is an array of raw JSON
 /// **strings**, each independently encoding one event object, not an array
-/// of objects. Every fixture/mock body in this file goes through this
-/// helper specifically so a regression back to the old (wrong) shape would
-/// fail this file's tests, not just `docket_adapter_test.rs`'s.
+/// of objects. Every mock body in this file goes through this helper
+/// specifically so a regression to the old (wrong) shape fails here too.
 fn traces_body(events: &[serde_json::Value], next: &str) -> String {
     let encoded: Vec<String> = events
         .iter()
@@ -87,33 +103,12 @@ fn trace_event_json(session_id: &str, ts: &str, event_type: &str) -> serde_json:
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_correlated_and_uncorrelated_trace_event_mirror_and_re_polling_is_idempotent() {
+async fn overlapping_polls_correlate_once_and_never_duplicate() {
     let repo = setup_test_db().await;
-    let workspace_id = create_test_workspace(&repo).await;
-    let project = make_project(&repo, workspace_id).await;
-    let item = make_item(&repo, &project).await;
-
-    repo.upsert_orch_tasks(&[NewOrchTask {
-        item_id: item.id,
-        remote_task_id: "task-1".into(),
-        remote_run_id: None,
-        remote_status: "pending".into(),
-        attempt: 1,
-        tokens_in: 0,
-        tokens_out: 0,
-        cost_usd_estimated: None,
-        dispatched_at: Utc::now(),
-        trusted: true,
-    }])
-    .await
-    .expect("seed orch task");
+    let fixture = seed_project_with_pending_task(&repo).await;
 
     let server = MockServer::start().await;
     mount_common(&server).await;
-
-    // Recent timestamps (within the default 90-day retention window) so
-    // persist_events' age filter never interferes with this test — that's
-    // covered separately below.
     let events = vec![
         trace_event_json("agent:demo:task-1", "2026-08-04T19:52:27Z", "tool_call"),
         trace_event_json(
@@ -122,9 +117,8 @@ async fn a_correlated_and_uncorrelated_trace_event_mirror_and_re_polling_is_idem
             "session_start",
         ),
     ];
-    // Matches *any* /traces/demo request regardless of `since` — every poll
-    // (including a rewound one) sees the identical overlapping window,
-    // which is exactly the scenario this test is proving is safe.
+    // Ignores `since` entirely, so the rewound cursor below re-fetches the
+    // identical overlapping window.
     Mock::given(method("GET"))
         .and(path("/traces/demo"))
         .respond_with(
@@ -134,112 +128,51 @@ async fn a_correlated_and_uncorrelated_trace_event_mirror_and_re_polling_is_idem
         .mount(&server)
         .await;
 
-    let control_plane_id = seed_control_plane_and_link(&repo, project.id, &server.uri()).await;
-
-    let store: Arc<dyn ControlPlaneStore> = Arc::new(TestRepoStore { repo: repo.clone() });
-    let handles = spawn_reconcilers(
-        true,
-        store,
-        ReconcilerConfig {
-            poll_secs: 1,
-            ..Default::default()
-        },
-    )
+    let control_plane_id =
+        seed_control_plane_and_link(&repo, fixture.project.id, &server.uri()).await;
+    let config = fast_poll_config(DEFAULT_RETENTION_DAYS);
+    let handles = spawn_reconciler(&repo, config).await;
+    poll_until("both trace events land", || async {
+        orch_event_count(&repo).await == 2
+    })
     .await;
-    assert_eq!(handles.len(), 1);
+    let landed_at = last_seen_at(&repo, control_plane_id).await;
+    wait_and_stop(&repo, control_plane_id, landed_at, handles).await;
 
-    // Several ticks (poll_secs=1, jittered 0.8-1.2s) — each one re-fetches
-    // the same overlapping window from the mock above.
-    tokio::time::sleep(Duration::from_millis(2_600)).await;
-    for h in handles {
-        h.abort();
-    }
-
-    let event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_events")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count events");
     assert_eq!(
-        event_count, 2,
+        orch_event_count(&repo).await,
+        2,
         "repeated overlapping polls must not duplicate orch_events rows"
     );
-
-    let events_for_item = repo
-        .list_orch_events_for_item(item.id, None)
-        .await
-        .expect("list events for item");
     assert_eq!(
-        events_for_item.len(),
-        1,
-        "only the correlated event attributes to the item"
+        expect_one_event_type(&repo, fixture.item.id).await,
+        "tool_call"
     );
-    assert_eq!(events_for_item[0].event_type, "tool_call");
 
-    // -- Now deliberately rewind the cursor and re-poll. -----------------
+    // Deliberately rewind the cursor and re-poll.
     repo.set_trace_cursor(control_plane_id, "demo", "")
         .await
         .expect("rewind cursor");
+    let before_repoll = last_seen_at(&repo, control_plane_id).await;
+    run_one_more_tick(&repo, control_plane_id, before_repoll, config).await;
 
-    let store: Arc<dyn ControlPlaneStore> = Arc::new(TestRepoStore { repo: repo.clone() });
-    let handles = spawn_reconcilers(
-        true,
-        store,
-        ReconcilerConfig {
-            poll_secs: 1,
-            ..Default::default()
-        },
-    )
-    .await;
-    tokio::time::sleep(Duration::from_millis(1_400)).await;
-    for h in handles {
-        h.abort();
-    }
-
-    let event_count_after_rewind: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_events")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count events after rewind");
     assert_eq!(
-        event_count_after_rewind, 2,
-        "a deliberately rewound cursor re-ingesting an overlapping window must \
-         produce zero new rows"
+        orch_event_count(&repo).await,
+        2,
+        "a rewound cursor re-ingesting an overlapping window must add zero rows"
     );
-
-    let plane = repo
-        .get_control_plane(control_plane_id)
-        .await
-        .expect("get control plane");
-    assert_eq!(plane.health, "healthy");
+    assert_eq!(plane_health(&repo, control_plane_id).await, "healthy");
 }
 
 #[tokio::test]
-async fn retention_composition_re_ingesting_a_purged_event_does_not_double_count() {
+async fn purged_trace_events_are_never_resurrected_or_recounted() {
     let repo = setup_test_db().await;
-    let workspace_id = create_test_workspace(&repo).await;
-    let project = make_project(&repo, workspace_id).await;
-    let item = make_item(&repo, &project).await;
-
-    repo.upsert_orch_tasks(&[NewOrchTask {
-        item_id: item.id,
-        remote_task_id: "task-1".into(),
-        remote_run_id: None,
-        remote_status: "pending".into(),
-        attempt: 1,
-        tokens_in: 0,
-        tokens_out: 0,
-        cost_usd_estimated: None,
-        dispatched_at: Utc::now(),
-        trusted: true,
-    }])
-    .await
-    .expect("seed orch task");
+    let fixture = seed_project_with_pending_task(&repo).await;
 
     let server = MockServer::start().await;
     mount_common(&server).await;
-
-    // Deliberately ancient — this is the event a real, badly-rewound cursor
-    // would re-deliver long after a retention sweep has already rolled it
-    // up and purged it.
+    // Deliberately ancient: what a badly-rewound cursor would re-deliver
+    // long after a retention sweep already rolled it up and purged it.
     let stale_ts = "2020-01-01T00:00:05Z";
     let events = vec![trace_event_json("agent:demo:task-1", stale_ts, "tool_call")];
     Mock::given(method("GET"))
@@ -251,104 +184,41 @@ async fn retention_composition_re_ingesting_a_purged_event_does_not_double_count
         .mount(&server)
         .await;
 
-    let control_plane_id = seed_control_plane_and_link(&repo, project.id, &server.uri()).await;
+    let control_plane_id =
+        seed_control_plane_and_link(&repo, fixture.project.id, &server.uri()).await;
 
     // Phase 1: ingest with a retention window wide enough that the 2020
-    // timestamp is not filtered at ingest time.
-    let store: Arc<dyn ControlPlaneStore> = Arc::new(TestRepoStore { repo: repo.clone() });
-    let handles = spawn_reconcilers(
-        true,
-        store,
-        ReconcilerConfig {
-            poll_secs: 1,
-            event_retention_days: 36_500, // ~100 years — never filters this fixture
-            ..Default::default()
-        },
-    )
+    // timestamp isn't filtered at ingest time.
+    let handles = spawn_reconciler(&repo, fast_poll_config(36_500)).await;
+    poll_until("the stale event lands", || async {
+        orch_event_count(&repo).await == 1
+    })
     .await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    for h in handles {
-        h.abort();
-    }
+    stop_reconciler(handles).await;
 
-    let count_after_ingest: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_events")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count events");
-    assert_eq!(
-        count_after_ingest, 1,
-        "the stale-but-not-yet-retained event must land"
-    );
-
-    // Phase 2: roll it up and purge it — simulating the retention sweep
-    // having already run past this event's age.
-    let cutoff = Utc::now();
-    let stats = repo
-        .rollup_and_purge_orch_events(cutoff, 500)
-        .await
-        .expect("rollup and purge");
-    assert_eq!(stats.rows_purged, 1);
-
-    let count_after_purge: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_events")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count events after purge");
-    assert_eq!(count_after_purge, 0);
-
-    let daily = repo
-        .list_orch_events_daily(control_plane_id)
-        .await
-        .expect("list daily aggregate");
-    assert_eq!(daily.len(), 1);
+    // Phase 2: roll it up and purge it, simulating a retention sweep that
+    // already ran past this event's age.
+    assert_eq!(rollup_and_purge(&repo).await.rows_purged, 1);
+    assert_eq!(orch_event_count(&repo).await, 0);
+    let daily = daily_events(&repo, control_plane_id).await;
     assert_eq!(daily[0].event_count, 1, "rolled up exactly once");
 
-    // Phase 3: re-poll with a *real* (small) retention window — the same
-    // stale event comes back from the mock (the cursor was advanced past
-    // it, but this mock ignores `since` entirely, standing in for a
-    // rewound/lost cursor exactly as the previous test does explicitly).
-    // persist_events' retention-age guard must refuse to resurrect it.
+    // Phase 3: re-poll with a realistic retention window. The mock ignores
+    // `since`, standing in for a rewound/lost cursor; the same stale event
+    // comes back and must not be resurrected as a raw row.
     repo.set_trace_cursor(control_plane_id, "demo", "")
         .await
         .expect("rewind cursor");
+    let since = last_seen_at(&repo, control_plane_id).await;
+    run_one_more_tick(&repo, control_plane_id, since, fast_poll_config(90)).await;
 
-    let store: Arc<dyn ControlPlaneStore> = Arc::new(TestRepoStore { repo: repo.clone() });
-    let handles = spawn_reconcilers(
-        true,
-        store,
-        ReconcilerConfig {
-            poll_secs: 1,
-            event_retention_days: 90, // realistic default — the 2020 event is well past this
-            ..Default::default()
-        },
-    )
-    .await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    for h in handles {
-        h.abort();
-    }
-
-    let count_after_reingest: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orch_events")
-        .fetch_one(repo.pool())
-        .await
-        .expect("count events after re-ingest attempt");
     assert_eq!(
-        count_after_reingest, 0,
-        "an already-purged, now-stale event must not be resurrected as a raw row"
+        orch_event_count(&repo).await,
+        0,
+        "an already-purged, now-stale event must not be resurrected"
     );
-
-    // And critically: re-running the rollup must not find (and thus not
-    // double-count) anything — the daily total stays at 1.
-    let stats_second_sweep = repo
-        .rollup_and_purge_orch_events(Utc::now(), 500)
-        .await
-        .expect("second rollup");
-    assert_eq!(stats_second_sweep.rows_purged, 0);
-
-    let daily_after = repo
-        .list_orch_events_daily(control_plane_id)
-        .await
-        .expect("list daily aggregate again");
-    assert_eq!(daily_after.len(), 1);
+    assert_eq!(rollup_and_purge(&repo).await.rows_purged, 0);
+    let daily_after = daily_events(&repo, control_plane_id).await;
     assert_eq!(
         daily_after[0].event_count, 1,
         "re-ingesting a purged event must never double-count its daily aggregate"
