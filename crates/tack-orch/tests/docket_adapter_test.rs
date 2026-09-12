@@ -272,7 +272,7 @@ async fn enqueue_task_allow_returns_the_task_id() {
 }
 
 #[tokio::test]
-async fn enqueue_task_waiting_approval_still_returns_ok_with_the_task_id() {
+async fn enqueue_task_waiting_approval_still_returns_ok_and_task_id() {
     // Real docket response for a `require_approval` verdict is still HTTP
     // 200 — never a 200 that lies about the task being queued normally, but
     // also never treated as a failure by this adapter (the caller recovers
@@ -588,7 +588,7 @@ async fn malformed_json_maps_to_decode_error_not_panic() {
 }
 
 #[tokio::test]
-async fn malformed_prometheus_body_never_panics_and_returns_what_it_can() {
+async fn malformed_prometheus_body_never_panics_returns_partial() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/metrics"))
@@ -716,23 +716,6 @@ async fn dispatch_sends_vars_as_the_request_body_verbatim() {
 }
 
 #[tokio::test]
-async fn dispatch_unauthorized_maps_to_auth_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/dispatch/demo"))
-        .respond_with(ResponseTemplate::new(401))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .dispatch("demo", serde_json::json!({}))
-        .await
-        .expect_err("401 must not be Ok");
-    assert!(matches!(err, OrchError::Auth));
-}
-
-#[tokio::test]
 async fn dispatch_404_maps_to_not_found() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -751,64 +734,79 @@ async fn dispatch_404_maps_to_not_found() {
     assert!(matches!(err, OrchError::NotFound(_)));
 }
 
-#[tokio::test]
-async fn dispatch_bad_request_without_guardrail_wording_maps_to_http_not_policy_blocked() {
-    // The finding: unlike `enqueue_task`, `/dispatch/{project}` never runs
-    // the `pre_input` gate before responding — every 400 it can actually
-    // send (this one models `resolve_variables`'s `VariableError`) is a
-    // plain request error. Mapping it to `PolicyBlocked` would misreport a
-    // caller-supplied-variable mistake as a guardrail refusal.
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/dispatch/demo"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "ok": false, "error": "unknown variable 'nope' has no default"
-        })))
-        .mount(&server)
-        .await;
+struct DispatchErrorCase {
+    status: u16,
+    body: Option<serde_json::Value>,
+    assert_err: fn(OrchError),
+}
 
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .dispatch("demo", serde_json::json!({}))
-        .await
-        .expect_err("a non-guardrail 400 must not be Ok");
-    match err {
-        OrchError::Http(message) => {
-            assert!(
-                message.contains("unknown variable"),
-                "docket's own message must still reach the caller: {message}"
-            );
-        }
-        other => panic!("expected Http, got {other:?}"),
-    }
+/// Unlike `enqueue_task`, `/dispatch/{project}` never runs the `pre_input`
+/// gate before responding — every 400 it can actually send (the first case
+/// models `resolve_variables`'s `VariableError`) is a plain request error.
+/// Mapping it to `PolicyBlocked` would misreport a caller-supplied-variable
+/// mistake as a guardrail refusal. The second case is defensive: if a
+/// future docket build ever does report a `pre_input` block synchronously
+/// from this route, using the same wording `enqueue_task`'s route does,
+/// this adapter classifies it the same way — reusing `parse_policy_block`
+/// rather than a second parser.
+fn dispatch_error_mapping_cases() -> Vec<DispatchErrorCase> {
+    vec![
+        DispatchErrorCase {
+            status: 400,
+            body: Some(serde_json::json!({
+                "ok": false, "error": "unknown variable 'nope' has no default"
+            })),
+            assert_err: |err| match err {
+                OrchError::Http(message) => {
+                    assert!(
+                        message.contains("unknown variable"),
+                        "docket's own message must still reach the caller: {message}"
+                    );
+                }
+                other => panic!("expected Http, got {other:?}"),
+            },
+        },
+        DispatchErrorCase {
+            status: 400,
+            body: Some(serde_json::json!({
+                "ok": false,
+                "error": "task rejected by guardrail policy 'prompt-injection' at enqueue: untrusted input matched a deny rule"
+            })),
+            assert_err: |err| match err {
+                OrchError::PolicyBlocked { policy_id, message } => {
+                    assert_eq!(policy_id, "prompt-injection", "message was: {message}");
+                }
+                other => panic!("expected PolicyBlocked, got {other:?}"),
+            },
+        },
+        DispatchErrorCase {
+            status: 401,
+            body: None,
+            assert_err: |err| assert!(matches!(err, OrchError::Auth)),
+        },
+    ]
 }
 
 #[tokio::test]
-async fn dispatch_bad_request_with_guardrail_wording_maps_to_policy_blocked() {
-    // Defensive: if a future docket build ever does report a `pre_input`
-    // block synchronously from this route, using the same wording
-    // `enqueue_task`'s route does, this adapter classifies it the same way
-    // — reusing `parse_policy_block` rather than a second parser.
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/dispatch/demo"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "ok": false,
-            "error": "task rejected by guardrail policy 'prompt-injection' at enqueue: untrusted input matched a deny rule"
-        })))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .dispatch("demo", serde_json::json!({}))
-        .await
-        .expect_err("a block verdict must not be Ok");
-    match err {
-        OrchError::PolicyBlocked { policy_id, message } => {
-            assert_eq!(policy_id, "prompt-injection", "message was: {message}");
+async fn dispatch_error_mapping_by_status() {
+    for case in dispatch_error_mapping_cases() {
+        let server = MockServer::start().await;
+        let mut response = ResponseTemplate::new(case.status);
+        if let Some(body) = &case.body {
+            response = response.set_body_json(body.clone());
         }
-        other => panic!("expected PolicyBlocked, got {other:?}"),
+        Mock::given(method("POST"))
+            .and(path("/dispatch/demo"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+
+        let adapter = adapter_for(&server);
+        let err = adapter
+            .dispatch("demo", serde_json::json!({}))
+            .await
+            .expect_err(&format!("status {} must not be Ok", case.status));
+        (case.assert_err)(err);
     }
 }
 
@@ -817,7 +815,7 @@ async fn dispatch_bad_request_with_guardrail_wording_maps_to_policy_blocked() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn decide_approval_grant_sends_channel_tack_and_returns_the_resulting_state() {
+async fn decide_approval_grant_sends_channel_tack_and_returns_state() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/approvals/apr-1"))
@@ -882,68 +880,65 @@ async fn decide_approval_unknown_state_round_trips_as_unknown() {
 }
 
 #[tokio::test]
-async fn decide_approval_409_maps_to_already_decided_with_dockets_message() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/approvals/apr-4"))
-        .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-            "ok": false, "error": "Already granted: apr-4"
-        })))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .decide_approval("apr-4", true)
-        .await
-        .expect_err("409 must not be Ok");
-    match err {
-        OrchError::AlreadyDecided(message) => {
-            assert!(message.contains("Already granted"), "{message}");
-        }
-        other => panic!("expected AlreadyDecided, got {other:?}"),
+async fn decide_approval_error_mapping_by_status() {
+    struct Case {
+        approval_id: &'static str,
+        status: u16,
+        body: Option<serde_json::Value>,
+        assert_err: fn(OrchError),
     }
-}
+    let cases = [
+        Case {
+            approval_id: "apr-4",
+            status: 409,
+            body: Some(serde_json::json!({"ok": false, "error": "Already granted: apr-4"})),
+            assert_err: |err| match err {
+                OrchError::AlreadyDecided(message) => {
+                    assert!(message.contains("Already granted"), "{message}");
+                }
+                other => panic!("expected AlreadyDecided, got {other:?}"),
+            },
+        },
+        Case {
+            approval_id: "apr-missing",
+            status: 404,
+            body: Some(serde_json::json!({
+                "ok": false, "error": "Approval not found: apr-missing"
+            })),
+            assert_err: |err| match err {
+                OrchError::NotFound(message) => {
+                    assert!(message.contains("Approval not found"), "{message}");
+                }
+                other => panic!("expected NotFound, got {other:?}"),
+            },
+        },
+        Case {
+            approval_id: "apr-5",
+            status: 401,
+            body: None,
+            assert_err: |err| assert!(matches!(err, OrchError::Auth)),
+        },
+    ];
 
-#[tokio::test]
-async fn decide_approval_404_maps_to_not_found_with_dockets_message() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/approvals/apr-missing"))
-        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
-            "ok": false, "error": "Approval not found: apr-missing"
-        })))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .decide_approval("apr-missing", true)
-        .await
-        .expect_err("404 must not be Ok");
-    match err {
-        OrchError::NotFound(message) => {
-            assert!(message.contains("Approval not found"), "{message}");
+    for case in cases {
+        let server = MockServer::start().await;
+        let mut response = ResponseTemplate::new(case.status);
+        if let Some(body) = &case.body {
+            response = response.set_body_json(body.clone());
         }
-        other => panic!("expected NotFound, got {other:?}"),
+        Mock::given(method("POST"))
+            .and(path(format!("/approvals/{}", case.approval_id)))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+
+        let adapter = adapter_for(&server);
+        let err = adapter
+            .decide_approval(case.approval_id, true)
+            .await
+            .expect_err(&format!("status {} must not be Ok", case.status));
+        (case.assert_err)(err);
     }
-}
-
-#[tokio::test]
-async fn decide_approval_unauthorized_maps_to_auth_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/approvals/apr-5"))
-        .respond_with(ResponseTemplate::new(401))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .decide_approval("apr-5", true)
-        .await
-        .expect_err("401 must not be Ok");
-    assert!(matches!(err, OrchError::Auth));
 }
 
 // ---------------------------------------------------------------------------
@@ -989,119 +984,81 @@ async fn provision_pod_happy_path_returns_the_created_roster() {
     assert_eq!(result.members[0].role, "lead");
 }
 
-#[tokio::test]
-async fn provision_pod_already_exists_maps_to_already_exists_not_a_generic_http_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/pods"))
-        .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-            "ok": false, "error": "'blog-api' already exists"
-        })))
-        .mount(&server)
-        .await;
+struct ProvisionPodErrorCase {
+    status: u16,
+    body: Option<serde_json::Value>,
+    assert_err: fn(OrchError),
+}
 
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .provision_pod(tack_orch::ProvisionPodParams {
-            project: "blog-api".into(),
-            path: String::new(),
-            blueprint: "software".into(),
-            pod: None,
-            budget: None,
-            verify_cmd: String::new(),
-        })
-        .await
-        .expect_err("409 must not be Ok");
-    match err {
-        OrchError::AlreadyExists(message) => {
-            assert!(message.contains("already exists"), "{message}");
-        }
+/// PodProvisionError (the 500 case) — docket's own rollback has already run
+/// server-side by the time this response reaches the adapter (see
+/// `ControlPlane::provision_pod`'s doc comment). None of these mocks match
+/// on the request body, so every case reuses the same params.
+fn provision_pod_error_mapping_cases() -> Vec<ProvisionPodErrorCase> {
+    let already_exists: fn(OrchError) = |err| match err {
+        OrchError::AlreadyExists(m) => assert!(m.contains("already exists"), "{m}"),
         other => panic!("expected AlreadyExists, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn provision_pod_bad_blueprint_surfaces_dockets_message() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/pods"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "ok": false, "error": "unknown blueprint 'made-up'"
-        })))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .provision_pod(tack_orch::ProvisionPodParams {
-            project: "blog-api".into(),
-            path: String::new(),
-            blueprint: "made-up".into(),
-            pod: None,
-            budget: None,
-            verify_cmd: String::new(),
-        })
-        .await
-        .expect_err("400 must not be Ok");
-    match err {
-        OrchError::Http(message) => {
-            assert!(message.contains("unknown blueprint"), "{message}");
-        }
+    };
+    let bad_blueprint: fn(OrchError) = |err| match err {
+        OrchError::Http(m) => assert!(m.contains("unknown blueprint"), "{m}"),
         other => panic!("expected Http, got {other:?}"),
+    };
+    let http_only: fn(OrchError) = |err| assert!(matches!(err, OrchError::Http(_)));
+    let auth_only: fn(OrchError) = |err| assert!(matches!(err, OrchError::Auth));
+    vec![
+        ProvisionPodErrorCase {
+            status: 409,
+            body: Some(serde_json::json!({"ok": false, "error": "'blog-api' already exists"})),
+            assert_err: already_exists,
+        },
+        ProvisionPodErrorCase {
+            status: 400,
+            body: Some(serde_json::json!({"ok": false, "error": "unknown blueprint 'made-up'"})),
+            assert_err: bad_blueprint,
+        },
+        ProvisionPodErrorCase {
+            status: 500,
+            body: Some(
+                serde_json::json!({"ok": false, "error": "blog-api: provisioning failed: disk full"}),
+            ),
+            assert_err: http_only,
+        },
+        ProvisionPodErrorCase {
+            status: 401,
+            body: None,
+            assert_err: auth_only,
+        },
+    ]
+}
+
+#[tokio::test]
+async fn provision_pod_error_mapping_by_status() {
+    for case in provision_pod_error_mapping_cases() {
+        let server = MockServer::start().await;
+        let mut response = ResponseTemplate::new(case.status);
+        if let Some(body) = case.body {
+            response = response.set_body_json(body);
+        }
+        Mock::given(method("POST"))
+            .and(path("/pods"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+
+        let adapter = adapter_for(&server);
+        let err = adapter
+            .provision_pod(tack_orch::ProvisionPodParams {
+                project: "blog-api".into(),
+                path: String::new(),
+                blueprint: "software".into(),
+                pod: None,
+                budget: None,
+                verify_cmd: String::new(),
+            })
+            .await
+            .expect_err(&format!("status {} must not be Ok", case.status));
+        (case.assert_err)(err);
     }
-}
-
-#[tokio::test]
-async fn provision_pod_operational_failure_after_dockets_own_rollback_surfaces_as_http_error() {
-    // PodProvisionError — docket's own rollback has already run server-side
-    // by the time this response reaches the adapter (see
-    // `ControlPlane::provision_pod`'s doc comment).
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/pods"))
-        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
-            "ok": false, "error": "blog-api: provisioning failed: disk full"
-        })))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .provision_pod(tack_orch::ProvisionPodParams {
-            project: "blog-api".into(),
-            path: String::new(),
-            blueprint: "software".into(),
-            pod: None,
-            budget: None,
-            verify_cmd: String::new(),
-        })
-        .await
-        .expect_err("500 must not be Ok");
-    assert!(matches!(err, OrchError::Http(_)));
-}
-
-#[tokio::test]
-async fn provision_pod_unauthorized_maps_to_auth_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/pods"))
-        .respond_with(ResponseTemplate::new(401))
-        .mount(&server)
-        .await;
-
-    let adapter = adapter_for(&server);
-    let err = adapter
-        .provision_pod(tack_orch::ProvisionPodParams {
-            project: "blog-api".into(),
-            path: String::new(),
-            blueprint: "software".into(),
-            pod: None,
-            budget: None,
-            verify_cmd: String::new(),
-        })
-        .await
-        .expect_err("401 must not be Ok");
-    assert!(matches!(err, OrchError::Auth));
 }
 
 #[tokio::test]
