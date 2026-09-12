@@ -1,4 +1,10 @@
+//! Crash-recovery matrix: for each point a runner attempt can crash (before
+//! spawn, after spawn, mid-report, mid-recovery, on reoffer), proves the
+//! engine's next `run_once`/`recover` call reaches the one correct outcome
+//! without a duplicate spawn or a duplicate terminal report.
+
 use std::{
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -79,6 +85,42 @@ impl FakeProtocol {
     fn fail_recovery_reports(&self, count: usize) {
         self.recovery_failures_remaining
             .store(count, Ordering::SeqCst);
+    }
+
+    fn has_event(&self, name: &str) -> bool {
+        self.event_count(name) > 0
+    }
+
+    fn event_count(&self, name: &str) -> usize {
+        self.evidence
+            .lock()
+            .expect("protocol evidence")
+            .events
+            .iter()
+            .filter(|event| event.as_str() == name)
+            .count()
+    }
+
+    fn recovery_reports(&self) -> Vec<RecoveryObservation> {
+        self.evidence
+            .lock()
+            .expect("protocol evidence")
+            .recovery_reports
+            .clone()
+    }
+
+    fn completion_reports(&self) -> usize {
+        self.evidence
+            .lock()
+            .expect("protocol evidence")
+            .completion_reports
+    }
+
+    fn cancellation_reports(&self) -> usize {
+        self.evidence
+            .lock()
+            .expect("protocol evidence")
+            .cancellation_reports
     }
 }
 
@@ -259,6 +301,18 @@ impl FakeAdapter {
             recovery,
         }
     }
+
+    fn starts(&self) -> usize {
+        self.evidence.lock().expect("process evidence").starts
+    }
+
+    fn cancels(&self) -> usize {
+        self.evidence.lock().expect("process evidence").cancels
+    }
+
+    fn reconciles(&self) -> usize {
+        self.evidence.lock().expect("process evidence").reconciles
+    }
 }
 
 #[async_trait]
@@ -412,241 +466,26 @@ fn claim() -> ClaimRequest {
     }
 }
 
-#[tokio::test]
-async fn after_claim_before_spawn_failure_recovers_as_process_stopped_without_respawn() {
-    let root_dir = root("before-spawn");
-    let root = root_dir.path();
-    let protocol = FakeProtocol::new(work(), FailurePoint::None, false);
-    let adapter = FakeAdapter::new(RecoveryObservation::ProcessStopped);
-    let failed_worktree = FakeWorktree::fails();
-    let journal = OwnerOnlyJournal::new(root);
-    let engine = RunnerEngine::new(
+/// One engine wired to the given fakes, rooted at `root/workspaces`. Every
+/// test builds at least one of these; several build two, to simulate a
+/// process restart picking up where a crashed engine left off.
+fn engine(
+    protocol: &FakeProtocol,
+    adapter: &FakeAdapter,
+    journal: &OwnerOnlyJournal,
+    root: &Path,
+    worktree: FakeWorktree,
+) -> RunnerEngine<FakeProtocol, FakeAdapter, FakeWorktree> {
+    RunnerEngine::new(
         protocol.clone(),
         adapter.clone(),
         journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), failed_worktree.clone()),
-    );
-
-    assert!(engine.run_once(&session(), claim()).await.is_err());
-    assert_eq!(adapter.evidence.lock().expect("process evidence").starts, 0);
-    assert_eq!(failed_worktree.provisions.load(Ordering::SeqCst), 1);
-    let unresolved = journal.unresolved().expect("unresolved journal");
-    assert_eq!(unresolved.len(), 1);
-    assert_eq!(unresolved[0].state, JournalState::Prepared);
-
-    let recovery = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-    let outcomes = recovery.recover(&session()).await.expect("recover");
-    assert!(matches!(outcomes.as_slice(), [RunCycle::Completed { .. }]));
-    let process = adapter.evidence.lock().expect("process evidence");
-    assert_eq!(process.starts, 0, "recovery cannot respawn the harness");
-    assert_eq!(process.reconciles, 1);
-    drop(process);
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
-    assert_eq!(
-        evidence.recovery_reports,
-        vec![RecoveryObservation::ProcessStopped]
-    );
-    assert!(
-        evidence
-            .events
-            .iter()
-            .any(|event| event == "start:preparing")
-    );
-    assert!(
-        evidence
-            .events
-            .iter()
-            .any(|event| event == "recovery:ProcessStopped")
-    );
-    drop(evidence);
+        WorkspaceManager::new(root.join("workspaces"), worktree),
+    )
 }
 
-#[tokio::test]
-async fn after_spawn_before_ack_failure_is_audited_ambiguous_and_never_retried() {
-    let root_dir = root("spawn-before-ack");
-    let root = root_dir.path();
-    let protocol = FakeProtocol::new(work(), FailurePoint::ProcessStartAck, false);
-    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
-    let journal = OwnerOnlyJournal::new(root);
-    let engine = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-
-    let result = engine
-        .run_once(&session(), claim())
-        .await
-        .expect("quarantine result");
-    assert!(matches!(result, RunCycle::Quarantined { .. }));
-    let process = adapter.evidence.lock().expect("process evidence");
-    assert_eq!(process.starts, 1);
-    assert_eq!(process.cancels, 1);
-    drop(process);
-    assert!(journal.unresolved().expect("journal scan").is_empty());
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
-    assert_eq!(
-        evidence.recovery_reports,
-        vec![RecoveryObservation::Ambiguous]
-    );
-    assert!(
-        evidence
-            .events
-            .iter()
-            .any(|event| event == "start:process_observed_running")
-    );
-    assert!(
-        evidence
-            .events
-            .iter()
-            .any(|event| event == "recovery:Ambiguous")
-    );
-    drop(evidence);
-}
-
-#[tokio::test]
-async fn completion_response_loss_stays_in_terminal_outbox_without_duplicate_send() {
-    let root_dir = root("completion");
-    let root = root_dir.path();
-    let protocol = FakeProtocol::new(work(), FailurePoint::Completion, false);
-    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
-    let journal = OwnerOnlyJournal::new(root);
-    let engine = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-
-    let result = engine
-        .run_once(&session(), claim())
-        .await
-        .expect("terminal outbox result");
-    assert!(matches!(result, RunCycle::TerminalReportPending { .. }));
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
-    assert_eq!(
-        evidence.completion_reports, 1,
-        "completion is never blind-retried"
-    );
-    assert!(evidence.recovery_reports.is_empty());
-    assert!(evidence.events.iter().any(|event| event == "completion"));
-    drop(evidence);
-    assert_eq!(journal.unresolved().expect("journal scan").len(), 1);
-}
-
-#[tokio::test]
-async fn cancellation_response_loss_stays_in_terminal_outbox_without_duplicate_send() {
-    let root_dir = root("cancellation");
-    let root = root_dir.path();
-    let protocol = FakeProtocol::new(work(), FailurePoint::Cancellation, true);
-    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
-    let journal = OwnerOnlyJournal::new(root);
-    let engine = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-
-    let result = engine
-        .run_once(&session(), claim())
-        .await
-        .expect("terminal outbox result");
-    assert!(matches!(result, RunCycle::TerminalReportPending { .. }));
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
-    assert_eq!(evidence.cancellation_reports, 1);
-    assert_eq!(evidence.completion_reports, 0);
-    assert!(evidence.recovery_reports.is_empty());
-    assert!(
-        evidence
-            .events
-            .iter()
-            .any(|event| event == "cancellation_observation")
-    );
-    drop(evidence);
-    let process = adapter.evidence.lock().expect("process evidence");
-    assert_eq!(process.starts, 1);
-    assert_eq!(process.cancels, 1, "only the requested cancellation runs");
-    drop(process);
-    assert_eq!(journal.unresolved().expect("journal scan").len(), 1);
-}
-
-#[tokio::test]
-async fn failed_ambiguity_report_stays_pending_then_restart_quarantines_without_respawn() {
-    let root_dir = root("ambiguity-report-retry");
-    let root = root_dir.path();
-    let protocol = FakeProtocol::new(work(), FailurePoint::ProcessStartAck, false);
-    protocol.fail_recovery_reports(1);
-    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
-    let journal = OwnerOnlyJournal::new(root);
-    let engine = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-
-    assert!(matches!(
-        engine
-            .run_once(&session(), claim())
-            .await
-            .expect("pending result"),
-        RunCycle::RecoveryPending { .. }
-    ));
-    assert_eq!(
-        journal.unresolved().expect("pending local evidence").len(),
-        1,
-        "failed report keeps the journal eligible for restart recovery"
-    );
-    assert_eq!(adapter.evidence.lock().expect("process evidence").starts, 1);
-
-    let restarted = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-    let outcomes = restarted
-        .recover(&session())
-        .await
-        .expect("restart recovery");
-    assert!(matches!(
-        outcomes.as_slice(),
-        [RunCycle::Quarantined { .. }]
-    ));
-
-    let process = adapter.evidence.lock().expect("process evidence");
-    assert_eq!(
-        process.starts, 1,
-        "restart recovery must never launch again"
-    );
-    assert_eq!(process.reconciles, 1);
-    assert_eq!(process.cancels, 1, "only the original post-spawn stop runs");
-    drop(process);
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
-    assert_eq!(
-        evidence.recovery_reports,
-        vec![
-            RecoveryObservation::Ambiguous,
-            RecoveryObservation::Ambiguous
-        ],
-        "the ambiguity report is retried exactly once after its failed delivery"
-    );
-    assert_eq!(
-        evidence
-            .events
-            .iter()
-            .filter(|event| event.as_str() == "start:process_observed_running")
-            .count(),
-        1
-    );
-    drop(evidence);
+/// A quarantine leaves nothing left to recover and a dated record of why.
+fn assert_quarantine_recorded(root: &Path, journal: &OwnerOnlyJournal) {
     assert!(
         journal
             .unresolved()
@@ -659,12 +498,234 @@ async fn failed_ambiguity_report_stays_pending_then_restart_quarantines_without_
             .expect("quarantine")
             .next()
             .is_some(),
-        "server-acknowledged ambiguity is preserved as local quarantine evidence"
+        "quarantine directory holds evidence of the terminal decision"
+    );
+}
+
+/// Restarts against the same journal and asserts the restart's only outcome
+/// is a quarantine — the shape shared by every crash this file restarts from.
+async fn recover_and_expect_quarantine(
+    protocol: &FakeProtocol,
+    adapter: &FakeAdapter,
+    journal: &OwnerOnlyJournal,
+    root: &Path,
+) {
+    let restarted = engine(protocol, adapter, journal, root, FakeWorktree::succeeds());
+    let outcomes = restarted
+        .recover(&session())
+        .await
+        .expect("restart recovery");
+    assert!(matches!(
+        outcomes.as_slice(),
+        [RunCycle::Quarantined { .. }]
+    ));
+}
+
+#[tokio::test]
+async fn before_spawn_worktree_crash_recovers_without_respawn() {
+    let root_dir = root("before-spawn");
+    let root = root_dir.path();
+    let protocol = FakeProtocol::new(work(), FailurePoint::None, false);
+    let adapter = FakeAdapter::new(RecoveryObservation::ProcessStopped);
+    let failed_worktree = FakeWorktree::fails();
+    let journal = OwnerOnlyJournal::new(root);
+    let crashed = engine(&protocol, &adapter, &journal, root, failed_worktree.clone());
+
+    assert!(crashed.run_once(&session(), claim()).await.is_err());
+    assert_eq!(adapter.starts(), 0);
+    assert_eq!(failed_worktree.provisions.load(Ordering::SeqCst), 1);
+    let unresolved = journal.unresolved().expect("unresolved journal");
+    assert_eq!(unresolved.len(), 1);
+    assert_eq!(unresolved[0].state, JournalState::Prepared);
+
+    let recovered = engine(
+        &protocol,
+        &adapter,
+        &journal,
+        root,
+        FakeWorktree::succeeds(),
+    );
+    let outcomes = recovered.recover(&session()).await.expect("recover");
+    assert!(matches!(outcomes.as_slice(), [RunCycle::Completed { .. }]));
+    assert_eq!(adapter.starts(), 0, "recovery cannot respawn the harness");
+    assert_eq!(adapter.reconciles(), 1);
+    assert_eq!(
+        protocol.recovery_reports(),
+        vec![RecoveryObservation::ProcessStopped]
+    );
+    assert!(protocol.has_event("start:preparing"));
+    assert!(protocol.has_event("recovery:ProcessStopped"));
+}
+
+#[tokio::test]
+async fn spawn_ack_loss_quarantines_as_ambiguous_without_retry() {
+    let root_dir = root("spawn-before-ack");
+    let root = root_dir.path();
+    let protocol = FakeProtocol::new(work(), FailurePoint::ProcessStartAck, false);
+    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
+    let journal = OwnerOnlyJournal::new(root);
+    let runner = engine(
+        &protocol,
+        &adapter,
+        &journal,
+        root,
+        FakeWorktree::succeeds(),
+    );
+
+    let result = runner
+        .run_once(&session(), claim())
+        .await
+        .expect("quarantine result");
+    assert!(matches!(result, RunCycle::Quarantined { .. }));
+    assert_eq!(adapter.starts(), 1);
+    assert_eq!(adapter.cancels(), 1);
+    assert!(journal.unresolved().expect("journal scan").is_empty());
+    assert_eq!(
+        protocol.recovery_reports(),
+        vec![RecoveryObservation::Ambiguous]
+    );
+    assert!(protocol.has_event("start:process_observed_running"));
+    assert!(protocol.has_event("recovery:Ambiguous"));
+}
+
+struct TerminalLossCase {
+    label: &'static str,
+    failure: FailurePoint,
+    cancellation_requested: bool,
+    completion_reports: usize,
+    cancellation_reports: usize,
+    cancels: usize,
+    event: &'static str,
+}
+
+async fn assert_terminal_loss(case: TerminalLossCase) {
+    let root_dir = root(case.label);
+    let root = root_dir.path();
+    let protocol = FakeProtocol::new(work(), case.failure, case.cancellation_requested);
+    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
+    let journal = OwnerOnlyJournal::new(root);
+    let runner = engine(
+        &protocol,
+        &adapter,
+        &journal,
+        root,
+        FakeWorktree::succeeds(),
+    );
+
+    let result = runner
+        .run_once(&session(), claim())
+        .await
+        .expect("terminal outbox result");
+    assert!(
+        matches!(result, RunCycle::TerminalReportPending { .. }),
+        "{}",
+        case.label
+    );
+    assert_eq!(
+        protocol.completion_reports(),
+        case.completion_reports,
+        "{}",
+        case.label
+    );
+    assert_eq!(
+        protocol.cancellation_reports(),
+        case.cancellation_reports,
+        "{}",
+        case.label
+    );
+    assert!(protocol.recovery_reports().is_empty(), "{}", case.label);
+    assert!(protocol.has_event(case.event), "{}", case.label);
+    assert_eq!(adapter.starts(), 1, "{}", case.label);
+    assert_eq!(adapter.cancels(), case.cancels, "{}", case.label);
+    assert_eq!(
+        journal.unresolved().expect("journal scan").len(),
+        1,
+        "{}",
+        case.label
     );
 }
 
 #[tokio::test]
-async fn process_running_recovery_observation_reports_ambiguity_and_quarantines_without_spawn() {
+async fn terminal_report_loss_keeps_attempt_pending_without_resend() {
+    let cases = [
+        TerminalLossCase {
+            label: "completion",
+            failure: FailurePoint::Completion,
+            cancellation_requested: false,
+            completion_reports: 1,
+            cancellation_reports: 0,
+            cancels: 0,
+            event: "completion",
+        },
+        TerminalLossCase {
+            label: "cancellation",
+            failure: FailurePoint::Cancellation,
+            cancellation_requested: true,
+            completion_reports: 0,
+            cancellation_reports: 1,
+            cancels: 1,
+            event: "cancellation_observation",
+        },
+    ];
+
+    for case in cases {
+        assert_terminal_loss(case).await;
+    }
+}
+
+#[tokio::test]
+async fn failed_ambiguity_report_retries_once_then_quarantines() {
+    let root_dir = root("ambiguity-report-retry");
+    let root = root_dir.path();
+    let protocol = FakeProtocol::new(work(), FailurePoint::ProcessStartAck, false);
+    protocol.fail_recovery_reports(1);
+    let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
+    let journal = OwnerOnlyJournal::new(root);
+    let crashed = engine(
+        &protocol,
+        &adapter,
+        &journal,
+        root,
+        FakeWorktree::succeeds(),
+    );
+
+    assert!(matches!(
+        crashed
+            .run_once(&session(), claim())
+            .await
+            .expect("pending result"),
+        RunCycle::RecoveryPending { .. }
+    ));
+    assert_eq!(
+        journal.unresolved().expect("pending local evidence").len(),
+        1,
+        "failed report keeps the journal eligible for restart recovery"
+    );
+    assert_eq!(adapter.starts(), 1);
+
+    recover_and_expect_quarantine(&protocol, &adapter, &journal, root).await;
+    assert_eq!(
+        adapter.starts(),
+        1,
+        "restart recovery must never launch again"
+    );
+    assert_eq!(adapter.reconciles(), 1);
+    assert_eq!(
+        adapter.cancels(),
+        1,
+        "only the original post-spawn stop runs"
+    );
+    assert_eq!(
+        protocol.recovery_reports(),
+        vec![RecoveryObservation::Ambiguous; 2],
+        "the ambiguity report is retried exactly once after its failed delivery"
+    );
+    assert_eq!(protocol.event_count("start:process_observed_running"), 1);
+    assert_quarantine_recorded(root, &journal);
+}
+
+#[tokio::test]
+async fn running_process_recovery_quarantines_without_respawn() {
     let root_dir = root("process-running-recovery");
     let root = root_dir.path();
     let protocol = FakeProtocol::new(work(), FailurePoint::None, false);
@@ -682,71 +743,42 @@ async fn process_running_recovery_observation_reports_ambiguity_and_quarantines_
         ))
         .expect("persist prior journal");
 
-    let engine = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
-    );
-    let outcomes = engine
-        .recover(&session())
-        .await
-        .expect("recover running process");
-    assert!(matches!(
-        outcomes.as_slice(),
-        [RunCycle::Quarantined { .. }]
-    ));
-    let process = adapter.evidence.lock().expect("process evidence");
+    recover_and_expect_quarantine(&protocol, &adapter, &journal, root).await;
     assert_eq!(
-        process.starts, 0,
+        adapter.starts(),
+        0,
         "recovery must not spawn a second process"
     );
-    assert_eq!(process.reconciles, 1);
+    assert_eq!(adapter.reconciles(), 1);
     assert_eq!(
-        process.cancels, 0,
+        adapter.cancels(),
+        0,
         "no local handle exists to cancel on restart"
     );
-    drop(process);
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
     assert_eq!(
-        evidence.recovery_reports,
+        protocol.recovery_reports(),
         vec![RecoveryObservation::ProcessRunning]
     );
     assert!(
-        evidence
-            .events
-            .iter()
-            .any(|event| event == "recovery:ProcessRunning"),
+        protocol.has_event("recovery:ProcessRunning"),
         "a running process is preserved as an audited recovery fact"
     );
-    drop(evidence);
-    assert!(
-        journal
-            .unresolved()
-            .expect("post-quarantine scan")
-            .is_empty()
-    );
-    assert!(
-        root.join("quarantine")
-            .read_dir()
-            .expect("quarantine")
-            .next()
-            .is_some()
-    );
+    assert_quarantine_recorded(root, &journal);
 }
 
 #[tokio::test]
-async fn reoffered_quarantined_attempt_is_rejected_before_a_second_spawn() {
+async fn reoffered_quarantined_attempt_rejected_before_second_spawn() {
     let root_dir = root("quarantined-reoffer");
     let root = root_dir.path();
     let protocol = FakeProtocol::new(work(), FailurePoint::ProcessStartAck, false);
     let adapter = FakeAdapter::new(RecoveryObservation::Ambiguous);
     let journal = OwnerOnlyJournal::new(root);
-    let first = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
+    let first = engine(
+        &protocol,
+        &adapter,
+        &journal,
+        root,
+        FakeWorktree::succeeds(),
     );
     assert!(matches!(
         first
@@ -757,54 +789,37 @@ async fn reoffered_quarantined_attempt_is_rejected_before_a_second_spawn() {
     ));
 
     *protocol.work.lock().expect("claim lock") = Some(work());
-    let restarted = RunnerEngine::new(
-        protocol.clone(),
-        adapter.clone(),
-        journal.clone(),
-        WorkspaceManager::new(root.join("workspaces"), FakeWorktree::succeeds()),
+    let reoffered = engine(
+        &protocol,
+        &adapter,
+        &journal,
+        root,
+        FakeWorktree::succeeds(),
     );
     assert!(matches!(
-        restarted.run_once(&session(), claim()).await,
+        reoffered.run_once(&session(), claim()).await,
         Err(EngineError::Journal(JournalError::AlreadyExists))
     ));
 
-    let process = adapter.evidence.lock().expect("process evidence");
     assert_eq!(
-        process.starts, 1,
+        adapter.starts(),
+        1,
         "reoffered quarantined work cannot relaunch"
     );
-    assert_eq!(process.cancels, 1);
-    drop(process);
-    let evidence = protocol.evidence.lock().expect("protocol evidence");
+    assert_eq!(adapter.cancels(), 1);
     assert_eq!(
-        evidence
-            .events
-            .iter()
-            .filter(|event| event.as_str() == "claim_committed")
-            .count(),
+        protocol.event_count("claim_committed"),
         2,
         "the server reoffer reached the runner but stopped at local evidence"
     );
     assert_eq!(
-        evidence
-            .events
-            .iter()
-            .filter(|event| event.as_str() == "start:preparing")
-            .count(),
+        protocol.event_count("start:preparing"),
         1,
         "the rejected reoffer never starts preparation or a process"
     );
     assert_eq!(
-        evidence.recovery_reports,
+        protocol.recovery_reports(),
         vec![RecoveryObservation::Ambiguous]
     );
-    drop(evidence);
-    assert!(journal.unresolved().expect("journal scan").is_empty());
-    assert!(
-        root.join("quarantine")
-            .read_dir()
-            .expect("quarantine")
-            .next()
-            .is_some()
-    );
+    assert_quarantine_recorded(root, &journal);
 }
