@@ -298,25 +298,41 @@ def extract_one(f: Path, apply: bool) -> str:
     body = lines[body_lo:closer]
     if len(body) < BUDGETS["inline_test_lines"]:
         return f"skip  {f.relative_to(ROOT)}: {len(body)} lines, under the inline budget"
-    # `include_str!("x")` is relative to the file, and the file moves one directory
-    # down; prefixing every relative include with `../` keeps it pointing at the same
-    # bytes. Absolute paths and `concat!(env!(...))` forms are left alone.
-    body = [re.sub(r'(include_(?:str|bytes)!\(\s*")(?!/)', r"\1../", l) for l in body]
-    for k in range(len(body) - 1):
-        if re.search(r"include_(str|bytes)!\(\s*$", body[k]):
-            body[k + 1] = re.sub(r'^(\s*")(?!/)', r"\1../", body[k + 1], count=1)
     if f.name in ("lib.rs", "main.rs", "mod.rs"):
         target = f.parent / "tests.rs"
+        rel_path = "tests.rs"
+        moves_deeper = False  # tests.rs lands beside the original file, not under it
     else:
         target = f.parent / f.stem / "tests.rs"
+        rel_path = f"{f.stem}/tests.rs"
+        moves_deeper = True
+    if moves_deeper:
+        # `include_str!("x")` is relative to the file, and the file moves one
+        # directory down; prefixing every relative include with `../` keeps it
+        # pointing at the same bytes. Absolute paths and `concat!(env!(...))`
+        # forms are left alone. Not needed for lib.rs/main.rs/mod.rs, whose
+        # tests.rs stays beside the original file.
+        body = [re.sub(r'(include_(?:str|bytes)!\(\s*")(?!/)', r"\1../", l) for l in body]
+        for k in range(len(body) - 1):
+            if re.search(r"include_(str|bytes)!\(\s*$", body[k]):
+                body[k + 1] = re.sub(r'^(\s*")(?!/)', r"\1../", body[k + 1], count=1)
     if target.exists():
         return f"skip  {f.relative_to(ROOT)}: {target.relative_to(ROOT)} already exists"
     dedented = [l[4:] if l.startswith("    ") else l for l in body]
     header = lines[t : j]  # the #[cfg(test)] and any attribute lines
+    # An explicit #[path], never bare `mod tests;`: several files in this tree are
+    # also pulled in a second time by a sibling's own explicit #[path] (this
+    # codebase's own convention, documented in handlers/runner_protocol.rs and used
+    # by tack-runner/src/client.rs) — under that double load, rustc's *implicit*
+    # mod-directory inference for a `#[path]`-loaded file resolves to the file's own
+    # directory, not `<stem>/`, so a bare `mod tests;` silently points at the wrong,
+    # nonexistent path in that second copy while compiling fine in the first. An
+    # explicit `#[path]` is always resolved relative to this file's own location,
+    # regardless of how this file itself was loaded, so it is correct in both.
     if apply:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("\n".join(dedented).rstrip("\n") + "\n", encoding="utf-8")
-        new_src = lines[:t] + header + ["mod tests;", ""]
+        new_src = lines[:t] + header + [f'#[path = "{rel_path}"]', "mod tests;", ""]
         f.write_text("\n".join(new_src).rstrip("\n") + "\n", encoding="utf-8")
     verb = "moved" if apply else "would move"
     return f"{verb} {len(body):5d} lines  {f.relative_to(ROOT)} -> {target.relative_to(ROOT)}"
