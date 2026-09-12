@@ -23,6 +23,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+mod common;
+use common::free_port;
+
 struct ServerGuard {
     child: Child,
     base_url: String,
@@ -34,11 +37,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
 }
 
 /// Starts `tack serve --with-runner` against `database_url`/`storage_dir`

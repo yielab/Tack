@@ -19,6 +19,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+mod common;
+use common::free_port;
+
 struct ServerGuard {
     child: Child,
     base_url: String,
@@ -31,14 +34,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn free_port() -> u16 {
-    // Bind-then-drop to find a free ephemeral port — the same small,
-    // accepted race window `e6_scheduler_e2e_test.rs` already documents for
-    // this crate's other real-subprocess tests.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
 }
 
 /// Starts `tack serve --with-runner` against a fresh database and

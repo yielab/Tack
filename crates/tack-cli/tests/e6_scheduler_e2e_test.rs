@@ -15,11 +15,13 @@
 //! a clear failure) — every scheduling assertion itself is driven by real
 //! HTTP calls completing, not by waiting out the clock.
 
-use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+
+mod common;
+use common::free_port;
 
 /// Owns the `tack serve` child process and its temp database directory;
 /// kills the process on drop, and the `TempDir` removes the directory after
@@ -39,14 +41,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn free_port() -> u16 {
-    // Bind-then-drop to find a free ephemeral port. A small, standard race
-    // window (something else could bind it before `tack serve` starts) —
-    // acceptable for a locally-run, single-process test suite.
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
 }
 
 /// A scratch directory per server instance, removed when the guard holding it
