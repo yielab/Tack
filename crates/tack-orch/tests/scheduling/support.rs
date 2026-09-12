@@ -8,9 +8,11 @@
 use chrono::Utc;
 use tack_core::models::{CreateItem, ItemType, Priority as ItemPriority, ProjectType};
 use tack_core::vocabulary;
+use tack_db::Repository;
 use tack_db::repo::execution::NewAgentProfile;
-use tack_db::{Repository, init_pool, migrations};
 use uuid::Uuid;
+
+use crate::common::setup_test_db;
 
 pub(crate) struct FixedClock(pub(crate) chrono::DateTime<Utc>);
 impl tack_db::repo::execution::ExecutionClock for FixedClock {
@@ -20,9 +22,7 @@ impl tack_db::repo::execution::ExecutionClock for FixedClock {
 }
 
 pub(crate) async fn setup_repo() -> (Repository, String) {
-    let pool = init_pool("sqlite::memory:").await.expect("in-memory pool");
-    migrations::run_all(&pool).await.expect("migrations");
-    let repo = Repository::new(pool);
+    let repo = setup_test_db().await;
     let workspace_id = Uuid::new_v4();
     let vocab = serde_json::to_string(&vocabulary::default_vocabulary()).unwrap();
     sqlx::query(

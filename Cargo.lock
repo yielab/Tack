@@ -3465,6 +3465,7 @@ dependencies = [
  "sqlx",
  "tack-core",
  "tack-db",
+ "tack-test-support",
  "tempfile",
  "thiserror",
  "tokio",

@@ -5,6 +5,8 @@
 //! `tack_db::Repository` rather than the fake-store unit tests each module
 //! keeps under its own `#[cfg(test)]`.
 
+#[path = "common/mod.rs"]
+mod common;
 #[path = "ingestion/retention.rs"]
 mod retention;
 #[path = "ingestion/runs.rs"]

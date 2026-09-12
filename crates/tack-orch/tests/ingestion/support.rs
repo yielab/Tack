@@ -1,16 +1,11 @@
-//! Shared fixtures for `runs.rs` and `traces.rs`: both stand up a real,
-//! migrated `tack_db::Repository` with one workspace/project/item, mount the
-//! same `/health` and `/status.json` wiremock responses, and link a control
-//! plane to the seeded project through the same `TestRepoStore` —
-//! a test-only `ControlPlaneStore` impl wrapping `Repository` directly. It
-//! cannot be the real `tack-api::orch_store::RepoControlPlaneStore` —
-//! `tack-orch` must never depend on `tack-api` (see this crate's
-//! `Cargo.toml` header comment) — but it is deliberately written to the
-//! exact same mechanical shape `orch_store.rs` needs (a thin pass-through
-//! per method, no correlation logic), so a passing test here is strong
-//! evidence the trait is straightforward to implement for real. `retention.rs`
-//! doesn't use any of this — it drives the spawned retention/health-watch
-//! tasks directly against its own repository seed.
+//! Shared fixtures for `runs.rs` and `traces.rs`: both mount the same
+//! `/health` and `/status.json` wiremock responses, and link a control
+//! plane to the seeded project through the same `TestRepoStore` — a
+//! test-only `ControlPlaneStore` wrapping `Repository` directly, since
+//! `tack-orch` must never depend on `tack-api` for the real
+//! `orch_store::RepoControlPlaneStore` (same mechanical shape, so a passing
+//! test here evidences that trait too). Pool/workspace/project/item seeding
+//! comes from `crate::common`. `retention.rs` doesn't use any of this.
 
 use std::sync::Arc;
 
@@ -18,82 +13,13 @@ use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use tack_core::models::{CreateItem, CreateProject, ItemType, Priority, ProjectType};
-use tack_core::vocabulary;
+use tack_db::Repository;
 use tack_db::repo::orch::{
     CreateControlPlane, NewOrchApproval, NewOrchEvent, NewOrchMetric, NewOrchRun, UpsertOrchLink,
 };
-use tack_db::{Repository, init_pool, migrations};
 use tack_orch::adapters::docket::DocketAdapter;
 use tack_orch::reconciler::{ControlPlaneStore, HealthRecord, RegisteredPlane};
 use tack_orch::{ControlPlane, OrchError};
-
-pub(crate) async fn setup_repo() -> Repository {
-    let pool = init_pool("sqlite::memory:").await.expect("in-memory pool");
-    migrations::run_all(&pool).await.expect("migrations");
-    Repository::new(pool)
-}
-
-pub(crate) async fn seed_workspace(repo: &Repository) -> Uuid {
-    let id = Uuid::new_v4();
-    let vocab = serde_json::to_string(&vocabulary::default_vocabulary()).unwrap();
-    sqlx::query(
-        "INSERT INTO workspaces (id, name, default_vocabulary) VALUES (?, 'Test Workspace', ?)",
-    )
-    .bind(id.to_string())
-    .bind(&vocab)
-    .execute(repo.pool())
-    .await
-    .expect("insert workspace");
-    id
-}
-
-pub(crate) async fn seed_project(
-    repo: &Repository,
-    workspace_id: Uuid,
-) -> tack_core::models::Project {
-    repo.create_project(
-        workspace_id,
-        CreateProject {
-            name: "Test Project".into(),
-            description: None,
-            project_type: ProjectType::Software,
-            template: None,
-        },
-    )
-    .await
-    .expect("create project")
-}
-
-pub(crate) async fn seed_item(
-    repo: &Repository,
-    project: &tack_core::models::Project,
-) -> tack_core::models::Item {
-    let status = project
-        .workflow
-        .initial_status()
-        .expect("initial status")
-        .to_string();
-    repo.create_item(
-        project.id,
-        &status,
-        CreateItem {
-            title: "Test Item".into(),
-            description: None,
-            item_type: Some(ItemType::Task),
-            parent_id: None,
-            priority: Some(Priority::Medium),
-            estimate: None,
-            estimate_unit: None,
-            tags: None,
-            due_date: None,
-            sprint_id: None,
-            assignee: None,
-        },
-    )
-    .await
-    .expect("create item")
-}
 
 pub(crate) struct TestRepoStore {
     pub(crate) repo: Repository,
