@@ -3,10 +3,23 @@ use tack_core::models::*;
 use tack_core::vocabulary;
 use tack_core::workflow;
 
+/// A minimal text field, for tests that only need *a* custom field to exist.
+fn text_field(name: &str) -> CreateCustomField {
+    CreateCustomField {
+        name: name.into(),
+        field_type: CustomFieldType::Text,
+        description: None,
+        required: Some(false),
+        default_value: None,
+        options: None,
+        validation: None,
+    }
+}
+
 // ─── GitHub link Tests ────────────────────────────
 
 #[tokio::test]
-async fn test_github_link_round_trip_and_upsert() {
+async fn github_link_round_trip_and_upsert() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
     let project = repo
@@ -68,7 +81,7 @@ async fn test_github_link_round_trip_and_upsert() {
 // ─── Project Tests ───────────────────────────────────────────
 
 #[tokio::test]
-async fn test_create_and_get_project() {
+async fn create_and_get_project() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -93,7 +106,7 @@ async fn test_create_and_get_project() {
 }
 
 #[tokio::test]
-async fn test_list_projects() {
+async fn list_projects() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -116,7 +129,7 @@ async fn test_list_projects() {
 }
 
 #[tokio::test]
-async fn test_update_project() {
+async fn update_project() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -153,7 +166,7 @@ async fn test_update_project() {
 }
 
 #[tokio::test]
-async fn test_delete_project() {
+async fn delete_project() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -177,23 +190,10 @@ async fn test_delete_project() {
 // ─── Item Tests ──────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_create_and_list_items() {
+async fn create_and_list_items() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
-
-    let project = repo
-        .create_project(
-            ws_id,
-            CreateProject {
-                name: "Item Test".into(),
-                description: None,
-                project_type: ProjectType::Software,
-                template: None,
-            },
-        )
-        .await
-        .unwrap();
-
+    let project = common::make_project(&repo, ws_id).await;
     let initial_status = project.workflow.initial_status().unwrap();
 
     // Create parent epic
@@ -256,7 +256,7 @@ async fn test_create_and_list_items() {
 }
 
 #[tokio::test]
-async fn test_update_item_status() {
+async fn update_item_status() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -312,7 +312,7 @@ async fn test_update_item_status() {
 }
 
 #[tokio::test]
-async fn test_item_tree() {
+async fn item_tree() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -379,7 +379,7 @@ async fn test_item_tree() {
 // ─── Sprint Tests ────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_sprint_lifecycle() {
+async fn sprint_lifecycle() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -422,7 +422,7 @@ async fn test_sprint_lifecycle() {
 // ─── Role Tests ──────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_roles_and_assignment() {
+async fn roles_and_assignment() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -489,7 +489,7 @@ async fn test_roles_and_assignment() {
 // ─── Comment Tests ───────────────────────────────────────────
 
 #[tokio::test]
-async fn test_comments() {
+async fn comments() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -556,7 +556,7 @@ async fn test_comments() {
 // ─── Vocabulary Tests ────────────────────────────────────────
 
 #[tokio::test]
-async fn test_project_vocabulary_by_type() {
+async fn project_vocabulary_by_type() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -605,7 +605,7 @@ async fn test_project_vocabulary_by_type() {
 // ─── Workflow Tests ──────────────────────────────────────────
 
 #[test]
-fn test_workflow_transition_validation() {
+fn workflow_transition_validation() {
     let wf = workflow::construction_workflow();
 
     // Valid: Permit -> Procurement
@@ -619,7 +619,7 @@ fn test_workflow_transition_validation() {
 }
 
 #[test]
-fn test_wip_limits() {
+fn wip_limits() {
     let wf = workflow::scrum_workflow();
 
     // In Progress has WIP limit of 5
@@ -633,7 +633,7 @@ fn test_wip_limits() {
 // ─── Template Tests (v1.2) ───────────────────────────────────
 
 #[tokio::test]
-async fn test_create_and_get_template() {
+async fn create_and_get_template() {
     let repo = setup_test_db().await;
 
     use tack_core::models::CreateProjectTemplate;
@@ -665,7 +665,7 @@ async fn test_create_and_get_template() {
 }
 
 #[tokio::test]
-async fn test_list_templates_with_filter() {
+async fn list_templates_with_filter() {
     let repo = setup_test_db().await;
 
     use tack_core::models::CreateProjectTemplate;
@@ -717,7 +717,7 @@ async fn test_list_templates_with_filter() {
 }
 
 #[tokio::test]
-async fn test_delete_template_not_builtin() {
+async fn delete_template_not_builtin() {
     let repo = setup_test_db().await;
 
     use tack_core::models::CreateProjectTemplate;
@@ -752,42 +752,17 @@ async fn test_delete_template_not_builtin() {
 // ─── Custom Fields Tests (v1.2) ──────────────────────────────
 
 #[tokio::test]
-async fn test_create_and_list_custom_fields() {
+async fn create_and_list_custom_fields() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
+    let project = common::make_project(&repo, ws_id).await;
 
-    let project = repo
-        .create_project(
-            ws_id,
-            CreateProject {
-                name: "Custom Field Test".into(),
-                description: None,
-                project_type: ProjectType::Software,
-                template: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    use tack_core::models::{CreateCustomField, CustomFieldType};
     use tack_db::repo::custom_fields;
 
     // Create a text field
-    let field1 = custom_fields::create_field(
-        repo.pool(),
-        project.id,
-        CreateCustomField {
-            name: "Customer".into(),
-            field_type: CustomFieldType::Text,
-            description: Some("Customer name".into()),
-            required: Some(false),
-            default_value: None,
-            options: None,
-            validation: None,
-        },
-    )
-    .await
-    .unwrap();
+    let field1 = custom_fields::create_field(repo.pool(), project.id, text_field("Customer"))
+        .await
+        .unwrap();
 
     assert_eq!(field1.name, "Customer");
     assert_eq!(field1.field_type, CustomFieldType::Text);
@@ -822,62 +797,17 @@ async fn test_create_and_list_custom_fields() {
 }
 
 #[tokio::test]
-async fn test_custom_field_value_upsert() {
+async fn custom_field_value_upsert() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
+    let project = common::make_project(&repo, ws_id).await;
+    let item = common::make_item(&repo, &project).await;
 
-    let project = repo
-        .create_project(
-            ws_id,
-            CreateProject {
-                name: "Field Value Test".into(),
-                description: None,
-                project_type: ProjectType::Software,
-                template: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    let item = repo
-        .create_item(
-            project.id,
-            "Backlog",
-            CreateItem {
-                title: "Test Item".into(),
-                description: None,
-                item_type: None,
-                parent_id: None,
-                priority: None,
-                estimate: None,
-                estimate_unit: None,
-                tags: None,
-                due_date: None,
-                sprint_id: None,
-                assignee: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    use tack_core::models::{CreateCustomField, CustomFieldType};
     use tack_db::repo::custom_fields;
 
-    let field = custom_fields::create_field(
-        repo.pool(),
-        project.id,
-        CreateCustomField {
-            name: "Customer".into(),
-            field_type: CustomFieldType::Text,
-            description: None,
-            required: Some(false),
-            default_value: None,
-            options: None,
-            validation: None,
-        },
-    )
-    .await
-    .unwrap();
+    let field = custom_fields::create_field(repo.pool(), project.id, text_field("Customer"))
+        .await
+        .unwrap();
 
     // Set value
     custom_fields::set_field_value(
@@ -912,62 +842,17 @@ async fn test_custom_field_value_upsert() {
 }
 
 #[tokio::test]
-async fn test_custom_field_cascade_delete() {
+async fn custom_field_cascade_delete() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
+    let project = common::make_project(&repo, ws_id).await;
+    let item = common::make_item(&repo, &project).await;
 
-    let project = repo
-        .create_project(
-            ws_id,
-            CreateProject {
-                name: "Cascade Test".into(),
-                description: None,
-                project_type: ProjectType::Software,
-                template: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    let item = repo
-        .create_item(
-            project.id,
-            "Backlog",
-            CreateItem {
-                title: "Test Item".into(),
-                description: None,
-                item_type: None,
-                parent_id: None,
-                priority: None,
-                estimate: None,
-                estimate_unit: None,
-                tags: None,
-                due_date: None,
-                sprint_id: None,
-                assignee: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    use tack_core::models::{CreateCustomField, CustomFieldType};
     use tack_db::repo::custom_fields;
 
-    let field = custom_fields::create_field(
-        repo.pool(),
-        project.id,
-        CreateCustomField {
-            name: "Test Field".into(),
-            field_type: CustomFieldType::Text,
-            description: None,
-            required: Some(false),
-            default_value: None,
-            options: None,
-            validation: None,
-        },
-    )
-    .await
-    .unwrap();
+    let field = custom_fields::create_field(repo.pool(), project.id, text_field("Test Field"))
+        .await
+        .unwrap();
 
     // Set value
     custom_fields::set_field_value(
@@ -992,7 +877,7 @@ async fn test_custom_field_cascade_delete() {
 // ─── Multiple Boards Tests (v1.2) ────────────────────────────
 
 #[tokio::test]
-async fn test_create_and_list_boards() {
+async fn create_and_list_boards() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -1053,7 +938,7 @@ async fn test_create_and_list_boards() {
 }
 
 #[tokio::test]
-async fn test_default_board_management() {
+async fn default_board_management() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -1118,7 +1003,7 @@ async fn test_default_board_management() {
 }
 
 #[tokio::test]
-async fn test_board_grouping_types() {
+async fn board_grouping_types() {
     let repo = setup_test_db().await;
     let ws_id = create_test_workspace(&repo).await;
 
@@ -1174,7 +1059,7 @@ async fn test_board_grouping_types() {
 /// the PATCH sends `null` (double-`Option` `Some(None)`), while an absent field
 /// (outer `None`) leaves the value untouched.
 #[tokio::test]
-async fn test_update_item_persists_and_clears_sprint_id() {
+async fn update_item_persists_and_clears_sprint_id() {
     let repo = setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = common::make_project(&repo, ws).await;
@@ -1246,7 +1131,7 @@ async fn test_update_item_persists_and_clears_sprint_id() {
 
 /// Same absent/set/clear contract for `due_date`.
 #[tokio::test]
-async fn test_update_item_persists_and_clears_due_date() {
+async fn update_item_persists_and_clears_due_date() {
     let repo = setup_test_db().await;
     let ws = create_test_workspace(&repo).await;
     let project = common::make_project(&repo, ws).await;
@@ -1293,7 +1178,7 @@ async fn test_update_item_persists_and_clears_due_date() {
 /// completed_at: enter in-progress → stamp started_at; enter done → stamp
 /// completed_at; leave done → clear completed_at (keeping started_at).
 #[tokio::test]
-async fn test_status_transition_timestamps() {
+async fn status_transition_timestamps() {
     use tack_core::workflow::StatusCategory;
 
     let repo = setup_test_db().await;
@@ -1368,7 +1253,7 @@ async fn test_status_transition_timestamps() {
 /// Foreign keys are enforced on every pooled connection, so an insert
 /// that references a non-existent project is rejected instead of orphaning.
 #[tokio::test]
-async fn test_foreign_key_rejects_orphan_item() {
+async fn foreign_key_rejects_orphan_item() {
     let repo = setup_test_db().await;
     let bogus_project = uuid::Uuid::new_v4();
 
