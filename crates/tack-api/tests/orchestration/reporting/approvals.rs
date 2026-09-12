@@ -122,20 +122,6 @@ async fn create_control_plane(app: &Router, base_url: &str) -> Uuid {
     Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Approvals Test Project", "project_type": "software"})),
-        None,
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
     let res = req(
         app,
@@ -196,7 +182,7 @@ async fn decide_approval_409s_when_orch_disabled() {
 async fn inbox_is_oldest_first_and_includes_uncorrelated_approvals_with_context() {
     let (app, state) = app_with_state(orch_config()).await;
     let control_plane_id = create_control_plane(&app, "http://docket.local:9999").await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Approvals Test Project", "software").await;
     let item_id = create_item(&app, project_id, "Deploy service").await;
 
     state

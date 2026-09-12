@@ -25,13 +25,10 @@ mod decisions;
 
 use std::sync::{Arc, Mutex};
 
+use crate::common;
 use crate::log_capture::{CaptureGuard, ensure_global_log_capture_installed};
 
-use axum::{
-    Router,
-    body::{Body, to_bytes},
-    http::{Request, StatusCode},
-};
+use axum::{Router, http::StatusCode};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -44,7 +41,6 @@ use tack_db::{
         RequestSelection,
     },
 };
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const RUNNER_ID: &str = "runner-f1";
@@ -340,34 +336,6 @@ fn app_without_decision_token(repo: &Repository, clock: &FakeClock) -> Router {
     decisions::routes(state)
 }
 
-async fn send(
-    app: &Router,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1_048_576).await.unwrap();
-    let value: Value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap()
-    };
-    (status, value)
-}
-
 fn resolve_uri(attempt_id: &str, decision_id: &str) -> String {
     format!("/attempts/{attempt_id}/decisions/{decision_id}/resolve")
 }
@@ -393,7 +361,7 @@ async fn resolve_a_pending_decision_succeeds_and_matches_operator_answer() {
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
     let app = app(&repo, &clock);
 
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -426,7 +394,7 @@ async fn resolving_twice_with_the_same_answer_is_idempotent_and_does_not_rewrite
     let app = app(&repo, &clock);
     let answer = json!({"answer": {"option_id": "allow_once", "text": null}});
 
-    let (status1, body1) = send(
+    let (status1, body1) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         answer.clone(),
@@ -441,7 +409,8 @@ async fn resolving_twice_with_the_same_answer_is_idempotent_and_does_not_rewrite
     // `resolved_at`/`updated_at` if one happened.
     clock.advance(Duration::seconds(30));
 
-    let (status2, body2) = send(&app, &resolve_uri(&attempt_id, "dec-1"), answer, OPERATOR).await;
+    let (status2, body2) =
+        common::send_post_strict(&app, &resolve_uri(&attempt_id, "dec-1"), answer, OPERATOR).await;
     assert_eq!(status2, StatusCode::OK);
     assert_eq!(body2["replayed"], true);
     assert_eq!(body2["resolved_at"], first_resolved_at);
@@ -463,7 +432,7 @@ async fn resolving_with_a_different_answer_after_resolution_is_idempotency_confl
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
     let app = app(&repo, &clock);
 
-    let (status1, _) = send(
+    let (status1, _) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -473,7 +442,7 @@ async fn resolving_with_a_different_answer_after_resolution_is_idempotency_confl
     assert_eq!(status1, StatusCode::OK);
     let row_after_first = decision_row(&repo, &attempt_id, "dec-1").await;
 
-    let (status2, body2) = send(
+    let (status2, body2) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "deny", "text": null}}),
@@ -513,7 +482,7 @@ async fn cross_attempt_decision_id_is_not_found_and_writes_nothing() {
     let app = app(&repo, &clock);
 
     // Attempt A has no decision named "dec-shared" — it exists only under B.
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_a, "dec-shared"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -538,7 +507,7 @@ async fn unknown_decision_under_a_real_attempt_is_not_found() {
     let attempt_id = claim_running_attempt(&repo, &clock, &item_id, "unknown-dec").await;
     let app = app(&repo, &clock);
 
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "never-existed"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -560,7 +529,7 @@ async fn missing_operator_principal_is_denied_and_writes_nothing() {
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
     let app = app(&repo, &clock);
 
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -593,7 +562,7 @@ async fn self_resolution_via_a_valid_runner_bearer_credential_is_denied_and_writ
     let app = app(&repo, &clock);
 
     let auth_header = format!("Bearer {RAW_RUNNER_CREDENTIAL}");
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -642,7 +611,7 @@ async fn expiry_denies_records_audit_and_never_marks_the_item_done_even_against_
 
     // A syntactically valid, option-matching "allow" answer — proves expiry
     // wins even against an answer that would otherwise have succeeded.
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -769,7 +738,7 @@ async fn restart_preserves_a_pending_decision_and_it_remains_resolvable() {
     // underlying pool, simulating a restart. No in-memory handler state
     // could have survived; only what is in SQLite can.
     let second_app = app(&repo, &clock);
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &second_app,
         &resolve_uri(&attempt_id, "dec-a"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -783,7 +752,7 @@ async fn restart_preserves_a_pending_decision_and_it_remains_resolvable() {
     // queryable/resolvable through the new instance.
     let row_b = decision_row(&repo, &attempt_id, "dec-b").await;
     assert_eq!(row_b.state, "pending");
-    let (status_b, _) = send(
+    let (status_b, _) = common::send_post_strict(
         &second_app,
         &resolve_uri(&attempt_id, "dec-b"),
         json!({"answer": {"option_id": "deny", "text": null}}),
@@ -811,7 +780,8 @@ async fn invalid_answer_shapes_are_rejected_and_write_nothing() {
         json!({"answer": {"option_id": "allow_once", "text": 5}}),
     ] {
         let (status, body) =
-            send(&app, &resolve_uri(&attempt_id, "dec-1"), bad_body, OPERATOR).await;
+            common::send_post_strict(&app, &resolve_uri(&attempt_id, "dec-1"), bad_body, OPERATOR)
+                .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "invalid_request");
     }
@@ -827,7 +797,7 @@ async fn answer_option_id_must_match_one_of_the_decisions_declared_options() {
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
     let app = app(&repo, &clock);
 
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "bogus_choice", "text": null}}),
@@ -848,7 +818,7 @@ async fn freeform_decision_with_no_declared_options_accepts_any_non_empty_option
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", json!([]), None).await;
     let app = app(&repo, &clock);
 
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "custom-token", "text": "free text"}}),
@@ -867,7 +837,7 @@ async fn answer_exceeding_the_frozen_byte_limit_is_rejected_as_payload_too_large
     let app = app(&repo, &clock);
 
     let huge_text = "x".repeat(40_000);
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": huge_text}}),
@@ -894,7 +864,7 @@ async fn logs_never_contain_the_raw_answer_text_or_prompt_only_ids() {
     let app = app(&repo, &clock);
 
     let (guard, buffer) = CaptureGuard::start();
-    let (status, _) = send(
+    let (status, _) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": secret_text}}),
@@ -941,7 +911,7 @@ async fn an_unconfigured_decision_token_rejects_every_resolve_and_writes_nothing
 
     // Even a perfectly well-formed operator principal cannot help here —
     // the token gate runs first and there is no token to ever satisfy.
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -968,7 +938,7 @@ async fn a_wrong_decision_token_rejects_the_resolve_and_writes_nothing() {
     seed_decision(&repo, &clock, &attempt_id, 1, "dec-1", two_options(), None).await;
     let app = app(&repo, &clock);
 
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),
@@ -1006,7 +976,7 @@ async fn the_correct_decision_token_alongside_a_valid_principal_resolves() {
 
     // `OPERATOR` carries both the operator principal and the exact
     // `TEST_DECISION_TOKEN` the router above was constructed with.
-    let (status, body) = send(
+    let (status, body) = common::send_post_strict(
         &app,
         &resolve_uri(&attempt_id, "dec-1"),
         json!({"answer": {"option_id": "allow_once", "text": null}}),

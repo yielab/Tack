@@ -12,14 +12,13 @@
 //! Every claim below is proved against persisted database state or an exact
 //! JSON shape, not merely a 2xx status code.
 
-use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use crate::common;
+use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use tack_api::config::AppConfig;
 use tack_api::{AppState, orch_runtime::OrchRuntime, router::build_router};
 use tack_db::{Repository, init_pool, migrations};
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const OPERATOR_TOKEN: &str = "f6b-model-wiring-operator-token";
@@ -95,37 +94,6 @@ async fn setup() -> (axum::Router, sqlx::SqlitePool, String) {
     (app, pool, item.id.to_string())
 }
 
-async fn send(
-    app: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, value)
-}
-
 fn operator_headers() -> Vec<(&'static str, &'static str)> {
     vec![("authorization", "Bearer f6b-model-wiring-operator-token")]
 }
@@ -161,7 +129,7 @@ fn full_capabilities() -> Value {
 }
 
 async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, String); 1]) {
-    let (status, pending) = send(
+    let (status, pending) = common::send(
         app,
         "POST",
         "/api/runners/enrollment",
@@ -173,7 +141,7 @@ async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, Str
     let runner_id = pending["runner_id"].as_str().unwrap().to_owned();
     let raw_token = pending["enrollment_token"].as_str().unwrap().to_owned();
 
-    let (status, enrolled) = send(
+    let (status, enrolled) = common::send(
         app,
         "POST",
         "/api/runner/v1/enroll",
@@ -206,7 +174,7 @@ fn headers_ref(owned: &[(String, String); 1]) -> Vec<(&str, &str)> {
 /// (`tack_orch::model_policy::wiring::DEFAULT_MODEL_KEY`), operator-settable
 /// via this same route.
 async fn create_agent_profile(app: &axum::Router, name: &str, limits: Value) -> String {
-    let (status, profile) = send(
+    let (status, profile) = common::send(
         app,
         "POST",
         "/api/agent-profiles",
@@ -220,7 +188,7 @@ async fn create_agent_profile(app: &axum::Router, name: &str, limits: Value) -> 
 
 /// Same convention, read from `agent_fleets.default_policy` instead.
 async fn create_fleet(app: &axum::Router, name: &str, default_policy: Value) -> String {
-    let (status, fleet) = send(
+    let (status, fleet) = common::send(
         app,
         "POST",
         "/api/runner-fleets",
@@ -293,7 +261,7 @@ async fn create_execution_resolves_agent_profile_default_when_client_omits_both_
     )
     .await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -354,7 +322,7 @@ async fn create_execution_does_not_override_an_explicit_client_supplied_model() 
     )
     .await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -400,7 +368,7 @@ async fn create_execution_resolves_fleet_default_only_when_selector_is_fleet() {
     let agent_profile_id =
         create_agent_profile(&app, "F6b profile with no default", json!({})).await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -433,7 +401,7 @@ async fn create_execution_resolves_to_auto_select_when_no_tier_is_configured() {
     let agent_profile_id =
         create_agent_profile(&app, "F6b profile with empty limits", json!({})).await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -494,7 +462,7 @@ async fn claim_accept_start(
     let runner_auth = headers_ref(&runner_auth_owned);
     let agent_profile_id = create_agent_profile(app, "F6b provenance profile", json!({})).await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         app,
         "POST",
         "/api/executions",
@@ -513,7 +481,7 @@ async fn claim_accept_start(
     assert_eq!(status, StatusCode::OK, "{created}");
     let request_id = created["request_id"].as_str().unwrap().to_owned();
 
-    let (status, claimed) = send(
+    let (status, claimed) = common::send(
         app,
         "POST",
         "/api/runner/v1/claim",
@@ -525,7 +493,7 @@ async fn claim_accept_start(
     let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
     let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
-    let (status, accepted) = send(
+    let (status, accepted) = common::send(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
@@ -535,7 +503,7 @@ async fn claim_accept_start(
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");
 
-    let (status, started) = send(
+    let (status, started) = common::send(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/start"),
@@ -596,7 +564,7 @@ fn completion_body(
 }
 
 async fn get_attempts(app: &axum::Router, request_id: &str) -> Value {
-    let (status, body) = send(
+    let (status, body) = common::send(
         app,
         "GET",
         &format!("/api/executions/{request_id}/attempts"),
@@ -654,7 +622,7 @@ async fn attempt_summary_reports_matched_provenance_and_honest_runner_time_cost(
     // The harness's own self-reported dollar figure — measured, non-null —
     // to prove `model_token_cost_usd_estimated` is a real pass-through, not
     // vacuously always null.
-    let (status, completed) = send(
+    let (status, completed) = common::send(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/completion", live.attempt_id),
@@ -766,7 +734,7 @@ async fn attempt_summary_reports_mismatched_provenance_with_both_sides_visible()
     .await;
     let runner_auth = headers_ref(&live.runner_auth);
 
-    let (status, completed) = send(
+    let (status, completed) = common::send(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/completion", live.attempt_id),
@@ -825,7 +793,7 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
     let agent_profile_id =
         create_agent_profile(&app, "C36 repeat-enqueue profile", json!({})).await;
 
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -843,7 +811,7 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
     .await;
     assert_eq!(status, StatusCode::OK, "{created}");
 
-    let (status, claimed) = send(
+    let (status, claimed) = common::send(
         &app,
         "POST",
         "/api/runner/v1/claim",
@@ -855,7 +823,7 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
     let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
     let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
-    let (status, accepted) = send(
+    let (status, accepted) = common::send(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
@@ -865,7 +833,7 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");
 
-    let (status, started) = send(
+    let (status, started) = common::send(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/start"),
@@ -875,7 +843,7 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
     .await;
     assert_eq!(status, StatusCode::OK, "{started}");
 
-    let (status, completed) = send(
+    let (status, completed) = common::send(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/completion"),
@@ -900,7 +868,7 @@ async fn create_execution_succeeds_again_for_an_item_with_a_finished_attempt() {
 
     // The item's one attempt is now terminal (`succeeded`). A fresh
     // idempotency key against the same item, same runner, same profile.
-    let (status2, second) = send(
+    let (status2, second) = common::send(
         &app,
         "POST",
         "/api/executions",

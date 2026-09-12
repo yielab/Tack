@@ -4,8 +4,8 @@
 //! Unlike `artifact_events.rs` (a module of the `runner_protocol` binary,
 //! which loads `runner_protocol.rs` via `#[path]` and constructs
 //! `artifact_download::routes(...)` as its own, separately-mounted local
-//! router), this file imports **zero** test
-//! infrastructure from any other test file and drives only the public
+//! router), this file builds its own app/router setup — never
+//! `common::test_app` or another file's harness — and drives only the public
 //! `tack_api::router::build_router`/`tack_api::AppState` — the exact
 //! function `tack serve` calls, over pure HTTP end to end (mirroring
 //! `wave2_gate.rs`'s own established convention for proving claims against
@@ -39,6 +39,7 @@
 //! lookup returning a named 404) rather than some unrelated route silently
 //! matching.
 
+use crate::common;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use chrono::Utc;
@@ -99,37 +100,6 @@ async fn real_app(storage_dir: &std::path::Path) -> (axum::Router, sqlx::SqliteP
     (build_router(state), pool)
 }
 
-async fn send(
-    app: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 64 * 1_048_576)
-        .await
-        .unwrap();
-    let value: Value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, value)
-}
-
 async fn put_content(
     app: &axum::Router,
     uri: &str,
@@ -187,7 +157,7 @@ fn full_capabilities() -> Value {
 /// Operator creates a real project and item over HTTP — mirrors
 /// `wave2_gate.rs::create_project_and_item`.
 async fn create_project_and_item(app: &axum::Router) -> String {
-    let (status, project) = send(
+    let (status, project) = common::send_large(
         app,
         "POST",
         "/api/projects",
@@ -198,7 +168,7 @@ async fn create_project_and_item(app: &axum::Router) -> String {
     assert_eq!(status, StatusCode::OK, "{project}");
     let project_id = project["id"].as_str().unwrap().to_owned();
 
-    let (status, item) = send(
+    let (status, item) = common::send_large(
         app,
         "POST",
         &format!("/api/projects/{project_id}/items"),
@@ -224,7 +194,7 @@ struct RunningAttempt {
 /// own `enroll_runner` + inline claim/accept/start sequence), leaving the
 /// attempt `running`.
 async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -> RunningAttempt {
-    let (status, profile) = send(
+    let (status, profile) = common::send_large(
         app,
         "POST",
         "/api/agent-profiles",
@@ -235,7 +205,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     assert_eq!(status, StatusCode::OK, "{profile}");
     let agent_profile_id = profile["agent_profile_id"].as_str().unwrap().to_owned();
 
-    let (status, pending) = send(
+    let (status, pending) = common::send_large(
         app,
         "POST",
         "/api/runners/enrollment",
@@ -247,7 +217,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     let runner_id = pending["runner_id"].as_str().unwrap().to_owned();
     let raw_enrollment_token = pending["enrollment_token"].as_str().unwrap().to_owned();
 
-    let (status, enrolled) = send(
+    let (status, enrolled) = common::send_large(
         app,
         "POST",
         "/api/runner/v1/enroll",
@@ -265,7 +235,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     let credential = enrolled["runner_credential"].as_str().unwrap().to_owned();
     let auth = format!("Bearer {credential}");
 
-    let (status, created) = send(
+    let (status, created) = common::send_large(
         app,
         "POST",
         "/api/executions",
@@ -291,7 +261,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     .await;
     assert_eq!(status, StatusCode::OK, "{created}");
 
-    let (status, claimed) = send(
+    let (status, claimed) = common::send_large(
         app,
         "POST",
         "/api/runner/v1/claim",
@@ -306,7 +276,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
     let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
-    let (status, accepted) = send(
+    let (status, accepted) = common::send_large(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
@@ -319,7 +289,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");
 
-    let (status, started) = send(
+    let (status, started) = common::send_large(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/start"),
@@ -386,7 +356,7 @@ async fn artifact_content_is_stored_under_configured_storage_dir_and_downloadabl
 
     let content = b"diff --git a/x b/x\n+hello from f6a\n".to_vec();
     let auth = format!("Bearer {}", attempt.credential);
-    let (status, manifest) = send(
+    let (status, manifest) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/artifacts", attempt.attempt_id),

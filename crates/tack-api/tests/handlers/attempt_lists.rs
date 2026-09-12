@@ -15,13 +15,12 @@
 //! this file is only about what the two *read* routes return, so a claimed
 //! (`leased`) attempt is enough — no `accept`/`start` transition needed.
 
-use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use crate::common;
+use axum::http::StatusCode;
 use serde_json::{Value, json};
 use tack_api::config::AppConfig;
 use tack_api::{AppState, orch_runtime::OrchRuntime, router::build_router};
 use tack_db::{Repository, init_pool, migrations};
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const OPERATOR_TOKEN: &str = "c5-attempt-lists-operator-token";
@@ -89,38 +88,6 @@ async fn setup() -> (axum::Router, Repository, String) {
     (app, repo, item.id.to_string())
 }
 
-async fn send(
-    app: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value, String) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let raw = String::from_utf8_lossy(&bytes).into_owned();
-    let value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, value, raw)
-}
-
 fn operator_headers() -> Vec<(&'static str, &'static str)> {
     vec![("authorization", "Bearer c5-attempt-lists-operator-token")]
 }
@@ -153,7 +120,7 @@ fn full_capabilities() -> Value {
 
 /// Enrolls a runner and returns (runner_id, bearer-auth-header-pair).
 async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, String); 1]) {
-    let (status, pending, _) = send(
+    let (status, pending, _) = common::send_with_raw(
         app,
         "POST",
         "/api/runners/enrollment",
@@ -165,7 +132,7 @@ async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, Str
     let runner_id = pending["runner_id"].as_str().unwrap().to_owned();
     let raw_token = pending["enrollment_token"].as_str().unwrap().to_owned();
 
-    let (status, enrolled, _) = send(
+    let (status, enrolled, _) = common::send_with_raw(
         app,
         "POST",
         "/api/runner/v1/enroll",
@@ -198,7 +165,7 @@ fn headers_ref(owned: &[(String, String); 1]) -> Vec<(&str, &str)> {
 /// two separate executions (the cross-execution not-found tests) calls this
 /// twice, and profile names are unique.
 async fn create_agent_profile(app: &axum::Router, label: &str) -> String {
-    let (status, profile, _) = send(
+    let (status, profile, _) = common::send_with_raw(
         app,
         "POST",
         "/api/agent-profiles",
@@ -242,7 +209,7 @@ async fn request_and_claim(app: &axum::Router, item_id: &str, label: &str) -> (S
     let auth = headers_ref(&auth_owned);
     let agent_profile_id = create_agent_profile(app, label).await;
 
-    let (status, created, _) = send(
+    let (status, created, _) = common::send_with_raw(
         app,
         "POST",
         "/api/executions",
@@ -253,7 +220,7 @@ async fn request_and_claim(app: &axum::Router, item_id: &str, label: &str) -> (S
     assert_eq!(status, StatusCode::OK, "{created}");
     let request_id = created["request_id"].as_str().unwrap().to_owned();
 
-    let (status, claimed, _) = send(
+    let (status, claimed, _) = common::send_with_raw(
         app,
         "POST",
         "/api/runner/v1/claim",
@@ -321,7 +288,7 @@ async fn attempt_artifacts_requires_operator_auth_and_leaks_nothing_without_it()
     )
     .await;
 
-    let (status, body, raw) = send(
+    let (status, body, raw) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/artifacts"),
@@ -348,7 +315,7 @@ async fn attempt_artifacts_is_empty_before_any_manifest() {
     let (app, _repo, item_id) = setup().await;
     let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "artifacts-empty").await;
 
-    let (status, body, _) = send(
+    let (status, body, _) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/artifacts"),
@@ -373,7 +340,7 @@ async fn attempt_artifacts_are_returned_oldest_first() {
     insert_artifact(&repo, &attempt_id, "art-newer", "2026-01-02T00:00:00Z").await;
     insert_artifact(&repo, &attempt_id, "art-older", "2026-01-01T00:00:00Z").await;
 
-    let (status, body, _) = send(
+    let (status, body, _) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/artifacts"),
@@ -395,7 +362,7 @@ async fn attempt_artifacts_are_returned_oldest_first() {
 async fn request_without_claiming(app: &axum::Router, item_id: &str, label: &str) -> String {
     let (runner_id, _auth_owned) = enroll_runner(app, &format!("{label} runner")).await;
     let agent_profile_id = create_agent_profile(app, label).await;
-    let (status, created, _) = send(
+    let (status, created, _) = common::send_with_raw(
         app,
         "POST",
         "/api/executions",
@@ -414,7 +381,7 @@ async fn attempt_artifacts_unknown_attempt_number_is_404() {
 
     // Only attempt 1 was ever claimed for this request; attempt 99 never
     // existed for anyone.
-    let (status, body, _) = send(
+    let (status, body, _) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/99/artifacts"),
@@ -443,7 +410,7 @@ async fn attempt_artifacts_from_a_different_execution_is_404() {
     // of its own.
     let request_id = request_without_claiming(&app, &item_id, "artifacts-cross-caller").await;
 
-    let (status, body, raw) = send(
+    let (status, body, raw) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/artifacts"),
@@ -478,7 +445,7 @@ async fn attempt_decisions_requires_operator_auth_and_leaks_nothing_without_it()
     )
     .await;
 
-    let (status, body, raw) = send(
+    let (status, body, raw) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/decisions"),
@@ -502,7 +469,7 @@ async fn attempt_decisions_is_empty_before_any_decision_raised() {
     let (app, _repo, item_id) = setup().await;
     let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "decisions-empty").await;
 
-    let (status, body, _) = send(
+    let (status, body, _) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/decisions"),
@@ -525,7 +492,7 @@ async fn attempt_decisions_are_returned_oldest_first() {
     insert_decision(&repo, &attempt_id, "dec-newer", "2026-01-02T00:00:00Z").await;
     insert_decision(&repo, &attempt_id, "dec-older", "2026-01-01T00:00:00Z").await;
 
-    let (status, body, _) = send(
+    let (status, body, _) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/decisions"),
@@ -547,7 +514,7 @@ async fn attempt_decisions_unknown_attempt_number_is_404() {
 
     // Only attempt 1 was ever claimed for this request; attempt 99 never
     // existed for anyone.
-    let (status, body, _) = send(
+    let (status, body, _) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/99/decisions"),
@@ -576,7 +543,7 @@ async fn attempt_decisions_from_a_different_execution_is_404() {
     // of its own.
     let request_id = request_without_claiming(&app, &item_id, "decisions-cross-caller").await;
 
-    let (status, body, raw) = send(
+    let (status, body, raw) = common::send_with_raw(
         &app,
         "GET",
         &format!("/api/executions/{request_id}/attempts/1/decisions"),

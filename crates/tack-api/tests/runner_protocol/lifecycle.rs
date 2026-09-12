@@ -37,13 +37,10 @@ mod executions;
 
 use std::sync::{Arc, Mutex};
 
+use crate::common::send_str_strict as send;
 use crate::log_capture::{CaptureGuard, ensure_global_log_capture_installed};
 
-use axum::{
-    Router,
-    body::{Body, to_bytes},
-    http::{Request, StatusCode},
-};
+use axum::{Router, http::StatusCode};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use serde_json::{Value, json};
 use tack_core::models::{CreateItem, CreateProject, ProjectType};
@@ -53,7 +50,6 @@ use tack_db::{
         EnrollmentToken, ExecutionClock, NewAgentProfile, NewExecutionRequest, NewRunner,
     },
 };
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const RUNNER_ID: &str = "runner-c2";
@@ -256,35 +252,6 @@ async fn enqueue_request(
     .await
     .expect("enqueue");
     request_id
-}
-
-async fn send(
-    app: &Router,
-    method: &str,
-    uri: &str,
-    body: String,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body)).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1_048_576).await.unwrap();
-    let value: Value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap()
-    };
-    (status, value)
 }
 
 async fn send_as_runner(

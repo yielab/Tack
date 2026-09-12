@@ -16,6 +16,7 @@
 //! Every other test uses an in-memory database, matching every other
 //! adversarial test file in this crate.
 
+use crate::common;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use chrono::Utc;
@@ -90,37 +91,6 @@ async fn build_app(
     (build_router(state), pool)
 }
 
-async fn send(
-    app: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 64 * 1_048_576)
-        .await
-        .unwrap();
-    let value: Value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, value)
-}
-
 async fn put_content(
     app: &axum::Router,
     uri: &str,
@@ -171,7 +141,7 @@ fn full_capabilities() -> Value {
 }
 
 async fn create_project_and_item(app: &axum::Router) -> String {
-    let (status, project) = send(
+    let (status, project) = common::send_large(
         app,
         "POST",
         "/api/projects",
@@ -181,7 +151,7 @@ async fn create_project_and_item(app: &axum::Router) -> String {
     .await;
     assert_eq!(status, StatusCode::OK, "{project}");
     let project_id = project["id"].as_str().unwrap().to_owned();
-    let (status, item) = send(
+    let (status, item) = common::send_large(
         app,
         "POST",
         &format!("/api/projects/{project_id}/items"),
@@ -194,7 +164,7 @@ async fn create_project_and_item(app: &axum::Router) -> String {
 }
 
 async fn agent_profile(app: &axum::Router, label: &str) -> String {
-    let (status, profile) = send(
+    let (status, profile) = common::send_large(
         app,
         "POST",
         "/api/agent-profiles",
@@ -212,7 +182,7 @@ struct EnrolledRunner {
 }
 
 async fn enroll_runner(app: &axum::Router, name: &str) -> EnrolledRunner {
-    let (status, pending) = send(
+    let (status, pending) = common::send_large(
         app,
         "POST",
         "/api/runners/enrollment",
@@ -224,7 +194,7 @@ async fn enroll_runner(app: &axum::Router, name: &str) -> EnrolledRunner {
     let runner_id = pending["runner_id"].as_str().unwrap().to_owned();
     let raw_enrollment_token = pending["enrollment_token"].as_str().unwrap().to_owned();
 
-    let (status, enrolled) = send(
+    let (status, enrolled) = common::send_large(
         app,
         "POST",
         "/api/runner/v1/enroll",
@@ -258,7 +228,7 @@ async fn create_execution_request(
     selector_id: &str,
     agent_profile_id: &str,
 ) -> String {
-    let (status, created) = send(
+    let (status, created) = common::send_large(
         app,
         "POST",
         "/api/executions",
@@ -286,25 +256,6 @@ async fn create_execution_request(
     created["request_id"].as_str().unwrap().to_owned()
 }
 
-async fn claim(
-    app: &axum::Router,
-    runner_id: &str,
-    credential: &str,
-    claim_request_id: &str,
-) -> (StatusCode, Value) {
-    send(
-        app,
-        "POST",
-        "/api/runner/v1/claim",
-        json!({
-            "protocol_version": 1, "runner_id": runner_id, "claim_request_id": claim_request_id,
-            "available_capacity": 1, "wait_ms": 0,
-        }),
-        &[("authorization", &auth(credential))],
-    )
-    .await
-}
-
 struct RunningAttempt {
     runner_id: String,
     credential: String,
@@ -327,7 +278,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
         &agent_profile_id,
     )
     .await;
-    let (status, claimed) = claim(
+    let (status, claimed) = common::claim_runner(
         app,
         &runner.runner_id,
         &runner.credential,
@@ -339,7 +290,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
     let _ = request_id;
 
-    let (status, accepted) = send(
+    let (status, accepted) = common::send_large(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/accept"),
@@ -352,7 +303,7 @@ async fn ready_running_attempt(app: &axum::Router, item_id: &str, label: &str) -
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");
 
-    let (status, started) = send(
+    let (status, started) = common::send_large(
         app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_id}/start"),
@@ -477,10 +428,12 @@ async fn two_distinct_runners_in_the_same_fleet_race_to_claim_one_request_and_ex
     let app_b = app.clone();
     let (runner_a_id, cred_a) = (runner_a.runner_id.clone(), runner_a.credential.clone());
     let (runner_b_id, cred_b) = (runner_b.runner_id.clone(), runner_b.credential.clone());
-    let left =
-        tokio::spawn(async move { claim(&app_a, &runner_a_id, &cred_a, "race-claim-a").await });
-    let right =
-        tokio::spawn(async move { claim(&app_b, &runner_b_id, &cred_b, "race-claim-b").await });
+    let left = tokio::spawn(async move {
+        common::claim_runner(&app_a, &runner_a_id, &cred_a, "race-claim-a").await
+    });
+    let right = tokio::spawn(async move {
+        common::claim_runner(&app_b, &runner_b_id, &cred_b, "race-claim-b").await
+    });
     let (left, right) = tokio::join!(left, right);
     let (status_a, body_a) = left.expect("left task");
     let (status_b, body_b) = right.expect("right task");
@@ -546,8 +499,14 @@ async fn a_duplicated_credential_used_concurrently_never_grants_two_leases_for_t
     let app_b = app.clone();
     let (id_a, cred_a) = (runner.runner_id.clone(), runner.credential.clone());
     let (id_b, cred_b) = (runner.runner_id.clone(), runner.credential.clone());
-    let left = tokio::spawn(async move { claim(&app_a, &id_a, &cred_a, "dup-claim-a").await });
-    let right = tokio::spawn(async move { claim(&app_b, &id_b, &cred_b, "dup-claim-b").await });
+    let left =
+        tokio::spawn(
+            async move { common::claim_runner(&app_a, &id_a, &cred_a, "dup-claim-a").await },
+        );
+    let right =
+        tokio::spawn(
+            async move { common::claim_runner(&app_b, &id_b, &cred_b, "dup-claim-b").await },
+        );
     let (left, right) = tokio::join!(left, right);
     let (status_a, body_a) = left.expect("left task");
     let (status_b, body_b) = right.expect("right task");
@@ -614,14 +573,14 @@ async fn a_revoked_runner_credential_is_rejected_everywhere_and_cannot_advance_i
     )
     .await;
     let (status, claimed) =
-        claim(&app, &runner.runner_id, &runner.credential, "revoke-claim").await;
+        common::claim_runner(&app, &runner.runner_id, &runner.credential, "revoke-claim").await;
     assert_eq!(status, StatusCode::OK, "{claimed}");
     let attempt_id = claimed["lease"]["attempt_id"].as_str().unwrap().to_owned();
     let fencing_token = claimed["lease"]["fencing_token"].as_i64().unwrap();
 
     // The operator revokes the runner mid-lease — e.g. its credential was
     // detected as stolen/compromised.
-    let (status, revoked) = send(
+    let (status, revoked) = common::send_large(
         &app,
         "POST",
         &format!("/api/runners/{}/revoke", runner.runner_id),
@@ -636,7 +595,7 @@ async fn a_revoked_runner_credential_is_rejected_everywhere_and_cannot_advance_i
     // (a fresh call is the strongest form: this is not merely "the old
     // in-flight request fails", it is "this credential can never be used
     // again").
-    let (status, body) = claim(
+    let (status, body) = common::claim_runner(
         &app,
         &runner.runner_id,
         &runner.credential,
@@ -649,7 +608,7 @@ async fn a_revoked_runner_credential_is_rejected_everywhere_and_cannot_advance_i
     // The already-leased attempt cannot be advanced either: a heartbeat
     // using the correct fencing token is rejected, and the attempt's state
     // in the database is untouched by the rejected call.
-    let (status, hb) = send(
+    let (status, hb) = common::send_large(
         &app,
         "POST",
         "/api/runner/v1/heartbeat",
@@ -727,7 +686,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
     // observation genuinely supersedes it, mirroring wave2_gate.rs's own
     // `superseded_fence_is_rejected_as_stale_lease_and_writes_nothing`.
     let (status, claimed_a) =
-        claim(&app, &runner.runner_id, &runner.credential, "stale-claim-1").await;
+        common::claim_runner(&app, &runner.runner_id, &runner.credential, "stale-claim-1").await;
     assert_eq!(status, StatusCode::OK, "{claimed_a}");
     let attempt_a = claimed_a["lease"]["attempt_id"]
         .as_str()
@@ -735,7 +694,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
         .to_owned();
     let fence_a = claimed_a["lease"]["fencing_token"].as_i64().unwrap();
 
-    let (status, recovery) = send(
+    let (status, recovery) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_a}/recovery-observation"),
@@ -752,7 +711,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
     assert_eq!(recovery["disposition"], "safe_pre_spawn_requeue");
 
     let (status, claimed_b) =
-        claim(&app, &runner.runner_id, &runner.credential, "stale-claim-2").await;
+        common::claim_runner(&app, &runner.runner_id, &runner.credential, "stale-claim-2").await;
     assert_eq!(status, StatusCode::OK, "{claimed_b}");
     let attempt_b = claimed_b["lease"]["attempt_id"]
         .as_str()
@@ -764,7 +723,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
 
     // --- heartbeat with the stale fence: rejected, no heartbeat recorded on
     //     the old (already-`lost`) attempt. ---
-    let (status, body) = send(
+    let (status, body) = common::send_large(
         &app,
         "POST",
         "/api/runner/v1/heartbeat",
@@ -813,7 +772,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
     );
 
     // --- decision creation with the stale fence: rejected, no row. ---
-    let (status, body) = send(
+    let (status, body) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_a}/decisions"),
@@ -844,7 +803,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
 
     // --- artifact manifest submission with the stale fence: rejected, no
     //     row, no bytes ever solicited. ---
-    let (status, body) = send(
+    let (status, body) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_a}/artifacts"),
@@ -876,7 +835,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
 
     // --- cancellation observation with the stale fence: rejected, request's
     //     cancellation bookkeeping untouched. ---
-    let (status, body) = send(
+    let (status, body) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_a}/cancellation-observation"),
@@ -899,7 +858,7 @@ async fn stale_fence_writes_nothing_on_heartbeat_decisions_artifacts_cancellatio
 
     // --- a second recovery observation on the already-superseded fence:
     //     rejected too — recovery is not itself exempt from fencing. ---
-    let (status, body) = send(
+    let (status, body) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{attempt_a}/recovery-observation"),
@@ -952,7 +911,7 @@ async fn oversized_artifact_declared_size_is_rejected_per_item_and_cumulative_wi
     let hdr = auth(&attempt.credential);
 
     // Per-item: declared size over `artifact_content_bytes_max` (50 MiB).
-    let (status, body) = send(
+    let (status, body) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/artifacts", attempt.attempt_id),
@@ -986,7 +945,7 @@ async fn oversized_artifact_declared_size_is_rejected_per_item_and_cumulative_wi
     // check is a real, separate enforcement from the per-item one, not the
     // same check applied twice.
     for i in 0..10 {
-        let (status, body) = send(
+        let (status, body) = common::send_large(
             &app,
             "POST",
             &format!("/api/runner/v1/attempts/{}/artifacts", attempt.attempt_id),
@@ -1005,7 +964,7 @@ async fn oversized_artifact_declared_size_is_rejected_per_item_and_cumulative_wi
         assert_eq!(status, StatusCode::OK, "artifact {i}: {body}");
     }
 
-    let (status, second) = send(
+    let (status, second) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/artifacts", attempt.attempt_id),
@@ -1076,7 +1035,7 @@ async fn artifact_id_path_traversal_payloads_never_escape_the_configured_storage
     ];
     let content = b"malicious payload".to_vec();
     for artifact_id in malicious_ids {
-        let (status, manifest) = send(
+        let (status, manifest) = common::send_large(
             &app,
             "POST",
             &format!("/api/runner/v1/attempts/{}/artifacts", attempt.attempt_id),
@@ -1173,7 +1132,7 @@ async fn event_batch_checkpoint_mismatch_is_rejected_and_a_byte_identical_replay
         "fencing_token": attempt.fencing_token, "previous_checkpoint": Value::Null, "checkpoint": "cp-1",
         "events": [{"event_id": "evt-1", "sequence": 1, "occurred_at": Utc::now().to_rfc3339(), "source": "runner", "kind": "progress", "payload": {}}],
     });
-    let (status, ok) = send(
+    let (status, ok) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/events", attempt.attempt_id),
@@ -1192,7 +1151,7 @@ async fn event_batch_checkpoint_mismatch_is_rejected_and_a_byte_identical_replay
         "fencing_token": attempt.fencing_token, "previous_checkpoint": Value::Null, "checkpoint": "cp-should-never-land",
         "events": [{"event_id": "evt-reordered", "sequence": 1, "occurred_at": Utc::now().to_rfc3339(), "source": "runner", "kind": "progress", "payload": {}}],
     });
-    let (status, rejected) = send(
+    let (status, rejected) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/events", attempt.attempt_id),
@@ -1229,7 +1188,7 @@ async fn event_batch_checkpoint_mismatch_is_rejected_and_a_byte_identical_replay
     // byte-identically (as if its original response never arrived) — this
     // must be recognized as an idempotent replay, not rejected and not
     // duplicated.
-    let (status, replay) = send(
+    let (status, replay) = common::send_large(
         &app,
         "POST",
         &format!("/api/runner/v1/attempts/{}/events", attempt.attempt_id),
@@ -1301,7 +1260,8 @@ async fn a_corrupted_request_snapshot_row_degrades_to_a_typed_error_not_a_panic(
     // abort every in-flight request on this connection, not just this one)
     // and must not fabricate a plausible-looking successful lease from
     // garbage data.
-    let (status, body) = claim(&app, &runner.runner_id, &runner.credential, "corrupt-claim").await;
+    let (status, body) =
+        common::claim_runner(&app, &runner.runner_id, &runner.credential, "corrupt-claim").await;
     assert_ne!(
         status,
         StatusCode::OK,
@@ -1314,7 +1274,7 @@ async fn a_corrupted_request_snapshot_row_degrades_to_a_typed_error_not_a_panic(
 
     // The server is still alive and healthy after this — the corrupted row
     // did not take down the whole process.
-    let (status, health) = send(&app, "GET", "/api/health", Value::Null, &[]).await;
+    let (status, health) = common::send_large(&app, "GET", "/api/health", Value::Null, &[]).await;
     assert_eq!(status, StatusCode::OK, "{health}");
 
     // No attempt was ever created against the corrupted request.

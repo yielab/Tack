@@ -94,19 +94,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router, project_type: &str) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Dispatch Test Project", "project_type": project_type})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 /// Returns `(item_id, initial_status)`.
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> (Uuid, String) {
     let res = req(
@@ -211,7 +198,7 @@ async fn dispatch_404s_for_unknown_item() {
 #[tokio::test]
 async fn dispatch_409s_when_project_not_linked() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "Unlinked").await;
 
     let res = dispatch(&app, item_id).await;
@@ -223,7 +210,7 @@ async fn dispatch_409s_when_project_not_linked() {
 #[tokio::test]
 async fn dispatch_reports_no_dispatch_policy_when_dispatch_from_is_empty() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "No policy yet").await;
     let cp = create_control_plane(&app, "http://docket.local:9999").await;
     link_project(&app, project_id, cp, json!({})).await; // dispatch_from defaults to []
@@ -238,7 +225,7 @@ async fn dispatch_reports_no_dispatch_policy_when_dispatch_from_is_empty() {
 #[tokio::test]
 async fn dispatch_reports_not_eligible_when_item_status_is_outside_dispatch_from() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, status) = create_item(&app, project_id, "Wrong column").await;
     assert_eq!(status, "Backlog");
     let cp = create_control_plane(&app, "http://docket.local:9999").await;
@@ -267,7 +254,7 @@ async fn dispatch_success_enqueues_and_applies_on_running() {
     mock_list_tasks(&server, "task-happy-1", "pending", None).await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, status) = create_item(&app, project_id, "Dispatch me").await;
     assert_eq!(status, "Backlog");
     let cp = create_control_plane(&app, &server.uri()).await;
@@ -305,7 +292,7 @@ async fn dispatch_waiting_approval_applies_on_waiting_approval_not_on_running() 
     .await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "Needs a human").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     // Reuse "In Review" (a real scrum status) as the stand-in "needs a
@@ -354,7 +341,7 @@ async fn dispatch_blocked_surfaces_the_policy_and_creates_no_orch_task() {
         .await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "Blocked item").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(
@@ -410,7 +397,7 @@ async fn double_dispatch_hits_docket_once_and_the_second_call_reports_already_in
     mock_list_tasks(&server, "task-once", "pending", None).await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "Double-clicked").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(
@@ -470,7 +457,7 @@ async fn concurrent_double_dispatch_creates_exactly_one_task() {
     mock_list_tasks(&server, "task-race", "pending", None).await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "Raced").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(
@@ -526,7 +513,7 @@ async fn dispatch_sends_trusted_false_for_a_github_imported_item() {
     mock_list_tasks(&server, "task-untrusted", "pending", None).await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     // A real GitHub import (`handlers::import_github`) writes the item with
     // `ItemSource::Github` — that persisted
     // provenance marker, not the `github_links` row, is what
@@ -603,7 +590,7 @@ async fn dispatch_sends_trusted_true_for_an_ordinary_item() {
     mock_list_tasks(&server, "task-trusted", "pending", None).await;
 
     let (app, _state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "software").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "software").await;
     let (item_id, _) = create_item(&app, project_id, "Typed directly in Tack").await;
     let cp = create_control_plane(&app, &server.uri()).await;
     link_project(
@@ -627,7 +614,7 @@ async fn construction_workflow_rejects_illegal_on_running_and_leaves_item_untouc
     mock_list_tasks(&server, "task-construction-1", "pending", None).await;
 
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "construction").await;
+    let project_id = common::create_project(&app, "Dispatch Test Project", "construction").await;
     let (item_id, status) = create_item(&app, project_id, "Frame the walls").await;
     assert_eq!(status, "Permit");
     let cp = create_control_plane(&app, &server.uri()).await;

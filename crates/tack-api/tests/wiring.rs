@@ -3,6 +3,8 @@
 //! `tack_api::router::build_router`/`ExecutionRuntime` wiring, not merely
 //! present as source text.
 
+mod common;
+
 #[path = "wiring/artifact.rs"]
 mod artifact;
 #[path = "wiring/execution_sweep.rs"]

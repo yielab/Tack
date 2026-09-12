@@ -9,14 +9,13 @@
 //! fleet-targeted request then schedules onto a runner that is a member of
 //! that fleet — not merely that the write endpoint itself returns 200.
 
-use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use crate::common;
+use axum::http::StatusCode;
 use chrono::Utc;
 use serde_json::{Value, json};
 use tack_api::config::AppConfig;
 use tack_api::{AppState, orch_runtime::OrchRuntime, router::build_router};
 use tack_db::{Repository, init_pool, migrations};
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const OPERATOR_TOKEN: &str = "h8-fleet-membership-operator-token";
@@ -54,37 +53,6 @@ async fn router_for(pool: sqlx::SqlitePool, workspace_id: Uuid) -> axum::Router 
     build_router(state)
 }
 
-async fn send(
-    app: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("content-type", "application/json");
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, value)
-}
-
 fn operator_headers() -> Vec<(&'static str, &'static str)> {
     vec![("authorization", "Bearer h8-fleet-membership-operator-token")]
 }
@@ -119,7 +87,7 @@ fn full_capabilities() -> Value {
 }
 
 async fn create_project_and_item(app: &axum::Router) -> String {
-    let (status, project) = send(
+    let (status, project) = common::send(
         app,
         "POST",
         "/api/projects",
@@ -130,7 +98,7 @@ async fn create_project_and_item(app: &axum::Router) -> String {
     assert_eq!(status, StatusCode::OK, "{project}");
     let project_id = project["id"].as_str().unwrap().to_owned();
 
-    let (status, item) = send(
+    let (status, item) = common::send(
         app,
         "POST",
         &format!("/api/projects/{project_id}/items"),
@@ -146,7 +114,7 @@ async fn create_project_and_item(app: &axum::Router) -> String {
 /// a mock runner redeems it — returning the runner id and a ready-to-use
 /// `Authorization` header pair carrying the raw runner credential.
 async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, String); 1]) {
-    let (status, pending) = send(
+    let (status, pending) = common::send(
         app,
         "POST",
         "/api/runners/enrollment",
@@ -158,7 +126,7 @@ async fn enroll_runner(app: &axum::Router, name: &str) -> (String, [(String, Str
     let runner_id = pending["runner_id"].as_str().unwrap().to_owned();
     let raw_enrollment_token = pending["enrollment_token"].as_str().unwrap().to_owned();
 
-    let (status, enrolled) = send(
+    let (status, enrolled) = common::send(
         app,
         "POST",
         "/api/runner/v1/enroll",
@@ -227,7 +195,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     let op = operator_headers();
 
     let item_id = create_project_and_item(&app).await;
-    let (status, profile) = send(
+    let (status, profile) = common::send(
         &app,
         "POST",
         "/api/agent-profiles",
@@ -246,7 +214,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     let outsider_auth = headers_ref(&outsider_auth_owned);
 
     // --- Operator creates the fleet over the API. ---
-    let (status, fleet) = send(
+    let (status, fleet) = common::send(
         &app,
         "POST",
         "/api/runner-fleets",
@@ -258,7 +226,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     let fleet_id = fleet["fleet_id"].as_str().unwrap().to_owned();
 
     // --- Populate the fleet: add `member`, leave `outsider` out. ---
-    let (status, added) = send(
+    let (status, added) = common::send(
         &app,
         "POST",
         &format!("/api/runner-fleets/{fleet_id}/members"),
@@ -284,7 +252,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     assert!(member_row_exists, "membership row was not persisted");
 
     // `GET /api/runners?fleet_id=` reflects the new membership.
-    let (status, roster) = send(
+    let (status, roster) = common::send(
         &app,
         "GET",
         &format!("/api/runners?fleet_id={fleet_id}"),
@@ -302,7 +270,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     assert_eq!(roster_ids, vec![member_id.as_str()]);
 
     // Adding the same runner again is an idempotent no-op, not a conflict.
-    let (status, added_again) = send(
+    let (status, added_again) = common::send(
         &app,
         "POST",
         &format!("/api/runner-fleets/{fleet_id}/members"),
@@ -314,7 +282,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     assert_eq!(added_again["state"], "already_member");
 
     // --- Operator creates a fleet-targeted execution request. ---
-    let (status, created) = send(
+    let (status, created) = common::send(
         &app,
         "POST",
         "/api/executions",
@@ -327,7 +295,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
 
     // --- The outsider (never added to the fleet) claims first and must get
     //     no work: the request is fleet-scoped and it is not a member. ---
-    let (status, refreshed) = send(
+    let (status, refreshed) = common::send(
         &app,
         "POST",
         "/api/runner/v1/refresh",
@@ -342,7 +310,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{refreshed}");
-    let (status, outsider_claim) = send(
+    let (status, outsider_claim) = common::send(
         &app,
         "POST",
         "/api/runner/v1/claim",
@@ -371,7 +339,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     assert_eq!(attempt_count, 0);
 
     // --- The member claims and gets exactly this request. ---
-    let (status, refreshed) = send(
+    let (status, refreshed) = common::send(
         &app,
         "POST",
         "/api/runner/v1/refresh",
@@ -386,7 +354,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{refreshed}");
-    let (status, member_claim) = send(
+    let (status, member_claim) = common::send(
         &app,
         "POST",
         "/api/runner/v1/claim",
@@ -410,7 +378,7 @@ async fn fleet_targeted_request_schedules_onto_a_populated_member_and_not_a_non_
     assert_eq!(db_runner_id, member_id);
 
     // --- Removing the member from the fleet is also a real write. ---
-    let (status, removed) = send(
+    let (status, removed) = common::send(
         &app,
         "DELETE",
         &format!("/api/runner-fleets/{fleet_id}/members/{member_id}"),
@@ -447,7 +415,7 @@ async fn adding_a_member_to_a_nonexistent_fleet_or_runner_is_rejected_and_writes
 
     let (real_runner_id, _auth) = enroll_runner(&app, "H8 real runner").await;
 
-    let (status, fleet) = send(
+    let (status, fleet) = common::send(
         &app,
         "POST",
         "/api/runner-fleets",
@@ -459,7 +427,7 @@ async fn adding_a_member_to_a_nonexistent_fleet_or_runner_is_rejected_and_writes
     let fleet_id = fleet["fleet_id"].as_str().unwrap().to_owned();
 
     // Nonexistent fleet.
-    let (status, body) = send(
+    let (status, body) = common::send(
         &app,
         "POST",
         "/api/runner-fleets/fleet_does_not_exist/members",
@@ -471,7 +439,7 @@ async fn adding_a_member_to_a_nonexistent_fleet_or_runner_is_rejected_and_writes
     assert_eq!(body["error"]["code"], "not_found");
 
     // Nonexistent runner.
-    let (status, body) = send(
+    let (status, body) = common::send(
         &app,
         "POST",
         &format!("/api/runner-fleets/{fleet_id}/members"),
@@ -494,7 +462,7 @@ async fn adding_a_member_to_a_nonexistent_fleet_or_runner_is_rejected_and_writes
 
     // Removing a membership that never existed is also `not_found`, not a
     // silent success.
-    let (status, body) = send(
+    let (status, body) = common::send(
         &app,
         "DELETE",
         &format!("/api/runner-fleets/{fleet_id}/members/{real_runner_id}"),

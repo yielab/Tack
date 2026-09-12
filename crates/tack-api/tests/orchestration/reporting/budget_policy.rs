@@ -98,19 +98,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Orch Budget/Policy Test Project", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
     let res = req(
         app,
@@ -220,7 +207,8 @@ async fn both_new_routes_409_when_orch_disabled() {
 #[tokio::test]
 async fn orch_budget_unlinked_project_reports_linked_false_and_null_cost() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
 
     let res = req(
         &app,
@@ -245,7 +233,8 @@ async fn orch_budget_unlinked_project_reports_linked_false_and_null_cost() {
 #[tokio::test]
 async fn orch_budget_reports_zero_cost_distinctly_from_unreachable() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
     let plane_id = create_control_plane(&app, "docket-1").await;
     link_project(&app, project_id, plane_id, Some(50.0)).await;
 
@@ -298,7 +287,8 @@ async fn orch_budget_reports_zero_cost_distinctly_from_unreachable() {
 #[tokio::test]
 async fn orch_budget_reflects_real_token_and_cost_sums_from_orch_tasks() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
     let item_a = create_item(&app, project_id, "Item A").await;
     let item_b = create_item(&app, project_id, "Item B").await;
     let plane_id = create_control_plane(&app, "docket-1").await;
@@ -333,7 +323,8 @@ async fn orch_budget_reflects_real_token_and_cost_sums_from_orch_tasks() {
 #[tokio::test]
 async fn orch_policy_unlinked_project_returns_empty_with_linked_false() {
     let (app, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
 
     let res = req(
         &app,
@@ -355,7 +346,8 @@ async fn orch_policy_unlinked_project_returns_empty_with_linked_false() {
 #[tokio::test]
 async fn orch_policy_scopes_metrics_to_the_linked_control_plane_only() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
     let my_plane = create_control_plane(&app, "my-plane").await;
     let other_plane = create_control_plane(&app, "other-plane").await;
     link_project(&app, project_id, my_plane, None).await;
@@ -410,7 +402,8 @@ async fn orch_policy_scopes_metrics_to_the_linked_control_plane_only() {
 #[tokio::test]
 async fn orch_policy_computes_denial_rate_from_tool_calls() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
     let plane_id = create_control_plane(&app, "docket-1").await;
     link_project(&app, project_id, plane_id, None).await;
 
@@ -443,7 +436,8 @@ async fn orch_policy_computes_denial_rate_from_tool_calls() {
 #[tokio::test]
 async fn orch_policy_denial_rate_is_none_with_no_tool_call_data() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
     let plane_id = create_control_plane(&app, "docket-1").await;
     link_project(&app, project_id, plane_id, None).await;
 
@@ -488,7 +482,8 @@ async fn orch_policy_denial_rate_is_none_with_no_tool_call_data() {
 #[tokio::test]
 async fn orch_policy_groups_approvals_by_channel_and_outcome() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id =
+        common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
     let plane_id = create_control_plane(&app, "docket-1").await;
     link_project(&app, project_id, plane_id, None).await;
 

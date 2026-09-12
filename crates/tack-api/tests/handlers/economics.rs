@@ -94,19 +94,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router, name: &str, project_type: &str) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": name, "project_type": project_type})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK, "{:?}", body_json(res).await);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_item(app: &Router, project_id: Uuid, title: &str, item_type: &str) -> Uuid {
     let res = req(
         app,
@@ -249,7 +236,7 @@ async fn summary_is_empty_and_well_formed_with_no_completed_items() {
 #[tokio::test]
 async fn summary_splits_agent_and_human_populations_with_real_token_and_cost_sums() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "Econ Project", "software").await;
+    let project_id = common::create_project(&app, "Econ Project", "software").await;
 
     let agent_item = create_item(&app, project_id, "Agent-done item", "task").await;
     complete_as_agent(
@@ -297,7 +284,7 @@ async fn summary_splits_agent_and_human_populations_with_real_token_and_cost_sum
 async fn summary_slices_by_project_type_and_item_type() {
     let (app, state) = app_with_state(orch_config()).await;
 
-    let sw_project = create_project(&app, "Software Line", "software").await;
+    let sw_project = common::create_project(&app, "Software Line", "software").await;
     let sw_item = create_item(&app, sw_project, "Bug fix", "bug").await;
     complete_as_agent(
         &state,
@@ -311,7 +298,8 @@ async fn summary_slices_by_project_type_and_item_type() {
     )
     .await;
 
-    let construction_project = create_project(&app, "Construction Line", "construction").await;
+    let construction_project =
+        common::create_project(&app, "Construction Line", "construction").await;
     let construction_item =
         create_item(&app, construction_project, "Pour foundation", "task").await;
     // Construction's workflow is linear/strict — walk it forward one step at a
@@ -352,7 +340,7 @@ async fn summary_slices_by_project_type_and_item_type() {
 #[tokio::test]
 async fn summary_rework_rate_correlates_via_item_id_and_names_its_definition() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "Rework Project", "software").await;
+    let project_id = common::create_project(&app, "Rework Project", "software").await;
     let plane_id = create_control_plane(&app, "docket-rework").await;
 
     let reworked_item = create_item(&app, project_id, "Needed rework", "task").await;
@@ -408,7 +396,7 @@ async fn summary_excludes_stale_attempts_from_the_rework_denominator() {
     };
     let (app, state) = app_with_state(config).await;
 
-    let project_id = create_project(&app, "Stale Rework Project", "software").await;
+    let project_id = common::create_project(&app, "Stale Rework Project", "software").await;
 
     let fresh_item = create_item(&app, project_id, "Fresh dispatch", "task").await;
     complete_as_agent(
@@ -451,7 +439,7 @@ async fn summary_excludes_stale_attempts_from_the_rework_denominator() {
 #[tokio::test]
 async fn items_endpoint_lists_completed_items_with_population_and_filters_by_project_type() {
     let (app, state) = app_with_state(orch_config()).await;
-    let sw_project = create_project(&app, "SW", "software").await;
+    let sw_project = common::create_project(&app, "SW", "software").await;
     let sw_item = create_item(&app, sw_project, "SW item", "task").await;
     complete_as_agent(
         &state,
@@ -465,7 +453,7 @@ async fn items_endpoint_lists_completed_items_with_population_and_filters_by_pro
     )
     .await;
 
-    let personal_project = create_project(&app, "Personal", "personal").await;
+    let personal_project = common::create_project(&app, "Personal", "personal").await;
     let personal_item = create_item(&app, personal_project, "Personal item", "task").await;
     complete_as_human(&app, personal_item).await;
 
@@ -500,7 +488,7 @@ async fn items_endpoint_lists_completed_items_with_population_and_filters_by_pro
 #[tokio::test]
 async fn items_endpoint_paginates_without_silently_truncating_the_total() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "Pagination Project", "software").await;
+    let project_id = common::create_project(&app, "Pagination Project", "software").await;
     for i in 0..7 {
         let item_id = create_item(&app, project_id, &format!("Item {i}"), "task").await;
         complete_as_agent(
@@ -545,7 +533,7 @@ async fn items_endpoint_paginates_without_silently_truncating_the_total() {
 #[tokio::test]
 async fn items_endpoint_csv_export_is_an_attachment_with_a_header_row() {
     let (app, state) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app, "CSV Project", "software").await;
+    let project_id = common::create_project(&app, "CSV Project", "software").await;
     let item_id = create_item(&app, project_id, "CSV item", "task").await;
     complete_as_agent(
         &state,
@@ -584,7 +572,7 @@ async fn items_endpoint_reports_rework_not_reliable_for_a_stale_only_dispatch() 
         ..orch_config()
     })
     .await;
-    let project_id = create_project(&app, "Stale Item Project", "software").await;
+    let project_id = common::create_project(&app, "Stale Item Project", "software").await;
     let item_id = create_item(&app, project_id, "Stale item", "task").await;
     complete_as_agent(
         &state,

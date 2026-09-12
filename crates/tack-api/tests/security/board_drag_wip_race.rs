@@ -20,6 +20,7 @@
 //! pool's five connections when twelve requests arrive at once on a
 //! multi-thread runtime; that's enough to reproduce the race reliably.
 
+use crate::common;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
@@ -90,23 +91,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    // "software" -> scrum_workflow(): "In Progress" has wip_limit = Some(5),
-    // `transitions: None` (no explicit-transition restriction), so every
-    // item created here can go straight from the initial status ("Backlog")
-    // to "In Progress".
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Board Drag WIP Race Test", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
     let res = req(
         app,
@@ -125,14 +109,17 @@ async fn create_item(app: &Router, project_id: Uuid, title: &str) -> Uuid {
 /// `N` distinct items, all sitting in "Backlog", all `PATCH`ed to "In
 /// Progress" (scrum's WIP-limited column, limit 5) at the same moment.
 /// However many of the `N` requests win the race, the column must never end
-/// up holding more than its configured limit.
+/// up holding more than its configured limit. "software" -> scrum_workflow():
+/// "In Progress" has wip_limit = Some(5) and `transitions: None` (no
+/// explicit-transition restriction), so every item created here can go
+/// straight from the initial status ("Backlog") to "In Progress".
 #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
 async fn concurrent_board_drags_into_the_same_wip_limited_column_never_exceed_the_limit() {
     const N: usize = 12;
     const WIP_LIMIT: i64 = 5;
 
     let (app, state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Board Drag WIP Race Test", "software").await;
 
     let mut item_ids = Vec::with_capacity(N);
     for i in 0..N {
@@ -207,7 +194,7 @@ async fn concurrent_board_drags_into_the_same_wip_limited_column_never_exceed_th
 #[tokio::test]
 async fn patch_without_a_status_change_is_unaffected() {
     let (app, _state) = app_with_state().await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Board Drag WIP Race Test", "software").await;
     let item_id = create_item(&app, project_id, "Untouched status").await;
 
     let res = req(

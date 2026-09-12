@@ -90,19 +90,6 @@ async fn req(
         .unwrap()
 }
 
-async fn create_project(app: &Router) -> Uuid {
-    let res = req(
-        app,
-        Method::POST,
-        "/api/projects",
-        Some(json!({"name": "Orch Test Project", "project_type": "software"})),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = body_json(res).await;
-    Uuid::parse_str(v["id"].as_str().unwrap()).unwrap()
-}
-
 async fn create_control_plane(app: &Router, token: Option<&str>) -> Value {
     let mut body = json!({"name": "docket-1", "base_url": "http://docket.local:9999"});
     if let Some(t) = token {
@@ -133,7 +120,7 @@ fn assert_no_token_leak(v: &Value, secret: &str) {
 #[tokio::test]
 async fn every_orch_route_409s_with_a_stable_code_when_disabled() {
     let (app, _) = common::test_app().await; // orch_enable defaults to false
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
     let fake_id = Uuid::new_v4();
 
     let cases: Vec<(Method, String)> = vec![
@@ -332,7 +319,7 @@ async fn get_unknown_control_plane_is_404() {
 #[tokio::test]
 async fn orch_link_absent_by_default() {
     let (app, _) = common::test_app_with_config(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
 
     let res = req(
         &app,
@@ -350,7 +337,7 @@ async fn orch_link_absent_by_default() {
 #[tokio::test]
 async fn orch_link_round_trips_with_valid_status_map() {
     let (app, _) = common::test_app_with_config(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
     let plane = create_control_plane(&app, None).await;
     let plane_id = plane["id"].as_str().unwrap();
 
@@ -378,7 +365,7 @@ async fn orch_link_round_trips_with_valid_status_map() {
 #[tokio::test]
 async fn orch_link_rejects_unknown_status_name() {
     let (app, _) = common::test_app_with_config(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
     let plane = create_control_plane(&app, None).await;
     let plane_id = plane["id"].as_str().unwrap();
 
@@ -399,7 +386,7 @@ async fn orch_link_rejects_unknown_status_name() {
 #[tokio::test]
 async fn orch_link_get_reflects_saved_link() {
     let (app, _) = common::test_app_with_config(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
     let plane = create_control_plane(&app, None).await;
     let plane_id = plane["id"].as_str().unwrap();
 
@@ -435,7 +422,7 @@ async fn orch_link_get_reflects_saved_link() {
 #[tokio::test]
 async fn orch_link_carries_the_legacy_docket_compatibility_constants() {
     let (app, _) = common::test_app_with_config(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
     let plane = create_control_plane(&app, None).await;
     let plane_id = plane["id"].as_str().unwrap();
 
@@ -493,7 +480,7 @@ async fn fleet_is_empty_with_no_links() {
 #[tokio::test]
 async fn fleet_reports_zero_cost_distinctly_from_unreachable() {
     let (app, state, _) = app_with_state(orch_config()).await;
-    let project_id = create_project(&app).await;
+    let project_id = common::create_project(&app, "Orch Test Project", "software").await;
     let plane = create_control_plane(&app, None).await;
     let plane_id = Uuid::parse_str(plane["id"].as_str().unwrap()).unwrap();
 
