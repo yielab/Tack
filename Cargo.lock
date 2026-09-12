@@ -3444,6 +3444,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tack-core",
+ "tack-test-support",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3492,6 +3493,18 @@ dependencies = [
  "tracing-subscriber",
  "windows-native-keyring-store",
  "zbus-secret-service-keyring-store",
+]
+
+[[package]]
+name = "tack-test-support"
+version = "0.1.0-beta.8"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "sqlx",
+ "tack-core",
+ "tack-db",
+ "uuid",
 ]
 
 [[package]]
