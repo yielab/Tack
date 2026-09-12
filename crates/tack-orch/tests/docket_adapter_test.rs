@@ -272,7 +272,7 @@ async fn enqueue_task_allow_returns_the_task_id() {
 }
 
 #[tokio::test]
-async fn enqueue_task_waiting_approval_still_returns_ok_with_the_task_id() {
+async fn enqueue_task_waiting_approval_still_returns_ok_and_task_id() {
     // Real docket response for a `require_approval` verdict is still HTTP
     // 200 — never a 200 that lies about the task being queued normally, but
     // also never treated as a failure by this adapter (the caller recovers
@@ -588,7 +588,7 @@ async fn malformed_json_maps_to_decode_error_not_panic() {
 }
 
 #[tokio::test]
-async fn malformed_prometheus_body_never_panics_and_returns_what_it_can() {
+async fn malformed_prometheus_body_never_panics_returns_partial() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/metrics"))
@@ -752,7 +752,7 @@ async fn dispatch_404_maps_to_not_found() {
 }
 
 #[tokio::test]
-async fn dispatch_bad_request_without_guardrail_wording_maps_to_http_not_policy_blocked() {
+async fn dispatch_400_without_guardrail_wording_maps_to_http_error() {
     // The finding: unlike `enqueue_task`, `/dispatch/{project}` never runs
     // the `pre_input` gate before responding — every 400 it can actually
     // send (this one models `resolve_variables`'s `VariableError`) is a
@@ -784,7 +784,7 @@ async fn dispatch_bad_request_without_guardrail_wording_maps_to_http_not_policy_
 }
 
 #[tokio::test]
-async fn dispatch_bad_request_with_guardrail_wording_maps_to_policy_blocked() {
+async fn dispatch_400_with_guardrail_wording_maps_to_policy_blocked() {
     // Defensive: if a future docket build ever does report a `pre_input`
     // block synchronously from this route, using the same wording
     // `enqueue_task`'s route does, this adapter classifies it the same way
@@ -817,7 +817,7 @@ async fn dispatch_bad_request_with_guardrail_wording_maps_to_policy_blocked() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn decide_approval_grant_sends_channel_tack_and_returns_the_resulting_state() {
+async fn decide_approval_grant_sends_channel_tack_and_returns_state() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/approvals/apr-1"))
@@ -882,7 +882,7 @@ async fn decide_approval_unknown_state_round_trips_as_unknown() {
 }
 
 #[tokio::test]
-async fn decide_approval_409_maps_to_already_decided_with_dockets_message() {
+async fn decide_approval_409_maps_to_already_decided_with_message() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/approvals/apr-4"))
@@ -990,7 +990,7 @@ async fn provision_pod_happy_path_returns_the_created_roster() {
 }
 
 #[tokio::test]
-async fn provision_pod_already_exists_maps_to_already_exists_not_a_generic_http_error() {
+async fn provision_pod_409_maps_to_already_exists_not_http() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/pods"))
@@ -1052,7 +1052,7 @@ async fn provision_pod_bad_blueprint_surfaces_dockets_message() {
 }
 
 #[tokio::test]
-async fn provision_pod_operational_failure_after_dockets_own_rollback_surfaces_as_http_error() {
+async fn provision_pod_500_after_dockets_rollback_maps_to_http_error() {
     // PodProvisionError — docket's own rollback has already run server-side
     // by the time this response reaches the adapter (see
     // `ControlPlane::provision_pod`'s doc comment).
