@@ -52,25 +52,32 @@ happens when one gets killed halfway through.
 3. **The run is recorded on the item** — events, decisions, and artifacts land back on
    the board as they happen, and the finished attempt stays in the item's history.
 
-### Which agent runs it, and how it's credentialed
+### Which agent runs it, on what model, and who pays for it
 
-This is the part most agent tooling blurs together, so Tack keeps it as two separate
-choices: **which coding agent does the work**, and **how that agent gets paid for**.
+This is the part most agent tooling blurs together, so Tack keeps it as **three**
+separate choices. They compose freely — picking one never silently picks another.
 
-**The harness** is the actual coding agent CLI that runs. Today there are two, each
-driven through a real adapter — not a hand-rolled prompt loop bolted onto an API —
-behind one `HarnessAdapter` trait, so the next one is a new module, not a rewrite:
+**1. The harness** — the coding agent CLI that actually runs. Today there are two,
+each driven through a real adapter — not a hand-rolled prompt loop bolted onto an
+API — behind one `HarnessAdapter` trait, so the next one is a new module, not a
+rewrite:
 
 - **Claude Code** (`claude-code`)
 - **Codex** (`codex`)
 
-**The credential mode** is how that harness is authenticated, chosen per runner, per
-harness. There are exactly two, never a third:
+A harness constrains exactly one thing about the model: **the wire protocol** it
+speaks. Claude Code is pointed at an Anthropic-Messages endpoint through environment
+variables; Codex at an OpenAI-Responses endpoint through invocation flags. That is a
+property of the program, not a claim about whose models it can run — vendors are
+properties of the endpoint ([ADR 0063](docs/adr/0063-harness-credential-modes.md)).
+
+**2. The credential mode** — how that harness is authenticated, chosen per runner,
+per harness. There are exactly two, never a third:
 
 1. **Its own subscription.** The harness logs in the way you already log in —
    Claude Max/Pro, a ChatGPT plan through `codex login`. Tack never sees that
-   credential, your existing plan decides which models exist, and there's no
-   per-attempt bill to track.
+   credential and there's no per-attempt bill to track. **In this mode, and only
+   this one, your plan is also what decides which models exist.**
 2. **An API key against an endpoint**, held only by the runner — never the board,
    never its database — and injected straight into the subprocess at the moment
    it's spawned, never written to a config file on disk. A **gateway** (Vercel AI
@@ -79,17 +86,28 @@ harness. There are exactly two, never a third:
    concerned, just a different endpoint — switch between them from one field on
    the Agents page, with no restart and nothing to edit by hand.
 
-| | Its own subscription | API key + endpoint |
-| --- | --- | --- |
-| **Claude Code** | Claude Max / Pro | Vercel AI Gateway, or Anthropic directly |
-| **Codex** | ChatGPT plan | Vercel AI Gateway |
+**3. The model** — which model actually answers. In key+endpoint mode the harness you
+picked does **not** decide this. The models on offer come from the endpoint's own
+catalog, and Tack records that whole catalog against every harness whose wire the
+endpoint serves. Running Claude Code against a gateway does not restrict you to
+Anthropic models, and running Codex against one does not restrict you to OpenAI
+models.
 
-Either way, the model catalog behind the key is real, not hand-maintained — fetched
-live from that provider's own endpoint, with price and context window shown only
-where the provider actually publishes them, never estimated and never a silent `0`
-standing in for "unknown." Which exact model a given request gets is a separate,
-deterministic decision Tack makes server-side before a runner ever sees the request —
-the [full precedence order](docs/book/src/user-guide/agent-runners.md#choosing-a-model-and-a-provider)
+| Harness | Wire it speaks | Endpoints a runner-held key can point it at | Models offered there |
+| --- | --- | --- | --- |
+| **Claude Code** | Anthropic Messages | Vercel AI Gateway · Anthropic's own API | the gateway's full catalog · Anthropic's own model list |
+| **Codex** | OpenAI Responses | Vercel AI Gateway | the gateway's full catalog |
+
+Anthropic's own API is missing from the Codex row for a structural reason rather than
+an unbuilt feature: it does not serve the OpenAI-Responses wire at all, so there is no
+endpoint there to point Codex at.
+
+Either way, the catalog is real, not hand-maintained — fetched live from that
+provider's own endpoint, with price and context window shown only where the provider
+actually publishes them, never estimated and never a silent `0` standing in for
+"unknown." Which exact model a given request gets is a separate, deterministic
+decision Tack makes server-side before a runner ever sees the request — the
+[full precedence order](docs/book/src/user-guide/agent-runners.md#choosing-a-model-and-a-provider)
 lives in the book.
 
 ### Durable by design
