@@ -268,7 +268,7 @@ async fn list_runners_fleet_filter_only_returns_members() {
 }
 
 #[tokio::test]
-async fn list_runners_requires_operator_auth_like_every_other_operator_route() {
+async fn list_runners_requires_operator_auth() {
     let (app, _repo, _item_id) = setup().await;
     let (status, _) = common::send(&app, "GET", "/api/runners", Value::Null, &[]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -352,7 +352,7 @@ async fn attempts_for_an_unknown_request_id_is_404() {
 }
 
 #[tokio::test]
-async fn events_reflect_a_real_reported_batch_and_unknown_attempt_number_is_404() {
+async fn events_reflect_a_real_batch_then_unknown_attempt_is_404() {
     let (app, repo, item_id) = setup().await;
     let (runner_id, auth_owned) = enroll_runner(&app, "Events Runner").await;
     let auth = headers_ref(&auth_owned);
