@@ -17,6 +17,9 @@ use tack_runner::{
     harness::process::ProcessLimits,
 };
 
+mod common;
+use common::temp_dir as temp_state_dir;
+
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -28,15 +31,6 @@ fn fixture(name: &str) -> String {
         .join("../../docs/contracts/runner-v1")
         .join(name);
     std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("fixture {name} is readable"))
-}
-
-/// A state directory that removes itself, and everything written under it,
-/// when the returned guard drops — including when an assertion panics first.
-fn temp_state_dir(label: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("temporary directory")
 }
 
 fn test_limits() -> RunnerLimits {

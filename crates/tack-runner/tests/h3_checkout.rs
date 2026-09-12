@@ -34,6 +34,10 @@ use tack_runner::{
     },
 };
 
+mod common;
+use common::temp_dir as temp_root;
+use common::usage;
+
 /// Resolves `git` to an absolute path instead of relying on `PATH`.
 ///
 /// Not paranoia: `harness::claude_code`'s discovery test overwrites the
@@ -56,15 +60,6 @@ fn git_program() -> PathBuf {
         }
     }
     PathBuf::from("git")
-}
-
-/// A scratch directory that removes itself, and everything written under it,
-/// when the returned guard drops — including when an assertion panics first.
-fn temp_root(label: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("temporary directory")
 }
 
 fn run_git(directory: &Path, args: &[&str]) -> String {
@@ -313,18 +308,6 @@ fn actual_execution() -> tack_orch::execution::ActualExecution {
         }"#,
     )
     .expect("actual execution")
-}
-
-fn usage() -> tack_orch::execution::Usage {
-    serde_json::from_str(
-        r#"{
-            "tokens_in":{"value":1,"source":"measured"},
-            "tokens_out":{"value":2,"source":"measured"},
-            "duration_ms":{"value":3,"source":"measured"},
-            "cost_usd":{"value":null,"source":"not_measured"}
-        }"#,
-    )
-    .expect("usage")
 }
 
 /// The frozen claim fixture, retargeted at a repository that actually exists
