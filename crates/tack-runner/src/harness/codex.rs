@@ -1,81 +1,11 @@
 //! Codex harness adapter/probe.
 //!
-//! Implements [`crate::harness::HarnessAdapter`] and
-//! [`crate::harness::HarnessProbe`] for
-//! `harness_kind = "codex"`, composing the shared process/redaction/artifact
-//! infrastructure (`crate::harness::{process, redact, artifact}`).
+//! Implements [`crate::harness::HarnessAdapter`] and [`crate::harness::HarnessProbe`] for
+//! `harness_kind = "codex"`, composing the shared process/redaction/artifact infrastructure
+//! (`crate::harness::{process, redact, artifact}`).
 //!
-//! ## Unverified against a real binary
-//!
-//! Every fake-binary test below drives `crate::harness::fixtures::fake_harness_command`,
-//! never a real `codex` process. Three opt-in live tests (bottom of the
-//! test module) resolve a real `codex` binary from `PATH` at run time and
-//! cleanly skip (print and return, no panic) when it or a further
-//! precondition (an opt-in env var, a configured provider secret) is
-//! absent; each is additionally `#[ignore]`d so a plain `cargo test` never
-//! attempts it. Two of the three (the provider-endpoint tests) have been
-//! run against the real binary and their finding is recorded at point (3)
-//! below; everything else in this file specific to Codex's real CLI
-//! remains a documented **guess**, not a verified fact, called out here and
-//! in code comments at its point of use.
-//!
-//! **Unverified assumptions about Codex's real CLI contract:**
-//!
-//! 1. The installed binary is literally named `codex` and is found via a
-//!    `PATH` search (never a hardcoded path). See [`CodexLocator`].
-//! 2. Version detection invokes `codex --version` with exit code 0; the real
-//!    CLI (observed: `codex-cli 0.149.1`) prefixes the version with a
-//!    program-name token rather than printing it bare, so detection scans
-//!    for a strict `X.Y[.Z]` numeric token anywhere in the output rather
-//!    than requiring the whole line to be one. See
-//!    [`CodexAdapter::detect_version`]/[`find_strict_version_token`].
-//! 3. **Measured, not a guess:** non-interactive execution is
-//!    `codex exec --json --model <requested model id>` with the agent
-//!    profile's instructions piped over **stdin** (never argv, for the same
-//!    `ps`/`/proc` exposure reason `process.rs` documents) — confirmed
-//!    against the real installed binary (0.149.1), including with a
-//!    provider pointed at a different endpoint via per-invocation `-c`
-//!    overrides (`model_provider=...`, `model_providers.<key>.*`): the
-//!    request genuinely reached that endpoint rather than Codex's built-in
-//!    OpenAI provider, and no `~/.codex/config.toml` was written. See
-//!    [`CodexAdapter::start`].
-//! 4. Because (3) is unverified, **this adapter never attempts to parse
-//!    Codex's real stdout/stderr shape.** `terminal_state` is derived solely
-//!    from the child's process exit code (`0` → succeeded, nonzero/signalled
-//!    → failed, killed-by-timeout → failed). It deliberately does not
-//!    special-case the shared fixture's `malformed` mode into a different
-//!    outcome — see [`classify_exit`] and the `malformed` test below for why
-//!    that would itself be inventing a contract that cannot be verified.
-//! 5. Whether/how Codex reports which model it actually used is unverified.
-//!    Rather than fabricate an "observed" model, [`ActualExecution`]'s
-//!    `model_provider`/`model_id` echo the **requested** selection with
-//!    `model_observation_source = "requested_not_confirmed"` — a new value,
-//!    not previously present in any frozen fixture (which only exemplifies
-//!    `"harness_reported"`).
-//! 6. Session resume, a decision/approval protocol, and parseable usage
-//!    (token/cost) output are all unverified for Codex. Each is reported
-//!    honestly (`unsupported`/`advisory` with a reason) rather than assumed
-//!    — see [`CodexAdapter::feature_capabilities`].
-//! 7. Codex's real model-discovery mechanism (if any) is unverified, so
-//!    [`HarnessCapability::model_combinations`] is always empty — this
-//!    adapter never hardcodes a model list: it reports capabilities
-//!    without assuming models.
-//!
-//! ## Why `ActualExecution.model_provider`/`model_id` are non-nullable but
-//! this adapter cannot always fill them honestly
-//!
-//! `ExecutionRequestSnapshot.requested_model_provider`/`requested_model_id`
-//! are `Option<...>` — nullable when auto-selection is allowed.
-//! `ActualExecution.model_provider`/`model_id` are **not** `Option`. Because
-//! this adapter has no verified way to observe which model an auto-selected
-//! Codex run actually used, it cannot honestly fill a non-nullable field for
-//! that case without fabricating a value, which would be exactly the kind
-//! of hidden fake success this codebase forbids. Rather than guess, `validate`
-//! rejects a spec with no explicit `requested_model_provider`/`requested_model_id`
-//! **pre-spawn** (see [`CodexAdapter::check_selection`]). This is a real,
-//! falsifying observation about the frozen contract — non-nullable fields
-//! this adapter cannot always honestly fill — not something this adapter
-//! resolves unilaterally.
+//! Vendor findings — what is measured, what is a documented guess, and at what observed
+//! version: `fixtures/codex/README.md`, next to the transcripts that prove them.
 
 use std::{
     collections::BTreeMap,

@@ -1,74 +1,11 @@
 //! Claude Code harness adapter.
 //!
-//! This file implements [`super::HarnessAdapter`] (`engine::HarnessAdapter`,
-//! see the module docs on `super` for why it is not redefined here) and
-//! [`super::HarnessProbe`] for the `claude` CLI
-//! (Anthropic's Claude Code), version `2.1.223` observed installed on the
-//! machine this was verified on.
+//! Implements [`super::HarnessAdapter`] (`engine::HarnessAdapter`, see the module docs on
+//! `super` for why it is not redefined here) and [`super::HarnessProbe`] for the `claude`
+//! CLI (Anthropic's Claude Code).
 //!
-//! ## Observed vs. assumed — read this before trusting a claim below
-//!
-//! Every behavioral claim in this file was checked by actually invoking the
-//! installed `claude` binary from a disposable fixture directory (never this
-//! repository). Where a design choice rests on something *not* independently
-//! invoked (e.g. the Bedrock/Vertex/Foundry provider families, confirmed
-//! only by `strings` against the installed binary, never by an actual
-//! provider switch), the comment at that point calls it out explicitly.
-//! Nothing here should be read as "this is how Claude Code definitely
-//! behaves on every machine" — only "this is what the one installed copy
-//! actually did."
-//!
-//! Concrete findings that shaped this implementation:
-//!
-//! - `claude --version` prints `"<version> (Claude Code)"` to stdout, exit 0,
-//!   empty stderr, and needs neither `HOME` nor `PATH` — a fast, side-effect
-//!   free probe (see [`detect_version`]).
-//! - `claude -p` reads the prompt from **stdin** when no positional argument
-//!   is given. This adapter always uses stdin for the prompt, never argv —
-//!   matching [`super::process::ProcessSpec`]'s own documented preference and
-//!   keeping the prompt out of `/proc/<pid>/cmdline`.
-//! - `--output-format json` (non-streaming) has **no reliable single "model
-//!   used" field** — only an aggregate `modelUsage` map that, even for a
-//!   single trivial prompt, included a second, unrequested internal model
-//!   (`claude-haiku-4-5-...`) alongside the one actually requested. This
-//!   adapter uses `--output-format stream-json --verbose` instead, and reads
-//!   the authoritative model from the `{"type":"system","subtype":"init"}`
-//!   event's `model` field (cross-checked against `assistant` messages).
-//! - `is_error` (boolean) is the only reliable success/failure signal.
-//!   `subtype` is *not*: an invalid-model 404 was observed with
-//!   `"subtype":"success"` alongside `"is_error":true`. This adapter keys
-//!   exclusively off `is_error`, never `subtype`.
-//! - A persisted per-user settings file (`~/.claude/settings.json`,
-//!   `"effortLevel"`) silently changed default behavior in a way that broke
-//!   an otherwise-valid invocation (`effort 'xhigh' is not supported when
-//!   thinking is disabled`) even with the process environment fully cleared.
-//!   This adapter always passes an explicit `--effort high` (verified
-//!   compatible across every model exercised) rather than trusting whatever
-//!   default a given machine's settings file happens to carry, and passes
-//!   `--setting-sources ""` to reduce ambient configuration influence over a
-//!   supposedly deterministic run.
-//! - Claude Code's own Bash tool runs its command in a **new session**
-//!   (distinct `pgid`/`sid` from the top-level `claude` process, confirmed
-//!   twice via `ps`), unlike the shared fake harness's `spawn_child` mode
-//!   (whose grandchild deliberately stays in-group). A graceful SIGTERM
-//!   appeared to let Claude Code clean up that detached session itself, but
-//!   a SIGKILL escalation (uncatchable) cannot give it that chance, and
-//!   `kill(-pgid, SIGKILL)` does not reach a different session's group. See
-//!   `feature_capabilities` below for how this is reflected honestly
-//!   (`cancel: Advisory`, not `Supported`) rather than papered over.
-//!
-//! ## What this adapter does not attempt
-//!
-//! - Resolving `secret_reference`-only environment entries: no secret-store
-//!   client exists in this crate yet. Such entries are skipped with a
-//!   `tracing::warn!` (name only) rather than silently dropped or fabricated.
-//! - Enumerating installed/available models ahead of a real invocation: the
-//!   CLI has no `list-models`-style command, so [`ClaudeCodeAdapter`]'s
-//!   [`super::HarnessProbe::probe`] reports zero `model_combinations` rather
-//!   than an unverified static alias list ("report capabilities without
-//!   assuming models").
-//! - Actually exercising the Bedrock/Vertex/Foundry provider paths: doing so
-//!   needs real cloud credentials this adapter does not fabricate or request.
+//! Vendor findings — what is measured, what is a documented guess, and at what observed
+//! version: `fixtures/claude_code/README.md`, next to the transcripts that prove them.
 
 use std::{
     collections::BTreeMap,
