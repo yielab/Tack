@@ -1,23 +1,12 @@
 //! Cross-execution scoping tests for the two operator-facing routes that
-//! resolve an attempt by `(request_id, attempt_number)` and were not covered
-//! by `attempt_lists.rs`'s own cross-execution tests:
-//! `GET /api/executions/{request_id}/attempts/{attempt_number}/events` and
-//! `GET /api/executions/{request_id}/attempts/{attempt_number}/artifacts/{artifact_id}/content`.
-//!
-//! Mirrors `attempt_lists.rs` exactly: same production router
-//! (`tack_api::router::build_router`), same runner-enrollment/execution/claim
-//! fixture path, same technique for seeding two executions inside one test
-//! (a real, claimed "owner" execution and a real, never-claimed "caller"
-//! execution) so a query that resolves an attempt by `attempt_number` alone
-//! — forgetting which execution it belongs to — can be caught returning the
-//! owner's real row to the caller, not just a wrong status code.
-//!
-//! The artifact-content case is the one worth the extra setup: unlike every
-//! other route here, a successful response is not a JSON envelope but the
-//! artifact's actual bytes streamed back verbatim. Proving the leak for that
-//! route means manifesting and uploading real content through the real
-//! runner-protocol write path and showing those exact bytes come back
-//! through the *other* execution's request id.
+//! resolve an attempt by `(request_id, attempt_number)`, not covered by
+//! `attempt_lists.rs`'s own cross-execution tests: `GET .../attempts/{n}/events`
+//! and `GET .../attempts/{n}/artifacts/{artifact_id}/content`. Mirrors
+//! `attempt_lists.rs`'s fixture path: a real, claimed "owner" execution and a
+//! real, never-claimed "caller" execution, so a query that resolves an
+//! attempt by `attempt_number` alone — forgetting which execution it belongs
+//! to — is caught returning the owner's real row (or, for the streamed
+//! artifact-content route, its real bytes), not just a wrong status code.
 
 use crate::common;
 use axum::body::{Body, to_bytes};
