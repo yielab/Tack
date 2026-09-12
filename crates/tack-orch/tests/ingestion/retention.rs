@@ -52,6 +52,62 @@ async fn claim_replay_count(repo: &Repository) -> i64 {
         .unwrap()
 }
 
+async fn insert_claim_replay(
+    repo: &Repository,
+    claim_id: &str,
+    attempt_id: &str,
+    created_at: DateTime<Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO execution_claim_replays (runner_id, claim_request_id, attempt_id, created_at) \
+         VALUES ('runner-a', ?, ?, ?)",
+    )
+    .bind(claim_id)
+    .bind(attempt_id)
+    .bind(rfc(created_at))
+    .execute(repo.pool())
+    .await
+    .unwrap();
+}
+
+/// Polls `condition` every 10ms, returning `true` as soon as it holds, or
+/// `false` once `timeout` elapses — the actual completion signal a spawned
+/// background task produces, in place of a fixed sleep guessing how long a
+/// tick takes.
+async fn poll_until<F, Fut>(timeout: StdDuration, mut condition: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    poll_for(timeout, || {
+        let condition = condition();
+        async move { condition.await.then_some(()) }
+    })
+    .await
+    .is_some()
+}
+
+/// Polls `probe` every 10ms until it returns `Some`, or `None` once
+/// `timeout` elapses — for a condition that also carries the value the
+/// completed background task produced.
+async fn poll_for<F, Fut, T>(timeout: StdDuration, mut probe: F) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut ticker = tokio::time::interval(StdDuration::from_millis(10));
+    loop {
+        ticker.tick().await;
+        if let Some(value) = probe().await {
+            return Some(value);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+    }
+}
+
 /// Fresh file-backed database (WAL, `mode=rwc` — production's own setup),
 /// migrated, with one workspace/project/item/runner/request/attempt seeded
 /// via direct SQL (this crate has no `tack-db` test-fixture harness to
@@ -142,20 +198,11 @@ async fn seed_real_db(now: DateTime<Utc>) -> (Repository, String, tempfile::Temp
 /// *after* that join produces no further purge, ever (nothing left running
 /// to purge it).
 #[tokio::test]
-async fn retention_sweep_purges_real_stale_rows_via_the_spawned_task_and_shutdown_joins_cleanly() {
+async fn spawned_retention_sweep_purges_stale_rows_and_joins_on_stop() {
     let now = now_fixed();
     let (repo, attempt_id, _db_dir) = seed_real_db(now).await;
     let old = now - Duration::days(100);
-
-    sqlx::query(
-        "INSERT INTO execution_claim_replays (runner_id, claim_request_id, attempt_id, created_at) \
-         VALUES ('runner-a', 'claim-old', ?, ?)",
-    )
-    .bind(&attempt_id)
-    .bind(rfc(old))
-    .execute(repo.pool())
-    .await
-    .unwrap();
+    insert_claim_replay(&repo, "claim-old", &attempt_id, old).await;
     assert_eq!(
         claim_replay_count(&repo).await,
         1,
@@ -174,17 +221,12 @@ async fn retention_sweep_purges_real_stale_rows_via_the_spawned_task_and_shutdow
     let handle = spawn_execution_retention_sweep(true, store, clock, config, stop_rx)
         .expect("enabled sweep spawns a task");
 
-    // Real task, real tokio scheduler, real database — wait (bounded,
-    // polling, not a fixed blind sleep) for the first immediate tick to
-    // purge the real row.
-    let mut purged = false;
-    for _ in 0..300 {
-        if claim_replay_count(&repo).await == 0 {
-            purged = true;
-            break;
-        }
-        tokio::time::sleep(StdDuration::from_millis(10)).await;
-    }
+    // Real task, real tokio scheduler, real database — wait for the first
+    // immediate tick to purge the real row.
+    let purged = poll_until(StdDuration::from_secs(3), || async {
+        claim_replay_count(&repo).await == 0
+    })
+    .await;
     assert!(
         purged,
         "the real spawned task purged the real stale row through the real store within 3s"
@@ -195,19 +237,11 @@ async fn retention_sweep_purges_real_stale_rows_via_the_spawned_task_and_shutdow
         .await
         .expect("shutdown joins the task: the JoinHandle actually completes");
 
-    // Insert a fresh stale row *after* the task has been joined. If
-    // anything were still running, it would eventually purge this on its
-    // next tick; nothing is, so it must survive indefinitely.
-    sqlx::query(
-        "INSERT INTO execution_claim_replays (runner_id, claim_request_id, attempt_id, created_at) \
-         VALUES ('runner-a', 'claim-old-2', ?, ?)",
-    )
-    .bind(&attempt_id)
-    .bind(rfc(old))
-    .execute(repo.pool())
-    .await
-    .unwrap();
-    tokio::time::sleep(StdDuration::from_millis(200)).await;
+    // Insert a fresh stale row *after* the task has been joined. `handle`
+    // already resolved above, so no wait is needed here: a `JoinHandle`
+    // only resolves once its task has fully stopped, and a stopped task
+    // cannot run a later tick no matter how long this test waits.
+    insert_claim_replay(&repo, "claim-old-2", &attempt_id, old).await;
     assert_eq!(
         claim_replay_count(&repo).await,
         1,
@@ -247,7 +281,7 @@ impl ExecutionObservabilityStore for SpyObservabilityStore {
 /// then confirms the real task's real snapshot (captured via the spy above,
 /// not asserted by calling the repo method directly) reports both.
 #[tokio::test]
-async fn health_watch_surfaces_real_stale_lease_and_needs_operator_via_the_spawned_task() {
+async fn spawned_health_watch_reports_stale_lease_and_needs_operator() {
     let now = now_fixed();
     let (repo, attempt_id, _db_dir) = seed_real_db(now).await;
 
@@ -287,15 +321,11 @@ async fn health_watch_surfaces_real_stale_lease_and_needs_operator_via_the_spawn
     let handle = spawn_execution_health_watch(true, spy.clone(), clock, config, stop_rx)
         .expect("enabled watch spawns a task");
 
-    let mut captured: Option<ExecutionFleetSnapshot> = None;
-    for _ in 0..300 {
-        if let Some(snapshot) = spy.last_snapshot.lock().await.clone() {
-            captured = Some(snapshot);
-            break;
-        }
-        tokio::time::sleep(StdDuration::from_millis(10)).await;
-    }
-    let snapshot = captured.expect("the real spawned task captured a snapshot within 3s");
+    let snapshot = poll_for(StdDuration::from_secs(3), || async {
+        spy.last_snapshot.lock().await.clone()
+    })
+    .await
+    .expect("the real spawned task captured a snapshot within 3s");
 
     assert_eq!(
         snapshot.stale_lease_count, 1,
