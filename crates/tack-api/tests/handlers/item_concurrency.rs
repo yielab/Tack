@@ -1,26 +1,12 @@
 //! Optimistic concurrency for items —
 //! `GET /api/items/{id}` returns an `ETag` derived from the item's id +
 //! `version` (migration 034); `PATCH /api/items/{id}` honours `If-Match`,
-//! rejecting a stale value with `412 Precondition Failed`.
+//! rejecting a stale value with `412 Precondition Failed`. A `PATCH` with no
+//! `If-Match` header still succeeds unchanged, for callers that predate it.
 //!
-//! **The gate is the sequential tests, not the concurrent ones** — see
-//! `docs/plans/agnostic-control-plane.md` for the reasoning.
-//! `patch_with_a_stale_if_match_is_rejected_with_412_and_the_standard_envelope`,
-//! `patch_with_an_if_match_for_a_different_item_is_rejected`, and
-//! `a_stale_if_match_is_rejected_with_412_with_no_racer_involved` each capture
-//! an `ETag`, let a write land and complete, then replay a now-stale value and
-//! require `412` — deterministically, with no scheduler dependence. An
-//! implementation that drops the header-*value* comparison but keeps
-//! `claim_item_version`'s atomic `UPDATE ... WHERE version = ?` underneath
-//! still passes the two-racer test below most of the time, because two
-//! racers sharing one still-valid version coincidentally reproduce the
-//! "one 200, one 412" shape that test watches for — see that test's own doc
-//! comment for the full explanation of what it does and does not prove.
-//!
-//! Also required: a plain `PATCH` with no `If-Match` header at all must
-//! still succeed exactly as it did before — the non-breaking guarantee that
-//! keeps the MCP tools working unchanged until they're updated to send the
-//! header.
+//! **The gate is the sequential tests, not the concurrent ones** — each
+//! sequential test's own doc comment explains what it proves and why; see
+//! `docs/plans/agnostic-control-plane.md` for the full reasoning.
 
 use crate::common;
 use axum::Router;
@@ -150,7 +136,7 @@ async fn get_item_returns_an_etag_derived_from_id_and_version() {
 // ─── Absent If-Match: unchanged behavior ───────────────────────────────
 
 #[tokio::test]
-async fn patch_with_no_if_match_header_succeeds_exactly_as_before_this_card() {
+async fn patch_with_no_if_match_header_succeeds_unchanged() {
     let (app, _state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "No If-Match sent").await;
@@ -201,7 +187,7 @@ async fn patch_with_a_matching_if_match_succeeds() {
 }
 
 #[tokio::test]
-async fn patch_with_a_stale_if_match_is_rejected_with_412_and_the_standard_envelope() {
+async fn stale_if_match_is_rejected_with_412_and_standard_envelope() {
     let (app, _state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Stale If-Match").await;
@@ -287,7 +273,7 @@ async fn patch_with_an_if_match_for_a_different_item_is_rejected() {
 /// verified deterministic over 20+ local runs (see
 /// `docs/plans/agnostic-control-plane.md` for the full reasoning).
 #[tokio::test]
-async fn a_stale_if_match_is_rejected_with_412_with_no_racer_involved() {
+async fn stale_if_match_is_rejected_with_412_with_no_racer() {
     let (app, _state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "No racer, just a stale header").await;
@@ -350,11 +336,11 @@ async fn a_stale_if_match_is_rejected_with_412_with_no_racer_involved() {
 /// time in practice (caught only 5/15 runs). For a deterministic proof that
 /// the header's value — not merely the presence of a race — decides the
 /// outcome, see the sequential tests instead:
-/// `patch_with_a_stale_if_match_is_rejected_with_412_and_the_standard_envelope`,
+/// `stale_if_match_is_rejected_with_412_and_standard_envelope`,
 /// `patch_with_an_if_match_for_a_different_item_is_rejected`, and
-/// `a_stale_if_match_is_rejected_with_412_with_no_racer_involved`.
+/// `stale_if_match_is_rejected_with_412_with_no_racer`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn two_concurrent_patches_sharing_one_still_valid_version_yield_exactly_one_cas_winner() {
+async fn two_concurrent_patches_on_one_version_yield_one_cas_winner() {
     let (app, _state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Race target").await;
@@ -408,11 +394,11 @@ async fn two_concurrent_patches_sharing_one_still_valid_version_yield_exactly_on
 /// (7/10 runs) than with the pair test above, but still not every time.
 /// Treat this as a more sensitive smoke
 /// test for the same failure mode, not a deterministic gate — see
-/// `patch_with_a_stale_if_match_is_rejected_with_412_and_the_standard_envelope`,
+/// `stale_if_match_is_rejected_with_412_and_standard_envelope`,
 /// `patch_with_an_if_match_for_a_different_item_is_rejected`, and
-/// `a_stale_if_match_is_rejected_with_412_with_no_racer_involved` for that.
+/// `stale_if_match_is_rejected_with_412_with_no_racer` for that.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn concurrent_patches_at_higher_fanout_still_yield_exactly_one_winner() {
+async fn concurrent_patches_at_higher_fanout_yield_one_winner() {
     const N: usize = 6;
     let (app, _state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
@@ -452,7 +438,7 @@ async fn concurrent_patches_at_higher_fanout_still_yield_exactly_one_winner() {
 // ─── Atomic PATCH invariants ────────────────────────────────────────────────
 
 #[tokio::test]
-async fn multi_field_wip_rejection_writes_nothing_and_does_not_bump_version() {
+async fn multi_field_wip_rejection_writes_nothing_no_version_bump() {
     let (app, state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     for i in 0..5 {
@@ -489,7 +475,7 @@ async fn multi_field_wip_rejection_writes_nothing_and_does_not_bump_version() {
 }
 
 #[tokio::test]
-async fn nullable_patch_fields_clear_and_patch_body_etag_describe_one_snapshot() {
+async fn nullable_fields_clear_and_body_etag_match_one_snapshot() {
     let (app, _state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Nullable fields").await;
@@ -540,7 +526,7 @@ async fn nullable_patch_fields_clear_and_patch_body_etag_describe_one_snapshot()
 }
 
 #[tokio::test]
-async fn before_update_failure_cannot_partially_apply_a_multi_field_patch() {
+async fn before_update_failure_cannot_partially_apply_patch() {
     let (app, state) = app_with_state().await;
     let project_id = common::create_project(&app, "Item Concurrency Test", "software").await;
     let item_id = create_item(&app, project_id, "Original").await;
