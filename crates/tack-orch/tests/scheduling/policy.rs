@@ -1,19 +1,10 @@
-//! Proves `tack_orch::model_policy::wiring::resolve_request_model_policy`
-//! against a real `tack_db::Repository`, and its own load-bearing
-//! safety claim: that once a resolved model is persisted as an
-//! `execution_requests` row's `requested_model_provider`/`requested_model_id`,
-//! a runner that does not declare that model can never lease it. The
-//! existing, unmodified claim path (`tack_orch::scheduler::wiring` and
-//! `Repository::claim_execution_idempotent_with_snapshot`) rejects it before
-//! any `execution_attempts` row, fencing token, or
-//! capacity change is ever committed.
-//!
-//! This is a genuine integration proof, not a unit test dressed up as one:
-//! every step below goes through the same repository methods the real API
-//! handlers use, and the "never leases" assertions check the database
-//! directly (row counts, request state, runner capacity) rather than only a
-//! function's return value — the discipline CLAUDE.md names explicitly
-//! ("assert the absence directly").
+//! Proves `tack_orch::model_policy::wiring::resolve_request_model_policy` against a real
+//! `tack_db::Repository`: precedence across request override > agent profile > project >
+//! fleet tiers, and the load-bearing safety claim that a resolved-but-undeclared model can
+//! never be leased — the unmodified claim path (`scheduler::wiring` +
+//! `claim_execution_idempotent_with_snapshot`) rejects it before any `execution_attempts`
+//! row, fencing token, or capacity change is committed. Assertions check the database
+//! directly (row counts, request state, runner capacity), not just return values.
 
 use chrono::{Duration as ChronoDuration, Utc};
 use tack_core::models::{ProjectModelDefault, UpdateProject};
@@ -195,7 +186,7 @@ async fn runner_available_capacity(repo: &Repository, runner_id: &str) -> i64 {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_fleet_default_model_is_read_from_the_real_default_policy_column() {
+async fn fleet_tier_reads_the_real_default_policy_column() {
     let (repo, _item_id) = setup_repo().await;
     let now = Utc::now();
     create_fleet_with_default_model(&repo, "fleet-a", "openai", "opaque/model-alpha", now).await;
@@ -216,7 +207,7 @@ async fn a_fleet_default_model_is_read_from_the_real_default_policy_column() {
 }
 
 #[tokio::test]
-async fn a_project_default_model_is_read_from_the_real_default_model_column() {
+async fn project_tier_reads_the_real_default_model_column() {
     let (repo, item_id) = setup_repo().await;
     let item = repo
         .get_item(Uuid::parse_str(&item_id).unwrap())
@@ -327,20 +318,24 @@ async fn no_tier_configured_resolves_to_auto_select() {
 // The load-bearing safety claim: unavailable choice never leases
 // ---------------------------------------------------------------------
 
-/// Full pipeline: resolve a fleet's default model, persist it
-/// as the queued request's `requested_model_provider`/`requested_model_id`
-/// (exactly what a wired `POST /executions` handler would do), then run it
-/// through the real, unmodified claim path. The runner only declares
-/// `openai/opaque/model-alpha`; the fleet's configured default is a
-/// different, undeclared model. The request must never be leased.
-#[tokio::test]
-async fn a_fleet_default_model_the_runner_does_not_declare_never_leases() {
+/// Full pipeline for the safety claim below: resolves the fleet's configured
+/// default model, persists it on the queued request exactly as a wired
+/// `POST /executions` handler would, then runs it through the real,
+/// unmodified claim path — proving `configured_model_id` is either leased
+/// end-to-end or rejected before any state is written, depending on whether
+/// `runner-a` (the only registered runner) declares it. Absence is asserted
+/// directly against the database (row counts, request state, runner
+/// capacity), not just a function's return value.
+async fn assert_fleet_default_model_outcome(
+    request_id: &str,
+    configured_model_id: &str,
+    expect_leased: bool,
+) {
     let (repo, item_id) = setup_repo().await;
     let now = Utc::now();
 
     register_active_runner(&repo, "runner-a", &codex_capability_snapshot(now), now).await;
-    create_fleet_with_default_model(&repo, "fleet-a", "openai", "opaque/UNAVAILABLE-model", now)
-        .await;
+    create_fleet_with_default_model(&repo, "fleet-a", "openai", configured_model_id, now).await;
     add_fleet_member(&repo, "fleet-a", "runner-a", now).await;
 
     let resolved = resolve_request_model_policy(&repo, None, None, Some("fleet-a"), None)
@@ -352,14 +347,14 @@ async fn a_fleet_default_model_the_runner_does_not_declare_never_leases() {
         }
         ModelSelector::AutoSelect => panic!("expected the fleet default to resolve explicitly"),
     };
-    assert_eq!(model_id, "opaque/UNAVAILABLE-model");
+    assert_eq!(model_id, configured_model_id);
 
-    let request_id = "req-unavailable";
+    let key = format!("{request_id}-key");
     enqueue_via_fleet(
         &repo,
         &item_id,
         request_id,
-        "key-unavailable",
+        &key,
         "fleet-a",
         "codex",
         Some(&provider),
@@ -368,131 +363,67 @@ async fn a_fleet_default_model_the_runner_does_not_declare_never_leases() {
     )
     .await;
 
-    // Step 1: the pure-scheduler wiring, untouched here, must find no
-    // eligible pick.
-    let chosen = choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
-        .await
-        .expect("no db error");
-    assert_eq!(
-        chosen, None,
-        "an undeclared fleet-default model must never be chosen for a claim attempt"
-    );
-    // The re-exported entry point must agree — not a second, drifting path.
-    let chosen_via_reexport = choose(&repo, "runner-a", now, &SchedulingPolicy::default())
-        .await
-        .expect("no db error");
-    assert_eq!(chosen_via_reexport, None);
-
-    // Step 2: the actual fenced claim transaction must
-    // also refuse, honoring `Scheduled(None)` rather than falling back to a
-    // naive match that could still lease it.
-    let claimed = repo
-        .claim_execution_idempotent_with_snapshot(
-            "runner-a",
-            "claim-unavailable",
-            "attempt-unavailable",
-            ChronoDuration::seconds(60),
-            &FixedClock(now),
-            RequestSelection::Scheduled(chosen.as_deref()),
-        )
-        .await
-        .expect("no db error");
-    assert!(
-        claimed.is_none(),
-        "claim must return no lease for an unavailable choice"
-    );
-
-    // Step 3: assert the absence directly against the database, not just
-    // the function's return value (CLAUDE.md: "assert the absence
-    // directly — row counts, an untouched checkpoint, empty bookkeeping").
-    assert_eq!(
-        attempt_count_for_request(&repo, request_id).await,
-        0,
-        "no execution_attempts row may exist for an unavailable choice"
-    );
-    assert_eq!(
-        request_state(&repo, request_id).await,
-        "queued",
-        "the request must remain queued, never transition to leased"
-    );
-    assert_eq!(
-        runner_available_capacity(&repo, "runner-a").await,
-        1,
-        "the runner's capacity reservation must be rolled back, not partially consumed"
-    );
-}
-
-/// The positive control for the test above, proving its assertions are
-/// load-bearing rather than vacuously true (e.g. because claiming never
-/// works in this harness for an unrelated reason). Identical setup, except
-/// the fleet's configured default *is* the model the runner declares — the
-/// request must be leased successfully.
-#[tokio::test]
-async fn a_fleet_default_model_the_runner_does_declare_leases_successfully() {
-    let (repo, item_id) = setup_repo().await;
-    let now = Utc::now();
-
-    register_active_runner(&repo, "runner-a", &codex_capability_snapshot(now), now).await;
-    create_fleet_with_default_model(&repo, "fleet-a", "openai", "opaque/model-alpha", now).await;
-    add_fleet_member(&repo, "fleet-a", "runner-a", now).await;
-
-    let resolved = resolve_request_model_policy(&repo, None, None, Some("fleet-a"), None)
-        .await
-        .expect("resolve model policy");
-    let (provider, model_id) = match &resolved.selector {
-        ModelSelector::Explicit { provider, model_id } => {
-            (provider.as_str().to_string(), model_id.as_str().to_string())
-        }
-        ModelSelector::AutoSelect => panic!("expected the fleet default to resolve explicitly"),
-    };
-    assert_eq!(model_id, "opaque/model-alpha");
-
-    let request_id = "req-available";
-    enqueue_via_fleet(
-        &repo,
-        &item_id,
-        request_id,
-        "key-available",
-        "fleet-a",
-        "codex",
-        Some(&provider),
-        Some(&model_id),
-        now,
-    )
-    .await;
-
+    let expected = expect_leased.then_some(request_id);
     let chosen = choose_request_for_runner(&repo, "runner-a", now, &SchedulingPolicy::default())
         .await
         .expect("no db error");
     assert_eq!(
         chosen.as_deref(),
-        Some(request_id),
-        "a declared, available model must be chosen"
+        expected,
+        "scheduler wiring must match the claim outcome"
     );
+    // The re-exported entry point must agree — not a second, drifting path.
+    let chosen_via_reexport = choose(&repo, "runner-a", now, &SchedulingPolicy::default())
+        .await
+        .expect("no db error");
+    assert_eq!(chosen_via_reexport.as_deref(), expected);
 
     let claimed = repo
         .claim_execution_idempotent_with_snapshot(
             "runner-a",
-            "claim-available",
-            "attempt-available",
+            "claim",
+            "attempt",
             ChronoDuration::seconds(60),
             &FixedClock(now),
             RequestSelection::Scheduled(chosen.as_deref()),
         )
         .await
-        .expect("no db error")
-        .expect("an available choice must actually lease");
+        .expect("no db error");
+    assert_eq!(
+        claimed.is_some(),
+        expect_leased,
+        "claim outcome must match eligibility"
+    );
+    if let Some(claimed) = claimed {
+        assert_eq!(claimed.lease.request_id, request_id);
+    }
 
-    assert_eq!(claimed.lease.request_id, request_id);
+    let (expect_attempts, expect_state, expect_capacity) = if expect_leased {
+        (1, "leased", 0)
+    } else {
+        (0, "queued", 1)
+    };
     assert_eq!(
         attempt_count_for_request(&repo, request_id).await,
-        1,
-        "exactly one execution_attempts row must exist for a successful lease"
+        expect_attempts
     );
-    assert_eq!(request_state(&repo, request_id).await, "leased");
+    assert_eq!(request_state(&repo, request_id).await, expect_state);
     assert_eq!(
         runner_available_capacity(&repo, "runner-a").await,
-        0,
-        "the runner's one slot must now be consumed"
+        expect_capacity
     );
+}
+
+#[tokio::test]
+async fn an_undeclared_fleet_default_model_never_leases() {
+    assert_fleet_default_model_outcome("req-unavailable", "opaque/UNAVAILABLE-model", false).await;
+}
+
+/// Positive control for the test above, proving its assertions are
+/// load-bearing rather than vacuously true (e.g. because claiming never
+/// works in this harness for an unrelated reason): identical pipeline, but
+/// the fleet's configured default is a model the runner does declare.
+#[tokio::test]
+async fn a_declared_fleet_default_model_leases_successfully() {
+    assert_fleet_default_model_outcome("req-available", "opaque/model-alpha", true).await;
 }
