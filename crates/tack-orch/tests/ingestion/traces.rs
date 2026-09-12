@@ -18,8 +18,8 @@
 //!      (`Repository::rollup_and_purge_orch_events`) alongside real
 //!      ingestion — exercising both together is the whole point.
 //!
-//! Fixtures (`setup_repo`, the seed helpers, `TestRepoStore`) live in
-//! `support.rs`, shared with `runs.rs`.
+//! `TestRepoStore` lives in `support.rs`, shared with `runs.rs`. The pool and
+//! workspace/project/item seed come from `crate::common`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,10 +31,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use tack_db::repo::orch::NewOrchTask;
 use tack_orch::reconciler::{ControlPlaneStore, ReconcilerConfig, spawn_reconcilers};
 
-use crate::support::{
-    TestRepoStore, mount_health_and_status, seed_control_plane_and_link, seed_item, seed_project,
-    seed_workspace, setup_repo,
-};
+use crate::common::{create_test_workspace, make_item, make_project, setup_test_db};
+use crate::support::{TestRepoStore, mount_health_and_status, seed_control_plane_and_link};
 
 const EMPTY_RUNS_BODY: &str = r#"{"runs":[]}"#;
 const EMPTY_APPROVALS_BODY: &str = r#"{"pending":[]}"#;
@@ -90,10 +88,10 @@ fn trace_event_json(session_id: &str, ts: &str, event_type: &str) -> serde_json:
 
 #[tokio::test]
 async fn a_correlated_and_uncorrelated_trace_event_mirror_and_re_polling_is_idempotent() {
-    let repo = setup_repo().await;
-    let workspace_id = seed_workspace(&repo).await;
-    let project = seed_project(&repo, workspace_id).await;
-    let item = seed_item(&repo, &project).await;
+    let repo = setup_test_db().await;
+    let workspace_id = create_test_workspace(&repo).await;
+    let project = make_project(&repo, workspace_id).await;
+    let item = make_item(&repo, &project).await;
 
     repo.upsert_orch_tasks(&[NewOrchTask {
         item_id: item.id,
@@ -216,10 +214,10 @@ async fn a_correlated_and_uncorrelated_trace_event_mirror_and_re_polling_is_idem
 
 #[tokio::test]
 async fn retention_composition_re_ingesting_a_purged_event_does_not_double_count() {
-    let repo = setup_repo().await;
-    let workspace_id = seed_workspace(&repo).await;
-    let project = seed_project(&repo, workspace_id).await;
-    let item = seed_item(&repo, &project).await;
+    let repo = setup_test_db().await;
+    let workspace_id = create_test_workspace(&repo).await;
+    let project = make_project(&repo, workspace_id).await;
+    let item = make_item(&repo, &project).await;
 
     repo.upsert_orch_tasks(&[NewOrchTask {
         item_id: item.id,

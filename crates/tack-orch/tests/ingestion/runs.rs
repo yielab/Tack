@@ -5,10 +5,10 @@
 //! proving the whole chain (fetch → correlate → persist) composes
 //! correctly, not just that each piece compiles against the others' types.
 //!
-//! Fixtures (`setup_repo`, the seed helpers, `TestRepoStore`) live in
-//! `support.rs`, shared with `traces.rs` — see that module's doc for why
-//! `TestRepoStore` can't just be the real
-//! `tack-api::orch_store::RepoControlPlaneStore`.
+//! `TestRepoStore` lives in `support.rs`, shared with `traces.rs` — see that
+//! module's doc for why it can't just be the real
+//! `tack-api::orch_store::RepoControlPlaneStore`. The pool and
+//! workspace/project/item seed come from `crate::common`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,9 +21,10 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use tack_db::repo::orch::NewOrchTask;
 use tack_orch::reconciler::{ControlPlaneStore, ReconcilerConfig, spawn_reconcilers};
 
+use crate::common::{create_test_workspace, make_item, make_project, setup_test_db};
 use crate::support::{
     EMPTY_APPROVALS_BODY, TestRepoStore, mount_health_and_status as mount_common,
-    seed_control_plane_and_link, seed_item, seed_project, seed_workspace, setup_repo,
+    seed_control_plane_and_link,
 };
 
 fn run_json(id: &str, task_ids: &str) -> String {
@@ -41,10 +42,10 @@ fn run_json(id: &str, task_ids: &str) -> String {
 
 #[tokio::test]
 async fn correlated_and_uncorrelated_runs_and_approvals_mirror_idempotently() {
-    let repo = setup_repo().await;
-    let workspace_id = seed_workspace(&repo).await;
-    let project = seed_project(&repo, workspace_id).await;
-    let item = seed_item(&repo, &project).await;
+    let repo = setup_test_db().await;
+    let workspace_id = create_test_workspace(&repo).await;
+    let project = make_project(&repo, workspace_id).await;
+    let item = make_item(&repo, &project).await;
 
     repo.upsert_orch_tasks(&[NewOrchTask {
         item_id: item.id,
@@ -196,10 +197,10 @@ impl Respond for SequentialBody {
 
 #[tokio::test]
 async fn a_later_poll_does_not_erase_an_earlier_run_attribution() {
-    let repo = setup_repo().await;
-    let workspace_id = seed_workspace(&repo).await;
-    let project = seed_project(&repo, workspace_id).await;
-    let item = seed_item(&repo, &project).await;
+    let repo = setup_test_db().await;
+    let workspace_id = create_test_workspace(&repo).await;
+    let project = make_project(&repo, workspace_id).await;
+    let item = make_item(&repo, &project).await;
 
     repo.upsert_orch_tasks(&[NewOrchTask {
         item_id: item.id,
