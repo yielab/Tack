@@ -234,7 +234,7 @@ async fn summary_is_empty_and_well_formed_with_no_completed_items() {
 }
 
 #[tokio::test]
-async fn summary_splits_agent_and_human_populations_with_real_token_and_cost_sums() {
+async fn summary_splits_agent_and_human_with_token_and_cost_sums() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Econ Project", "software").await;
 
@@ -338,7 +338,7 @@ async fn summary_slices_by_project_type_and_item_type() {
 }
 
 #[tokio::test]
-async fn summary_rework_rate_correlates_via_item_id_and_names_its_definition() {
+async fn summary_rework_correlates_by_item_id_and_names_definition() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Rework Project", "software").await;
     let plane_id = create_control_plane(&app, "docket-rework").await;
@@ -437,7 +437,7 @@ async fn summary_excludes_stale_attempts_from_the_rework_denominator() {
 // ─── Items (per-item list + CSV/JSON export) ───────────────────────────────
 
 #[tokio::test]
-async fn items_endpoint_lists_completed_items_with_population_and_filters_by_project_type() {
+async fn items_endpoint_lists_by_population_and_project_type_filter() {
     let (app, state) = app_with_state(orch_config()).await;
     let sw_project = common::create_project(&app, "SW", "software").await;
     let sw_item = create_item(&app, sw_project, "SW item", "task").await;
@@ -486,7 +486,7 @@ async fn items_endpoint_lists_completed_items_with_population_and_filters_by_pro
 }
 
 #[tokio::test]
-async fn items_endpoint_paginates_without_silently_truncating_the_total() {
+async fn items_endpoint_paginates_without_truncating_total() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id = common::create_project(&app, "Pagination Project", "software").await;
     for i in 0..7 {
@@ -566,7 +566,7 @@ async fn items_endpoint_csv_export_is_an_attachment_with_a_header_row() {
 }
 
 #[tokio::test]
-async fn items_endpoint_reports_rework_not_reliable_for_a_stale_only_dispatch() {
+async fn items_endpoint_reports_rework_unreliable_for_stale_dispatch() {
     let (app, state) = app_with_state(AppConfig {
         orch_event_retention_days: 7,
         ..orch_config()

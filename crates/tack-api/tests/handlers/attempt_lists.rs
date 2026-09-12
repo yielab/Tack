@@ -1,19 +1,12 @@
 //! Handler tests for `GET /api/executions/{id}/attempts/{n}/artifacts` and
-//! `.../decisions` (`crate::handlers::attempt_lists`) — previously covered
-//! only by the OpenAPI contract test, the frontend unit tests and the E2E
-//! spec, with no Rust-level assertion that an unauthenticated caller is
-//! rejected or that the two routes' ordering matches what the handler's own
-//! query guarantees. Mirrors `operator_read_routes.rs`'s own setup — same production router
-//! (`tack_api::router::build_router`), same runner-enrollment/execution/claim
-//! fixture path — since these two routes are mounted the same way as the
-//! `/attempts` and `/attempts/{n}/events` routes that file already covers.
-//!
-//! Artifact/decision rows are seeded with a direct `sqlx::query` insert
-//! rather than through the runner-protocol write routes: the write side
-//! (fencing, attempt-state gating) is exercised elsewhere
-//! (`runner_protocol/artifact_events.rs`, `runner_protocol/decisions.rs`);
-//! this file is only about what the two *read* routes return, so a claimed
-//! (`leased`) attempt is enough — no `accept`/`start` transition needed.
+//! `.../decisions` (`crate::handlers::attempt_lists`): an unauthenticated
+//! caller is rejected, and the two routes' ordering matches the handler's
+//! own query guarantee. Each test runs once per [`ResourceKind`] since the
+//! two routes are structurally identical. Rows are seeded with a direct
+//! `sqlx::query` insert, not the runner-protocol write routes — the write
+//! side is exercised in `runner_protocol/artifact_events.rs` and
+//! `runner_protocol/decisions.rs`; this file only covers what the two
+//! *read* routes return, so a claimed (`leased`) attempt is enough.
 
 use crate::common;
 use axum::http::StatusCode;
@@ -272,87 +265,43 @@ async fn insert_decision(repo: &Repository, attempt_id: &str, decision_id: &str,
     .expect("insert decision fixture");
 }
 
-// =======================================================================
-// GET /api/executions/{request_id}/attempts/{attempt_number}/artifacts
-// =======================================================================
-
-#[tokio::test]
-async fn attempt_artifacts_requires_operator_auth_and_leaks_nothing_without_it() {
-    let (app, repo, item_id) = setup().await;
-    let (request_id, attempt_id) = request_and_claim(&app, &item_id, "artifacts-auth").await;
-    insert_artifact(
-        &repo,
-        &attempt_id,
-        "auth-check-artifact",
-        "2026-01-01T00:00:00Z",
-    )
-    .await;
-
-    let (status, body, raw) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/artifacts"),
-        Value::Null,
-        &[],
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    // A status code alone would not catch a gate that rejects but still lets
-    // the handler run: assert the real seeded artifact never reached the
-    // response body at all.
-    assert!(
-        body.get("data").is_none(),
-        "unauthenticated response must carry no data field: {body}"
-    );
-    assert!(
-        !raw.contains("auth-check-artifact"),
-        "unauthenticated response must not leak the seeded artifact id: {raw}"
-    );
+/// The two list routes below (`.../artifacts` and `.../decisions`) are
+/// structurally identical, so every test in this file runs once per kind
+/// rather than existing as two near-duplicate functions.
+#[derive(Clone, Copy)]
+enum ResourceKind {
+    Artifact,
+    Decision,
 }
 
-#[tokio::test]
-async fn attempt_artifacts_is_empty_before_any_manifest() {
-    let (app, _repo, item_id) = setup().await;
-    let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "artifacts-empty").await;
+impl ResourceKind {
+    fn route_segment(self) -> &'static str {
+        match self {
+            ResourceKind::Artifact => "artifacts",
+            ResourceKind::Decision => "decisions",
+        }
+    }
 
-    let (status, body, _) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/artifacts"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["data"], json!([]));
-}
+    fn noun(self) -> &'static str {
+        match self {
+            ResourceKind::Artifact => "artifact",
+            ResourceKind::Decision => "decision",
+        }
+    }
 
-#[tokio::test]
-async fn attempt_artifacts_are_returned_oldest_first() {
-    let (app, repo, item_id) = setup().await;
-    let (request_id, attempt_id) = request_and_claim(&app, &item_id, "artifacts-order").await;
+    fn id_field(self) -> &'static str {
+        match self {
+            ResourceKind::Artifact => "artifact_id",
+            ResourceKind::Decision => "decision_id",
+        }
+    }
 
-    // Inserted out of chronological order on purpose: "art-newer" lands in
-    // the table first but is stamped with the later `created_at`. If the
-    // route ever returned rows in insertion/rowid order instead of the
-    // handler's actual `ORDER BY created_at`, this would come back
-    // [newer, older] and the assertion below would catch it.
-    insert_artifact(&repo, &attempt_id, "art-newer", "2026-01-02T00:00:00Z").await;
-    insert_artifact(&repo, &attempt_id, "art-older", "2026-01-01T00:00:00Z").await;
-
-    let (status, body, _) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/artifacts"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let data = body["data"].as_array().expect("data array");
-    assert_eq!(data.len(), 2);
-    assert_eq!(data[0]["artifact_id"], "art-older");
-    assert_eq!(data[1]["artifact_id"], "art-newer");
+    async fn insert(self, repo: &Repository, attempt_id: &str, id: &str, created_at: &str) {
+        match self {
+            ResourceKind::Artifact => insert_artifact(repo, attempt_id, id, created_at).await,
+            ResourceKind::Decision => insert_decision(repo, attempt_id, id, created_at).await,
+        }
+    }
 }
 
 /// Creates an execution request but never claims it, so its
@@ -374,190 +323,197 @@ async fn request_without_claiming(app: &axum::Router, item_id: &str, label: &str
     created["request_id"].as_str().unwrap().to_owned()
 }
 
-#[tokio::test]
-async fn attempt_artifacts_unknown_attempt_number_is_404() {
-    let (app, _repo, item_id) = setup().await;
-    let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "artifacts-unknown-n").await;
-
-    // Only attempt 1 was ever claimed for this request; attempt 99 never
-    // existed for anyone.
-    let (status, body, _) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/99/artifacts"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
-}
-
-#[tokio::test]
-async fn attempt_artifacts_from_a_different_execution_is_404() {
-    let (app, repo, item_id) = setup().await;
-    // Execution X claims attempt 1 and manifests a real artifact against it.
-    let (_other_request_id, other_attempt_id) =
-        request_and_claim(&app, &item_id, "artifacts-cross-owner").await;
-    insert_artifact(
-        &repo,
-        &other_attempt_id,
-        "cross-execution-artifact",
-        "2026-01-01T00:00:00Z",
-    )
-    .await;
-    // Execution Y is real but never claimed anything — it has no attempt 1
-    // of its own.
-    let request_id = request_without_claiming(&app, &item_id, "artifacts-cross-caller").await;
-
-    let (status, body, raw) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/artifacts"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
-    // A status code alone would not catch a query that scopes only by
-    // attempt_number and forgets request_id: assert X's real artifact never
-    // reached this response.
-    assert!(
-        !raw.contains("cross-execution-artifact"),
-        "must not leak another execution's artifact: {raw}"
-    );
-}
-
 // =======================================================================
-// GET /api/executions/{request_id}/attempts/{attempt_number}/decisions
+// GET /api/executions/{request_id}/attempts/{attempt_number}/{artifacts,decisions}
 // =======================================================================
 
 #[tokio::test]
-async fn attempt_decisions_requires_operator_auth_and_leaks_nothing_without_it() {
-    let (app, repo, item_id) = setup().await;
-    let (request_id, attempt_id) = request_and_claim(&app, &item_id, "decisions-auth").await;
-    insert_decision(
-        &repo,
-        &attempt_id,
-        "auth-check-decision",
-        "2026-01-01T00:00:00Z",
-    )
-    .await;
+async fn attempt_list_requires_auth_and_leaks_nothing_without_it() {
+    for kind in [ResourceKind::Artifact, ResourceKind::Decision] {
+        let (app, repo, item_id) = setup().await;
+        let label = format!("{}-auth", kind.route_segment());
+        let (request_id, attempt_id) = request_and_claim(&app, &item_id, &label).await;
+        let seeded_id = format!("auth-check-{}", kind.noun());
+        kind.insert(&repo, &attempt_id, &seeded_id, "2026-01-01T00:00:00Z")
+            .await;
 
-    let (status, body, raw) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/decisions"),
-        Value::Null,
-        &[],
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert!(
-        body.get("data").is_none(),
-        "unauthenticated response must carry no data field: {body}"
-    );
-    assert!(
-        !raw.contains("auth-check-decision"),
-        "unauthenticated response must not leak the seeded decision id: {raw}"
-    );
+        let (status, body, raw) = common::send_with_raw(
+            &app,
+            "GET",
+            &format!(
+                "/api/executions/{request_id}/attempts/1/{}",
+                kind.route_segment()
+            ),
+            Value::Null,
+            &[],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{}: {body}",
+            kind.route_segment()
+        );
+        // A status code alone would not catch a gate that rejects but still
+        // lets the handler run: assert the real seeded row never reached the
+        // response body at all.
+        assert!(
+            body.get("data").is_none(),
+            "{}: unauthenticated response must carry no data field: {body}",
+            kind.route_segment()
+        );
+        assert!(
+            !raw.contains(&seeded_id),
+            "{}: unauthenticated response must not leak the seeded id: {raw}",
+            kind.route_segment()
+        );
+    }
 }
 
 #[tokio::test]
-async fn attempt_decisions_is_empty_before_any_decision_raised() {
-    let (app, _repo, item_id) = setup().await;
-    let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "decisions-empty").await;
+async fn attempt_list_is_empty_before_any_row() {
+    for kind in [ResourceKind::Artifact, ResourceKind::Decision] {
+        let (app, _repo, item_id) = setup().await;
+        let label = format!("{}-empty", kind.route_segment());
+        let (request_id, _attempt_id) = request_and_claim(&app, &item_id, &label).await;
 
-    let (status, body, _) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/decisions"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["data"], json!([]));
+        let (status, body, _) = common::send_with_raw(
+            &app,
+            "GET",
+            &format!(
+                "/api/executions/{request_id}/attempts/1/{}",
+                kind.route_segment()
+            ),
+            Value::Null,
+            &operator_headers(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}: {body}", kind.route_segment());
+        assert_eq!(body["data"], json!([]), "{}", kind.route_segment());
+    }
 }
 
 #[tokio::test]
-async fn attempt_decisions_are_returned_oldest_first() {
-    let (app, repo, item_id) = setup().await;
-    let (request_id, attempt_id) = request_and_claim(&app, &item_id, "decisions-order").await;
+async fn attempt_list_is_returned_oldest_first() {
+    for kind in [ResourceKind::Artifact, ResourceKind::Decision] {
+        let (app, repo, item_id) = setup().await;
+        let label = format!("{}-order", kind.route_segment());
+        let (request_id, attempt_id) = request_and_claim(&app, &item_id, &label).await;
 
-    // Same out-of-insertion-order seeding as the artifacts test, and for the
-    // same reason: this must fail if the route ever stopped ordering by
-    // `created_at`.
-    insert_decision(&repo, &attempt_id, "dec-newer", "2026-01-02T00:00:00Z").await;
-    insert_decision(&repo, &attempt_id, "dec-older", "2026-01-01T00:00:00Z").await;
+        // Inserted out of chronological order on purpose: "newer" lands in
+        // the table first but is stamped with the later `created_at`. If the
+        // route ever returned rows in insertion/rowid order instead of the
+        // handler's actual `ORDER BY created_at`, this would come back
+        // [newer, older] and the assertion below would catch it.
+        let short = &kind.noun()[..3];
+        let newer = format!("{short}-newer");
+        let older = format!("{short}-older");
+        kind.insert(&repo, &attempt_id, &newer, "2026-01-02T00:00:00Z")
+            .await;
+        kind.insert(&repo, &attempt_id, &older, "2026-01-01T00:00:00Z")
+            .await;
 
-    let (status, body, _) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/decisions"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let data = body["data"].as_array().expect("data array");
-    assert_eq!(data.len(), 2);
-    assert_eq!(data[0]["decision_id"], "dec-older");
-    assert_eq!(data[1]["decision_id"], "dec-newer");
+        let (status, body, _) = common::send_with_raw(
+            &app,
+            "GET",
+            &format!(
+                "/api/executions/{request_id}/attempts/1/{}",
+                kind.route_segment()
+            ),
+            Value::Null,
+            &operator_headers(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}: {body}", kind.route_segment());
+        let data = body["data"].as_array().expect("data array");
+        assert_eq!(data.len(), 2, "{}", kind.route_segment());
+        assert_eq!(data[0][kind.id_field()], older, "{}", kind.route_segment());
+        assert_eq!(data[1][kind.id_field()], newer, "{}", kind.route_segment());
+    }
 }
 
 #[tokio::test]
-async fn attempt_decisions_unknown_attempt_number_is_404() {
-    let (app, _repo, item_id) = setup().await;
-    let (request_id, _attempt_id) = request_and_claim(&app, &item_id, "decisions-unknown-n").await;
+async fn attempt_list_unknown_attempt_number_is_404() {
+    for kind in [ResourceKind::Artifact, ResourceKind::Decision] {
+        let (app, _repo, item_id) = setup().await;
+        let label = format!("{}-unknown-n", kind.route_segment());
+        let (request_id, _attempt_id) = request_and_claim(&app, &item_id, &label).await;
 
-    // Only attempt 1 was ever claimed for this request; attempt 99 never
-    // existed for anyone.
-    let (status, body, _) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/99/decisions"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
+        // Only attempt 1 was ever claimed for this request; attempt 99 never
+        // existed for anyone.
+        let (status, body, _) = common::send_with_raw(
+            &app,
+            "GET",
+            &format!(
+                "/api/executions/{request_id}/attempts/99/{}",
+                kind.route_segment()
+            ),
+            Value::Null,
+            &operator_headers(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{}: {body}",
+            kind.route_segment()
+        );
+        assert_eq!(
+            body["error"]["details"]["resource"],
+            "execution_attempt",
+            "{}",
+            kind.route_segment()
+        );
+    }
 }
 
 #[tokio::test]
-async fn attempt_decisions_from_a_different_execution_is_404() {
-    let (app, repo, item_id) = setup().await;
-    // Execution X claims attempt 1 and raises a real decision against it.
-    let (_other_request_id, other_attempt_id) =
-        request_and_claim(&app, &item_id, "decisions-cross-owner").await;
-    insert_decision(
-        &repo,
-        &other_attempt_id,
-        "cross-execution-decision",
-        "2026-01-01T00:00:00Z",
-    )
-    .await;
-    // Execution Y is real but never claimed anything — it has no attempt 1
-    // of its own.
-    let request_id = request_without_claiming(&app, &item_id, "decisions-cross-caller").await;
+async fn attempt_list_from_a_different_execution_is_404() {
+    for kind in [ResourceKind::Artifact, ResourceKind::Decision] {
+        let (app, repo, item_id) = setup().await;
+        // Execution X claims attempt 1 and writes a real row against it.
+        let owner_label = format!("{}-cross-owner", kind.route_segment());
+        let (_other_request_id, other_attempt_id) =
+            request_and_claim(&app, &item_id, &owner_label).await;
+        let seeded_id = format!("cross-execution-{}", kind.noun());
+        kind.insert(&repo, &other_attempt_id, &seeded_id, "2026-01-01T00:00:00Z")
+            .await;
+        // Execution Y is real but never claimed anything — it has no
+        // attempt 1 of its own.
+        let caller_label = format!("{}-cross-caller", kind.route_segment());
+        let request_id = request_without_claiming(&app, &item_id, &caller_label).await;
 
-    let (status, body, raw) = common::send_with_raw(
-        &app,
-        "GET",
-        &format!("/api/executions/{request_id}/attempts/1/decisions"),
-        Value::Null,
-        &operator_headers(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["error"]["details"]["resource"], "execution_attempt");
-    // A status code alone would not catch a query that scopes only by
-    // attempt_number and forgets request_id: assert X's real decision never
-    // reached this response.
-    assert!(
-        !raw.contains("cross-execution-decision"),
-        "must not leak another execution's decision: {raw}"
-    );
+        let (status, body, raw) = common::send_with_raw(
+            &app,
+            "GET",
+            &format!(
+                "/api/executions/{request_id}/attempts/1/{}",
+                kind.route_segment()
+            ),
+            Value::Null,
+            &operator_headers(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{}: {body}",
+            kind.route_segment()
+        );
+        assert_eq!(
+            body["error"]["details"]["resource"],
+            "execution_attempt",
+            "{}",
+            kind.route_segment()
+        );
+        // A status code alone would not catch a query that scopes only by
+        // attempt_number and forgets request_id: assert X's real row never
+        // reached this response.
+        assert!(
+            !raw.contains(&seeded_id),
+            "{}: must not leak another execution's {}: {raw}",
+            kind.route_segment(),
+            kind.noun()
+        );
+    }
 }

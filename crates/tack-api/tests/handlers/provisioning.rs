@@ -1,18 +1,12 @@
 //! Tests for `POST /api/templates/{id}/provision` — the end-to-end "create
 //! a project from a template, provision a docket pod, link the two" flow,
-//! and its rollback behavior on partial failure.
-//!
-//! Covers: 409 `orchestration_disabled` while orchestration is off; a full happy-path run that
-//! creates the project, calls `POST /pods`, and writes `orch_links`; an
-//! unknown `control_plane_id` 404ing before any project is created; a bad
-//! `status_map` name rolling the project back *without* ever calling
-//! docket; docket's `400`/`409` responses each rolling the project back
-//! (per `core/pod_provisioning.py`'s documented "either fully created or
-//! nothing created" contract — see `handlers::provisioning`'s module doc);
-//! and an `orch_links` write failure *after* a successful `POST /pods`
-//! leaving both the project and the pod's record standing, reported as
-//! `pod_created_link_failed` rather than silently dropped or wrongly
-//! treated as a hard failure.
+//! and its rollback behavior on partial failure: a bad `status_map` or a
+//! docket `400`/`409` each roll the project back (per
+//! `core/pod_provisioning.py`'s "either fully created or nothing created"
+//! contract), while an `orch_links` write failure *after* a successful
+//! `POST /pods` leaves both standing as `pod_created_link_failed` — the one
+//! step that is never rolled back, since the pod itself can't be
+//! un-provisioned.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -272,7 +266,7 @@ async fn empty_remote_project_400s_before_creating_any_project() {
 // ─── Rollback: a failure strictly before POST /pods succeeds ──────────────
 
 #[tokio::test]
-async fn bad_status_map_rolls_back_the_project_without_ever_calling_docket() {
+async fn bad_status_map_rolls_back_without_calling_docket() {
     // Deliberately no `/pods` mock mounted — if the handler incorrectly
     // called docket before validating status_map, it would hit this
     // MockServer's default 404-for-unmatched-route response, and the
@@ -316,75 +310,64 @@ async fn bad_status_map_rolls_back_the_project_without_ever_calling_docket() {
 }
 
 #[tokio::test]
-async fn docket_400_rolls_back_the_project() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/pods"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
-            "ok": false, "error": "unknown blueprint 'made-up'"
-        })))
-        .mount(&server)
+async fn docket_error_rolls_back_the_project() {
+    let cases = [
+        (
+            400,
+            StatusCode::BAD_REQUEST,
+            json!({"ok": false, "error": "unknown blueprint 'made-up'"}),
+            "unknown blueprint",
+        ),
+        (
+            409,
+            StatusCode::CONFLICT,
+            json!({"ok": false, "error": "'blog-api' already exists"}),
+            "already exists",
+        ),
+    ];
+    for (docket_status, expected_status, docket_body, message_contains) in cases {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/pods"))
+            .respond_with(ResponseTemplate::new(docket_status).set_body_json(docket_body))
+            .mount(&server)
+            .await;
+
+        let (app, _state) = app_with_state(orch_config()).await;
+        let template_id = create_template(&app).await;
+        let control_plane_id = create_control_plane(&app, &server.uri()).await;
+        let before = count_projects(&app).await;
+
+        let res = req(
+            &app,
+            Method::POST,
+            &format!("/api/templates/{template_id}/provision"),
+            Some(provision_body(true, control_plane_id, "blog-api")),
+        )
         .await;
-
-    let (app, _state) = app_with_state(orch_config()).await;
-    let template_id = create_template(&app).await;
-    let control_plane_id = create_control_plane(&app, &server.uri()).await;
-    let before = count_projects(&app).await;
-
-    let res = req(
-        &app,
-        Method::POST,
-        &format!("/api/templates/{template_id}/provision"),
-        Some(provision_body(true, control_plane_id, "blog-api")),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    let body = body_json(res).await;
-    let message = body["error"]["message"].as_str().unwrap();
-    assert!(message.contains("unknown blueprint"), "{message}");
-    assert!(message.contains("rolled back"), "{message}");
-    assert_eq!(count_projects(&app).await, before);
-}
-
-#[tokio::test]
-async fn docket_409_already_exists_rolls_back_the_project() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/pods"))
-        .respond_with(ResponseTemplate::new(409).set_body_json(json!({
-            "ok": false, "error": "'blog-api' already exists"
-        })))
-        .mount(&server)
-        .await;
-
-    let (app, _state) = app_with_state(orch_config()).await;
-    let template_id = create_template(&app).await;
-    let control_plane_id = create_control_plane(&app, &server.uri()).await;
-    let before = count_projects(&app).await;
-
-    let res = req(
-        &app,
-        Method::POST,
-        &format!("/api/templates/{template_id}/provision"),
-        Some(provision_body(true, control_plane_id, "blog-api")),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::CONFLICT);
-    let body = body_json(res).await;
-    let message = body["error"]["message"].as_str().unwrap();
-    assert!(message.contains("already exists"), "{message}");
-    assert!(message.contains("rolled back"), "{message}");
-    assert_eq!(
-        count_projects(&app).await,
-        before,
-        "a 409 must roll back the project even though docket itself created nothing"
-    );
+        assert_eq!(res.status(), expected_status, "docket {docket_status}");
+        let body = body_json(res).await;
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains(message_contains),
+            "docket {docket_status}: {message}"
+        );
+        assert!(
+            message.contains("rolled back"),
+            "docket {docket_status}: {message}"
+        );
+        assert_eq!(
+            count_projects(&app).await,
+            before,
+            "docket {docket_status}: project must roll back even when docket itself created nothing"
+        );
+    }
 }
 
 // ─── The one step that is never rolled back ────────────────────────────────
 
 #[tokio::test]
-async fn orch_link_write_failure_after_a_successful_pod_leaves_both_standing() {
+async fn orch_link_write_failure_after_pod_leaves_both_standing() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/pods"))

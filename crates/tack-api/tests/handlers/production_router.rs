@@ -197,7 +197,7 @@ fn completion_body(runner_id: &str, attempt_id: &str, fencing_token: i64) -> Val
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn production_router_completes_the_mock_vertical_slice_and_survives_restart() {
+async fn mock_vertical_slice_completes_and_survives_restart() {
     let config = AppConfig {
         api_token: Some(OPERATOR_TOKEN.into()),
         ..AppConfig::default()
@@ -440,7 +440,7 @@ async fn production_router_completes_the_mock_vertical_slice_and_survives_restar
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn x_tack_principal_from_an_external_client_is_stripped_and_overridden() {
+async fn x_tack_principal_from_client_is_stripped_and_overridden() {
     let config = AppConfig {
         api_token: Some(OPERATOR_TOKEN.into()),
         ..AppConfig::default()
@@ -560,7 +560,7 @@ async fn x_tack_principal_from_an_external_client_is_stripped_and_overridden() {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn operator_and_runner_credentials_are_not_substitutable_on_the_production_router() {
+async fn operator_and_runner_credentials_are_not_substitutable() {
     let config = AppConfig {
         api_token: Some(OPERATOR_TOKEN.into()),
         ..AppConfig::default()
@@ -644,7 +644,7 @@ async fn operator_and_runner_credentials_are_not_substitutable_on_the_production
 /// every operator and runner-v1 route genuinely requires authentication —
 /// not merely that the exemption list's source text excludes them.
 #[tokio::test]
-async fn every_execution_and_runner_v1_path_requires_authentication_live() {
+async fn every_execution_and_runner_v1_path_requires_auth_live() {
     let config = AppConfig {
         api_token: Some(OPERATOR_TOKEN.into()),
         ..AppConfig::default()
@@ -703,7 +703,7 @@ async fn every_execution_and_runner_v1_path_requires_authentication_live() {
 /// what's actually mounted: every operator/runner-v1 route appears at
 /// exactly the expected, fully-composed location.
 #[tokio::test]
-async fn openapi_document_enumerates_the_mounted_operator_and_runner_v1_routes() {
+async fn openapi_enumerates_mounted_operator_and_runner_v1_routes() {
     let doc = ApiDoc::openapi();
     let raw = serde_json::to_value(&doc).unwrap();
     let paths = raw["paths"].as_object().expect("paths object");
@@ -768,7 +768,7 @@ async fn openapi_document_enumerates_the_mounted_operator_and_runner_v1_routes()
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn runner_v1_and_execution_routes_share_the_global_cors_policy() {
+async fn runner_v1_and_execution_routes_share_global_cors_policy() {
     let (app, _repo, _pool, _workspace_id, _item_id) = setup(AppConfig::default()).await;
     let allowed_origin = "http://localhost:8080"; // AppConfig::default()'s allow-list.
 
@@ -933,29 +933,42 @@ async fn post_oversized_claim(
 }
 
 #[tokio::test]
-async fn runner_v1_body_limit_is_the_lesser_of_configured_and_protocol_ceiling() {
-    // ---- Direction 1: a configured limit *below* the 4 MiB ceiling is
-    // genuinely enforced. Before this fix, this router's own 4 MiB layer
-    // always won, so a 512 KiB body sailed through a 2 KiB configured limit.
-    {
+async fn runner_v1_body_limit_is_lesser_of_configured_and_ceiling() {
+    // Two directions on the same claim, "the runner-v1 body limit is
+    // min(configured, 4 MiB ceiling)": a configured limit *below* the
+    // ceiling is genuinely enforced (before this fix, the router's own
+    // 4 MiB layer always won, so a 512 KiB body sailed through a 2 KiB
+    // configured limit); a configured limit *above* the ceiling never
+    // loosens the runner-v1 surface past the protocol's own cap.
+    let cases = [
+        ("configured limit below the ceiling", 2 * 1024, 512 * 1024),
+        (
+            "configured limit above the ceiling",
+            10 * 1024 * 1024,
+            5 * 1024 * 1024,
+        ),
+    ];
+    for (name, configured_limit, oversized_padding) in cases {
         let config = AppConfig {
-            max_body_size_bytes: 2 * 1024, // 2 KiB — the exact live-reproduction value.
+            max_body_size_bytes: configured_limit,
             ..AppConfig::default()
         };
         let (app, repo, _pool, _workspace_id, item_id) = setup(config).await;
         let (runner_id, request_id, credential) =
             queue_one_claimable_runner_v1_request(&app, &item_id).await;
 
-        // 512 KiB: above the 2 KiB configured limit, but comfortably below
-        // both `limits.json`'s own `json_body_bytes_max` (1 MiB — so a 413
-        // here can't be mistaken for that pre-existing handler-level check)
-        // and the 4 MiB protocol ceiling.
-        let (status, body_bytes) =
-            post_oversized_claim(&app, &runner_id, &credential, "oversized", 512 * 1024).await;
+        let (status, body_bytes) = post_oversized_claim(
+            &app,
+            &runner_id,
+            &credential,
+            "oversized",
+            oversized_padding,
+        )
+        .await;
         assert_eq!(
             status,
             StatusCode::PAYLOAD_TOO_LARGE,
-            "{}",
+            "{name}: {}",
             String::from_utf8_lossy(&body_bytes)
         );
         // Genuine layer-level rejection, not merely a handler-level error:
@@ -968,7 +981,7 @@ async fn runner_v1_body_limit_is_the_lesser_of_configured_and_protocol_ceiling()
         let as_value: Option<Value> = serde_json::from_slice(&body_bytes).ok();
         assert!(
             as_value.as_ref().and_then(|v| v.get("error")).is_none(),
-            "expected axum's own body-limit rejection, not the handler's JSON error envelope: {}",
+            "{name}: expected axum's own body-limit rejection, not the handler's JSON error envelope: {}",
             String::from_utf8_lossy(&body_bytes)
         );
 
@@ -982,14 +995,14 @@ async fn runner_v1_body_limit_is_the_lesser_of_configured_and_protocol_ceiling()
             .fetch_one(repo.pool())
             .await
             .unwrap();
-        assert_eq!(state, "queued");
+        assert_eq!(state, "queued", "{name}");
         let attempt_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM execution_attempts WHERE request_id=?")
                 .bind(&request_id)
                 .fetch_one(repo.pool())
                 .await
                 .unwrap();
-        assert_eq!(attempt_count, 0);
+        assert_eq!(attempt_count, 0, "{name}");
 
         // Sanity: the identical runner/request, with a normal small body,
         // succeeds — proving the rejection above was genuinely about size
@@ -1002,69 +1015,7 @@ async fn runner_v1_body_limit_is_the_lesser_of_configured_and_protocol_ceiling()
             &[("authorization", bearer(&credential).as_str())],
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{claimed}");
-        assert_eq!(claimed["request"]["request_id"], request_id);
-    }
-
-    // ---- Direction 2: a configured limit *above* the 4 MiB ceiling never
-    // loosens the runner-v1 surface past the protocol's own cap.
-    {
-        let config = AppConfig {
-            max_body_size_bytes: 10 * 1024 * 1024, // 10 MiB — looser than the 4 MiB ceiling.
-            ..AppConfig::default()
-        };
-        let (app, repo, _pool, _workspace_id, item_id) = setup(config).await;
-        let (runner_id, request_id, credential) =
-            queue_one_claimable_runner_v1_request(&app, &item_id).await;
-
-        // 5 MiB: above the fixed 4 MiB ceiling, comfortably below the 10 MiB
-        // configured global limit.
-        let (status, body_bytes) = post_oversized_claim(
-            &app,
-            &runner_id,
-            &credential,
-            "over-ceiling",
-            5 * 1024 * 1024,
-        )
-        .await;
-        assert_eq!(
-            status,
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "{}",
-            String::from_utf8_lossy(&body_bytes)
-        );
-        let as_value: Option<Value> = serde_json::from_slice(&body_bytes).ok();
-        assert!(
-            as_value.as_ref().and_then(|v| v.get("error")).is_none(),
-            "expected axum's own body-limit rejection, not the handler's JSON error envelope: {}",
-            String::from_utf8_lossy(&body_bytes)
-        );
-
-        let state: String = sqlx::query_scalar("SELECT state FROM execution_requests WHERE id=?")
-            .bind(&request_id)
-            .fetch_one(repo.pool())
-            .await
-            .unwrap();
-        assert_eq!(state, "queued");
-        let attempt_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM execution_attempts WHERE request_id=?")
-                .bind(&request_id)
-                .fetch_one(repo.pool())
-                .await
-                .unwrap();
-        assert_eq!(attempt_count, 0);
-
-        // Sanity: a normal-sized claim against the same fixture still
-        // succeeds under the looser config.
-        let (status, claimed) = common::send(
-            &app,
-            "POST",
-            "/api/runner/v1/claim",
-            json!({"protocol_version": 1, "runner_id": runner_id, "claim_request_id": "normal-sized", "available_capacity": 1, "wait_ms": 0}),
-            &[("authorization", bearer(&credential).as_str())],
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{claimed}");
-        assert_eq!(claimed["request"]["request_id"], request_id);
+        assert_eq!(status, StatusCode::OK, "{name}: {claimed}");
+        assert_eq!(claimed["request"]["request_id"], request_id, "{name}");
     }
 }
