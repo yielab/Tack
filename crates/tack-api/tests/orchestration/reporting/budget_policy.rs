@@ -1,19 +1,13 @@
 //! Tests for `GET /api/projects/{id}/orch-budget` and
 //! `GET /api/projects/{id}/orch-policy`.
 //!
-//! Covers: 404 with `TACK_ORCH_ENABLE` unset (both routes); an unlinked
-//! project reports `linked: false` while still surfacing any real historical
-//! token/cost totals (never inventing a link); the unreachable-vs-zero
-//! staleness distinction for `cost_usd_estimated` (same rule `GET /api/fleet`
-//! established); real token/cost sums from `orch_tasks`; the policy
-//! endpoint's scoping to exactly the linked control plane's own
-//! `orch_metrics` samples (never leaking a second plane's numbers); denial
-//! rate computed from `docket_tool_calls_total`, `None` (not `0.0`) when no
-//! tool-call data exists at all; and policy-hit / approval-channel grouping.
-//!
-//! Deliberately does **not** test for any "paused" field on either response —
-//! see `handlers/orch.rs`'s module doc above `OrchBudgetResponse` for why that
-//! isn't reachable and isn't built.
+//! Covers: the off/unlinked guards; the unreachable-vs-zero staleness
+//! distinction for `cost_usd_estimated` (same rule `GET /api/fleet`
+//! established); real token/cost sums from `orch_tasks`; policy metrics
+//! scoped to exactly the linked control plane; denial rate as `None` (not
+//! `0.0`) with no tool-call data; and policy-hit/approval-channel grouping.
+//! Deliberately does not test a "paused" field — see `handlers/orch.rs`'s
+//! doc above `OrchBudgetResponse` for why.
 
 use crate::common;
 
@@ -205,7 +199,7 @@ async fn both_new_routes_409_when_orch_disabled() {
 // ─── Budget ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn orch_budget_unlinked_project_reports_linked_false_and_null_cost() {
+async fn orch_budget_unlinked_reports_linked_false_null_cost() {
     let (app, _) = app_with_state(orch_config()).await;
     let project_id =
         common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
@@ -285,7 +279,7 @@ async fn orch_budget_reports_zero_cost_distinctly_from_unreachable() {
 }
 
 #[tokio::test]
-async fn orch_budget_reflects_real_token_and_cost_sums_from_orch_tasks() {
+async fn orch_budget_reflects_real_token_and_cost_sums() {
     let (app, state) = app_with_state(orch_config()).await;
     let project_id =
         common::create_project(&app, "Orch Budget/Policy Test Project", "software").await;
