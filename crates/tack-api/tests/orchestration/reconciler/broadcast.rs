@@ -1,13 +1,10 @@
 //! Tests whether `RepoControlPlaneStore::upsert_runs`/`upsert_approvals`
 //! (`crates/tack-api/src/orch_store.rs`) emit `BoardEvent::AgentRunUpdated`/
 //! `ApprovalPending` when — and only when — a poll actually changes
-//! something.
-//!
-//! The requirement: **a second identical poll broadcasts
-//! nothing**. Every test here subscribes to the same broadcast channel the
-//! store was constructed with and asserts on what does or doesn't arrive,
-//! rather than on the DB state (that half is already covered by
-//! `crates/tack-db/tests/repository/orch_repo.rs`/
+//! something (a second identical poll broadcasts nothing). Every test
+//! subscribes to the same broadcast channel the store was constructed with
+//! and asserts on what does or doesn't arrive, rather than on the DB state
+//! (covered by `crates/tack-db/tests/repository/orch_repo.rs`/
 //! `crates/tack-orch/tests/ingestion/runs.rs`).
 
 use chrono::Utc;
@@ -219,7 +216,7 @@ async fn upsert_runs_broadcasts_again_when_state_changes() {
 /// broadcast — until a later poll learns its attribution, at which point it
 /// broadcasts once, even though the `state` itself didn't change.
 #[tokio::test]
-async fn uncorrelated_run_does_not_broadcast_until_attribution_is_learned() {
+async fn uncorrelated_run_waits_for_attribution_before_broadcast() {
     let (repo, project_id, item) = test_repo_with_item().await;
     let plane_id = test_plane_id(&repo).await;
     let (tx, mut rx) = broadcast::channel::<BoardEvent>(16);
@@ -269,7 +266,7 @@ async fn uncorrelated_run_does_not_broadcast_until_attribution_is_learned() {
 // ─── ApprovalPending ────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn upsert_approvals_broadcasts_for_a_new_pending_correlated_approval() {
+async fn upsert_approvals_broadcasts_for_new_pending_correlated_row() {
     let (repo, project_id, item) = test_repo_with_item().await;
     let plane_id = test_plane_id(&repo).await;
     let (tx, mut rx) = broadcast::channel::<BoardEvent>(16);
@@ -351,7 +348,7 @@ async fn upsert_approvals_does_not_broadcast_for_a_non_pending_state() {
 /// fleet-wide inbox still surfaces it) but not broadcast until a later poll
 /// learns which item it belongs to.
 #[tokio::test]
-async fn uncorrelated_approval_does_not_broadcast_until_attribution_is_learned() {
+async fn uncorrelated_approval_waits_for_attribution_before_broadcast() {
     let (repo, project_id, item) = test_repo_with_item().await;
     let plane_id = test_plane_id(&repo).await;
     let (tx, mut rx) = broadcast::channel::<BoardEvent>(16);
